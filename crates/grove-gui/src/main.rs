@@ -144,6 +144,11 @@ async fn service_set_port(key: String, port: u16) -> CmdResult<String> {
     message(Request::ServiceSetPort { key, port }).await
 }
 
+#[tauri::command]
+async fn env_snippet(site: Option<String>) -> CmdResult<String> {
+    message(Request::EnvSnippet { site }).await
+}
+
 #[derive(Serialize)]
 struct PhpBuildView {
     version: String,
@@ -311,6 +316,7 @@ fn main() {
             service_stop,
             service_restart,
             service_set_port,
+            env_snippet,
             php_list,
             secure_site,
             isolate_site,

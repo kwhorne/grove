@@ -53,6 +53,8 @@ pub enum Request {
     ServiceRestart { key: String },
     /// Override a bundled service's listen port.
     ServiceSetPort { key: String, port: u16 },
+    /// Generate a `.env` snippet wiring an app to Grove's bundled services.
+    EnvSnippet { site: Option<String> },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).
