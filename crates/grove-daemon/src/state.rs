@@ -8,21 +8,25 @@ use tokio::sync::{Mutex, Notify};
 
 use grove_core::{paths::GrovePaths, Config, SiteRegistry};
 use grove_proxy::SharedState;
+use grove_services::MailStore;
 
 pub struct DaemonState {
     pub paths: GrovePaths,
     pub config: Mutex<Config>,
     pub shared: SharedState,
+    /// Captured outgoing mail (mail-catcher).
+    pub mail: MailStore,
     /// Notified when a graceful shutdown is requested (via IPC or signal).
     pub shutdown: Arc<Notify>,
 }
 
 impl DaemonState {
-    pub fn new(paths: GrovePaths, config: Config, shared: SharedState) -> Self {
+    pub fn new(paths: GrovePaths, config: Config, shared: SharedState, mail: MailStore) -> Self {
         Self {
             paths,
             config: Mutex::new(config),
             shared,
+            mail,
             shutdown: Arc::new(Notify::new()),
         }
     }

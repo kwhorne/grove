@@ -94,6 +94,11 @@ pub enum Command {
     },
     /// Run diagnostics.
     Doctor,
+    /// Inspect captured emails (built-in mail-catcher).
+    Mail {
+        #[command(subcommand)]
+        action: Option<MailAction>,
+    },
 
     /// Root CA management.
     Ca {
@@ -105,6 +110,16 @@ pub enum Command {
         #[command(subcommand)]
         action: PhpAction,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MailAction {
+    /// List captured emails (default).
+    List,
+    /// Show one captured email in full.
+    Show { id: u64 },
+    /// Discard all captured emails.
+    Clear,
 }
 
 #[derive(Subcommand, Debug)]

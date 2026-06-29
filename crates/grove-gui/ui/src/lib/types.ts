@@ -46,3 +46,18 @@ export interface PhpBuild {
   fpm_binary: string;
   user_registered: boolean;
 }
+
+export interface EmailSummary {
+  id: number;
+  from: string;
+  to: string[];
+  subject: string;
+  received_at: string;
+  size: number;
+}
+
+export interface CapturedEmail extends EmailSummary {
+  raw: string;
+  text?: string;
+  html?: string;
+}

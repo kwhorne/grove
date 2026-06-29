@@ -39,11 +39,18 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 https_port: config.general.https_port,
                 dns_port: config.general.dns_port,
                 site_count: registry.len(),
-                services: vec![ServiceState {
-                    name: "dns".into(),
-                    running: true,
-                    port: Some(config.general.dns_port),
-                }],
+                services: vec![
+                    ServiceState {
+                        name: "dns".into(),
+                        running: true,
+                        port: Some(config.general.dns_port),
+                    },
+                    ServiceState {
+                        name: "mail".into(),
+                        running: config.services.mail_enabled,
+                        port: Some(config.services.mail_port),
+                    },
+                ],
             };
             Ok(Response::ok(ResponseData::Status(status)))
         }
@@ -175,6 +182,17 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let n = state.reload().await?;
             Ok(Response::ok(ResponseData::Message(format!(
                 "reloaded — {n} sites"
+            ))))
+        }
+
+        Request::MailList => Ok(Response::ok(ResponseData::Mail(state.mail.summaries()))),
+
+        Request::MailGet { id } => Ok(Response::ok(ResponseData::MailMessage(state.mail.get(id)))),
+
+        Request::MailClear => {
+            let n = state.mail.clear();
+            Ok(Response::ok(ResponseData::Message(format!(
+                "cleared {n} email(s)"
             ))))
         }
 

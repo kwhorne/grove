@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use grove_core::site::ResolvedSite;
+use grove_services::{CapturedEmail, EmailSummary};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
 /// frontends stay in parity (PRD §6.9).
@@ -38,6 +39,12 @@ pub enum Request {
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).
     Doctor,
+    /// List captured emails (newest first).
+    MailList,
+    /// Fetch one captured email in full.
+    MailGet { id: u64 },
+    /// Discard all captured emails.
+    MailClear,
     /// Ask the daemon to shut down gracefully.
     Shutdown,
 }
@@ -86,6 +93,8 @@ pub enum ResponseData {
     Sites(Vec<SiteStatus>),
     Message(String),
     Doctor(Vec<DiagnosticEntry>),
+    Mail(Vec<EmailSummary>),
+    MailMessage(Option<CapturedEmail>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

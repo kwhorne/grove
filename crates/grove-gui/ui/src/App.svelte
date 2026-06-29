@@ -10,9 +10,10 @@
   import Services from "./components/Services.svelte";
   import PhpPanel from "./components/PhpPanel.svelte";
   import Doctor from "./components/Doctor.svelte";
+  import Mail from "./components/Mail.svelte";
   import AboutModal from "./components/AboutModal.svelte";
 
-  type Tab = "sites" | "services" | "php" | "doctor";
+  type Tab = "sites" | "services" | "mail" | "php" | "doctor";
 
   let tab = $state<Tab>("sites");
   let running = $state(false);
@@ -77,6 +78,7 @@
   const navItems: { id: Tab; icon: string; label: string }[] = [
     { id: "sites", icon: "◰", label: "Sites" },
     { id: "services", icon: "⚙", label: "Services" },
+    { id: "mail", icon: "✉", label: "Mail" },
     { id: "php", icon: "🐘", label: "PHP" },
     { id: "doctor", icon: "✚", label: "Doctor" },
   ];
@@ -160,6 +162,10 @@
         <h2>Services</h2>
         <p class="subtitle">Local services managed by Grove</p>
         <Services services={status?.services ?? []} />
+      {:else if tab === "mail"}
+        <h2>Mail</h2>
+        <p class="subtitle">Outgoing email captured by the built-in mail-catcher</p>
+        <Mail {notify} />
       {:else if tab === "php"}
         <h2>PHP runtimes</h2>
         <p class="subtitle">Installed builds and their extensions</p>

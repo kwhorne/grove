@@ -51,6 +51,38 @@ pub fn print_response(resp: &Response, json: bool) {
                 );
             }
         }
+        Some(ResponseData::Mail(mails)) => {
+            if mails.is_empty() {
+                println!("No captured emails. Point your app's SMTP at 127.0.0.1:1025.");
+                return;
+            }
+            println!("{:<5} {:<26} {:<26} SUBJECT", "ID", "FROM", "TO");
+            for m in mails {
+                println!(
+                    "{:<5} {:<26} {:<26} {}",
+                    m.id,
+                    truncate(&m.from, 25),
+                    truncate(&m.to.join(","), 25),
+                    m.subject
+                );
+            }
+        }
+        Some(ResponseData::MailMessage(msg)) => match msg {
+            None => eprintln!("✗ no such email"),
+            Some(m) => {
+                println!("From:    {}", m.from);
+                println!("To:      {}", m.to.join(", "));
+                println!("Subject: {}", m.subject);
+                println!("Date:    {}", m.received_at);
+                println!("Size:    {} bytes", m.size);
+                let body = m
+                    .text
+                    .clone()
+                    .or_else(|| m.html.clone())
+                    .unwrap_or_else(|| m.raw.clone());
+                println!("\n{body}");
+            }
+        },
         Some(ResponseData::Doctor(entries)) => {
             for e in entries {
                 let mark = match e.status {
@@ -61,6 +93,16 @@ pub fn print_response(resp: &Response, json: bool) {
                 println!("{mark} {:<14} {}", e.check, e.detail);
             }
         }
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(max.saturating_sub(1)).collect();
+        t.push('…');
+        t
     }
 }
 

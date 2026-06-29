@@ -3,8 +3,10 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  CapturedEmail,
   DaemonStatus,
   DiagnosticEntry,
+  EmailSummary,
   PhpBuild,
   ResolvedSite,
 } from "./types";
@@ -31,6 +33,10 @@ export const api = {
 
   doctor: (): Promise<DiagnosticEntry[]> => invoke("doctor"),
   phpList: (): Promise<PhpBuild[]> => invoke("php_list"),
+
+  mailList: (): Promise<EmailSummary[]> => invoke("mail_list"),
+  mailGet: (id: number): Promise<CapturedEmail | null> => invoke("mail_get", { id }),
+  mailClear: (): Promise<string> => invoke("mail_clear"),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),

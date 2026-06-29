@@ -36,6 +36,33 @@ pub struct Config {
     /// Explicitly linked / configured sites.
     #[serde(default, rename = "sites")]
     pub sites: Vec<SiteConfig>,
+
+    /// Local service configuration (mail-catcher, …).
+    #[serde(default)]
+    pub services: Services,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Services {
+    /// Run the built-in SMTP mail-catcher.
+    #[serde(default = "default_true")]
+    pub mail_enabled: bool,
+    /// Port the mail-catcher's SMTP server listens on.
+    #[serde(default = "default_mail_port")]
+    pub mail_port: u16,
+}
+
+fn default_mail_port() -> u16 {
+    1025
+}
+
+impl Default for Services {
+    fn default() -> Self {
+        Self {
+            mail_enabled: true,
+            mail_port: default_mail_port(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

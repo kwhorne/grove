@@ -1406,6 +1406,7 @@ dependencies = [
  "grove-os",
  "grove-proxy",
  "grove-runtime",
+ "grove-services",
  "grove-tls",
  "serde_json",
  "tokio",
@@ -1432,6 +1433,7 @@ dependencies = [
  "grove-core",
  "grove-ipc",
  "grove-runtime",
+ "grove-services",
  "serde",
  "serde_json",
  "tauri",
@@ -1445,6 +1447,7 @@ name = "grove-ipc"
 version = "0.1.0"
 dependencies = [
  "grove-core",
+ "grove-services",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -1495,6 +1498,18 @@ dependencies = [
  "tokio",
  "tracing",
  "ureq",
+]
+
+[[package]]
+name = "grove-services"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "time",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
