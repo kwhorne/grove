@@ -19,6 +19,19 @@ Put the binaries on PATH for convenience (optional):
 export PATH="$PWD/target/release:$PATH"
 ```
 
+### Build the macOS app / .dmg
+
+```bash
+cargo install tauri-cli --version "^2.0" --locked    # once
+cd crates/grove-gui/ui && pnpm install && pnpm build && cd -
+cargo tauri build --manifest-path crates/grove-gui/Cargo.toml
+# → target/release/bundle/dmg/Grove_<version>_<arch>.dmg  (+ Grove.app)
+```
+
+Releases build these automatically: pushing a `v*` tag runs
+`.github/workflows/release.yml`, which publishes the CLI tarballs and the
+`.dmg` / `.deb` / `.AppImage` bundles to a GitHub Release.
+
 ## 1. Quick smoke test (no sudo, high ports)
 
 ```bash

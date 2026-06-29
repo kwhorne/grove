@@ -417,15 +417,16 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            use tauri::Manager;
-
             // macOS menu-bar (system tray) icon with a small menu.
             install_tray(app.handle())?;
 
             // Open devtools automatically only in debug builds.
             #[cfg(debug_assertions)]
-            if let Some(win) = app.get_webview_window("main") {
-                win.open_devtools();
+            {
+                use tauri::Manager;
+                if let Some(win) = app.get_webview_window("main") {
+                    win.open_devtools();
+                }
             }
             Ok(())
         })
