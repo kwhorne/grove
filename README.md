@@ -28,7 +28,7 @@ Fase 0 (PoC) + kjernen av Fase 1 er på plass og verifisert ende-til-ende på ma
 | Onboarding (`grove init`) + default PHP (`grove use`) | ✅ |
 | Valet-import (`grove import`) | ✅ |
 | Linux/Windows OS-integrasjon | 🚧 stubs |
-| GUI (Tauri + Svelte) | ⏳ Fase 3 |
+| GUI (Tauri + Svelte): dashboard, sites, services, PHP, doctor | ✅ |
 | Tjenester (DB/Redis/mail-catcher) | ⏳ Fase 4 |
 
 ## Arkitektur (workspace)
@@ -43,7 +43,22 @@ grove-runtime   PHP-versjon + FPM-pool-supervisor
 grove-os        plattformintegrasjon (resolver, trust store, elevasjon)
 grove-daemon    langtkjørende prosess: binder porter, betjener IPC
 grove-cli       clap-frontend (binær: `grove`)
+grove-gui       Tauri 2 + Svelte 5 desktop-GUI (tynn klient over grove-ipc)
 ```
+
+## GUI (Tauri + Svelte)
+
+GUI-en er en tynn klient som proxyer alt til daemonen over samme `grove-ipc`-
+protokoll som CLI-en — de er alltid i paritet. Frontenden er Svelte 5 + Vite.
+
+```bash
+cd crates/grove-gui/ui && pnpm install && pnpm build   # bygg frontend
+cargo tauri dev        # utvikling (krever cargo-tauri: cargo install tauri-cli)
+cargo tauri build      # produksjonsbygg / bundling
+```
+
+Dashbordet viser sites (driver, PHP-versjon, ettklikks secure-toggle, isolate,
+åpne i nettleser/finder), tjenester, PHP-runtimes og `doctor`-diagnostikk.
 
 ## Kom i gang (utvikling)
 

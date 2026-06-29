@@ -10,6 +10,7 @@ members = [
     "crates/grove-os",
     "crates/grove-daemon",
     "crates/grove-cli",
+    "crates/grove-gui",
 ]
 
 [workspace.package]

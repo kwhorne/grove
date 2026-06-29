@@ -2,3 +2,8 @@
 **/*.rs.bk
 *.pdb
 .DS_Store
+
+# Tauri / frontend build artifacts
+crates/grove-gui/ui/node_modules
+crates/grove-gui/ui/dist
+crates/grove-gui/gen
