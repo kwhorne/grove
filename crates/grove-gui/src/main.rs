@@ -384,13 +384,13 @@ fn install_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         &[&open_i, &PredefinedMenuItem::separator(app)?, &quit_i],
     )?;
 
-    // Embed the icon so it works even when run unbundled; render as a template
-    // so it adapts to the light/dark menu bar.
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+    // Embed a transparent, menu-bar-optimized version of the app icon (the
+    // node-graph mark). Kept in colour (not a template) so it shows the brand.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?;
 
     TrayIconBuilder::with_id("grove-tray")
         .icon(icon)
-        .icon_as_template(true)
+        .icon_as_template(false)
         .tooltip("Grove")
         .menu(&menu)
         .show_menu_on_left_click(false)
