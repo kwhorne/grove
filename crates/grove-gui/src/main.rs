@@ -335,6 +335,17 @@ extern "C" {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            // Open devtools automatically only in debug builds.
+            #[cfg(debug_assertions)]
+            {
+                use tauri::Manager;
+                if let Some(win) = _app.get_webview_window("main") {
+                    win.open_devtools();
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             daemon_running,
             get_status,
