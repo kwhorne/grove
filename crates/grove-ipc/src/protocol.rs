@@ -49,6 +49,8 @@ pub enum Request {
     ServiceStart { key: String },
     /// Stop a bundled service.
     ServiceStop { key: String },
+    /// Restart a bundled service.
+    ServiceRestart { key: String },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).

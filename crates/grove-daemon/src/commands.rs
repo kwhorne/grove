@@ -287,6 +287,16 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             ))))
         }
 
+        Request::ServiceRestart { key } => {
+            state
+                .services
+                .restart(&key)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "restarted {key}"
+            ))))
+        }
+
         Request::Reload => {
             let n = state.reload().await?;
             Ok(Response::ok(ResponseData::Message(format!(

@@ -5,7 +5,7 @@
 //! child process with its data directory under the same tree. Stopping the
 //! daemon stops the services (the child handles are killed on drop).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Child;
@@ -47,17 +47,59 @@ pub struct ServiceStatus {
     pub version: String,
 }
 
+/// Persisted, re-derivable service state: which services should auto-start.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ServicesState {
+    /// service key -> auto-start on daemon boot.
+    #[serde(default)]
+    autostart: BTreeMap<String, bool>,
+}
+
 /// Supervises bundled services. Child handles live for the daemon's lifetime.
 pub struct ServiceManager {
     paths: GrovePaths,
     procs: Mutex<HashMap<String, Child>>,
+    state: Mutex<ServicesState>,
 }
 
 impl ServiceManager {
     pub fn new(paths: GrovePaths) -> Self {
+        let state = load_state(&paths);
         Self {
             paths,
             procs: Mutex::new(HashMap::new()),
+            state: Mutex::new(state),
+        }
+    }
+
+    fn set_autostart(&self, key: &str, enabled: bool) {
+        self.state
+            .lock()
+            .unwrap()
+            .autostart
+            .insert(key.to_string(), enabled);
+        save_state(&self.paths, &self.state.lock().unwrap());
+    }
+
+    fn wants_autostart(&self, key: &str) -> bool {
+        self.state
+            .lock()
+            .unwrap()
+            .autostart
+            .get(key)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Start every service that is **installed** and flagged for auto-start.
+    /// Called on daemon boot; never touches services that aren't installed.
+    pub fn autostart_installed(&self) {
+        for spec in catalog::CATALOG {
+            if self.is_installed(spec) && self.wants_autostart(spec.key) {
+                if let Err(e) = self.start(spec.key) {
+                    tracing::warn!(service = spec.key, error = %e, "auto-start failed");
+                }
+            }
         }
     }
 
@@ -152,7 +194,16 @@ impl ServiceManager {
             ServiceKind::Redis => {}
         }
         progress(&format!("{} ready", spec.name));
+        self.set_autostart(spec.key, true);
         Ok(())
+    }
+
+    /// Stop then start a service.
+    pub fn restart(&self, key: &str) -> Result<()> {
+        self.stop(key)?;
+        // Give the OS a moment to release the port/socket.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        self.start(key)
     }
 
     /// Initialise a MySQL data directory with a passwordless root (local dev).
@@ -294,16 +345,19 @@ impl ServiceManager {
         };
         tracing::info!(service = key, port = spec.default_port, "started service");
         self.procs.lock().unwrap().insert(key.to_string(), child);
+        self.set_autostart(key, true);
         Ok(())
     }
 
-    /// Stop a running service.
+    /// Stop a running service. Clears its auto-start flag so it stays stopped
+    /// across daemon restarts until the user starts it again.
     pub fn stop(&self, key: &str) -> Result<()> {
         if let Some(mut child) = self.procs.lock().unwrap().remove(key) {
             let _ = child.kill();
             let _ = child.wait();
             tracing::info!(service = key, "stopped service");
         }
+        self.set_autostart(key, false);
         Ok(())
     }
 }
@@ -315,6 +369,26 @@ impl Drop for ServiceManager {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+// ---- persisted autostart state ------------------------------------------
+
+fn state_file(paths: &GrovePaths) -> PathBuf {
+    paths.services_dir().join("state.json")
+}
+
+fn load_state(paths: &GrovePaths) -> ServicesState {
+    match std::fs::read_to_string(state_file(paths)) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => ServicesState::default(),
+    }
+}
+
+fn save_state(paths: &GrovePaths, state: &ServicesState) {
+    let _ = paths.ensure();
+    if let Ok(body) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(state_file(paths), body);
     }
 }
 

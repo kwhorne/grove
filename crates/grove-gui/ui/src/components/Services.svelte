@@ -29,6 +29,7 @@
   const install = (k: string) => act(k, () => api.serviceInstall(k));
   const start = (k: string) => act(k, () => api.serviceStart(k));
   const stop = (k: string) => act(k, () => api.serviceStop(k));
+  const restart = (k: string) => act(k, () => api.serviceRestart(k));
 
   // Group bundled services by category for a Herd-style layout.
   const groups = $derived(
@@ -73,9 +74,10 @@
               {busy[s.key] ? "Installing…" : "Install"}
             </button>
           {:else if s.running}
+            <button class="btn" disabled={busy[s.key]} onclick={() => restart(s.key)}>Restart</button>
             <button class="btn" disabled={busy[s.key]} onclick={() => stop(s.key)}>Stop</button>
           {:else}
-            <button class="btn" disabled={busy[s.key]} onclick={() => start(s.key)}>Start</button>
+            <button class="btn primary" disabled={busy[s.key]} onclick={() => start(s.key)}>Start</button>
           {/if}
         </div>
       </div>

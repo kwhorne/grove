@@ -49,6 +49,7 @@ export const api = {
   serviceInstall: (key: string): Promise<string> => invoke("service_install", { key }),
   serviceStart: (key: string): Promise<string> => invoke("service_start", { key }),
   serviceStop: (key: string): Promise<string> => invoke("service_stop", { key }),
+  serviceRestart: (key: string): Promise<string> => invoke("service_restart", { key }),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),
