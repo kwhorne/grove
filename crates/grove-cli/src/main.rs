@@ -9,7 +9,7 @@ use clap::Parser;
 
 use grove_core::paths::GrovePaths;
 use grove_ipc::client;
-use grove_ipc::protocol::Request;
+use grove_ipc::protocol::{Request, ResponseData};
 
 use cli::{CaAction, Cli, Command, MailAction, PhpAction, ServiceAction};
 
@@ -29,6 +29,25 @@ async fn main() -> anyhow::Result<()> {
 
         Command::Ca { action } => local::ca(&paths, action, args.json),
         Command::Php { action } => local::php(&paths, action, args.json),
+
+        Command::Env { site } => {
+            let socket = paths.ipc_socket();
+            if !client::is_running(&socket).await {
+                anyhow::bail!("Grove daemon is not running. Start it with `grove start`.");
+            }
+            let resp = client::send(&socket, &Request::EnvSnippet { site })
+                .await
+                .context("talking to daemon")?;
+            if args.json {
+                output::print_response(&resp, true);
+            } else if let Some(ResponseData::Message(s)) = resp.data {
+                print!("{s}");
+            }
+            if !resp.ok {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
 
         Command::Start => lifecycle::start(&paths, args.json).await,
         Command::Stop => lifecycle::stop(&paths, args.json).await,
@@ -119,7 +138,8 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Install
         | Command::Uninstall
         | Command::Import
-        | Command::Init { .. } => {
+        | Command::Init { .. }
+        | Command::Env { .. } => {
             unreachable!("handled before to_request")
         }
     })

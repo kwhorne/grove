@@ -52,6 +52,7 @@ export const api = {
   serviceRestart: (key: string): Promise<string> => invoke("service_restart", { key }),
   serviceSetPort: (key: string, port: number): Promise<string> =>
     invoke("service_set_port", { key, port }),
+  envSnippet: (site: string | null): Promise<string> => invoke("env_snippet", { site }),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),

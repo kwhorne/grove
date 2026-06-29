@@ -40,6 +40,16 @@
     if (expanded === s.key) portEdit = { ...portEdit, [s.key]: s.port };
   }
 
+  async function copyEnv() {
+    try {
+      const snippet = await api.envSnippet(null);
+      await navigator.clipboard.writeText(snippet);
+      notify(".env snippet copied");
+    } catch (e) {
+      notify(String(e));
+    }
+  }
+
   async function copy(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -81,6 +91,8 @@
       {svc.name}{#if svc.port}<span class="mono">:{svc.port}</span>{/if}
     </span>
   {/each}
+  <span class="spacer"></span>
+  <button class="btn" onclick={copyEnv} title="Copy a .env snippet for your app">Copy .env</button>
 </div>
 
 {#each Object.entries(groups) as [category, items] (category)}

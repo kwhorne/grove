@@ -96,7 +96,7 @@ no Homebrew, no Composer, no Valet.
 | PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |
 | Mail | `mail`, `mail show <id>`, `mail clear` |
-| Operations | `status`, `doctor`, `import` (Valet) |
+| Operations | `status`, `doctor`, `env [site]`, `import` (Valet) |
 
 Every command supports `--json` for scripting and [Elyra Conductor](https://github.com/kwhorne/elyra-conductor) integration.
 

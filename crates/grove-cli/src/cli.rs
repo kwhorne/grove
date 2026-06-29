@@ -94,6 +94,11 @@ pub enum Command {
     },
     /// Run diagnostics.
     Doctor,
+    /// Print a .env snippet wiring an app to Grove's bundled services.
+    Env {
+        /// Optional site name; used as the database name.
+        site: Option<String>,
+    },
     /// Inspect captured emails (built-in mail-catcher).
     Mail {
         #[command(subcommand)]
