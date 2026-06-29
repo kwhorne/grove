@@ -14,7 +14,7 @@ use grove_ipc::protocol::{
     DaemonStatus, DiagnosticEntry, Request, ResponseData, SettingsPatch, SettingsView,
 };
 use grove_runtime::PhpRegistry;
-use grove_services::{CapturedEmail, EmailSummary};
+use grove_services::{CapturedEmail, EmailSummary, ServiceStatus};
 use serde::Serialize;
 
 type CmdResult<T> = Result<T, String>;
@@ -109,6 +109,29 @@ async fn get_settings() -> CmdResult<SettingsView> {
 #[tauri::command]
 async fn update_settings(patch: SettingsPatch) -> CmdResult<String> {
     message(Request::UpdateSettings { patch }).await
+}
+
+#[tauri::command]
+async fn service_list() -> CmdResult<Vec<ServiceStatus>> {
+    match call(Request::ServiceList).await? {
+        ResponseData::Services(s) => Ok(s),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn service_install(key: String) -> CmdResult<String> {
+    message(Request::ServiceInstall { key }).await
+}
+
+#[tauri::command]
+async fn service_start(key: String) -> CmdResult<String> {
+    message(Request::ServiceStart { key }).await
+}
+
+#[tauri::command]
+async fn service_stop(key: String) -> CmdResult<String> {
+    message(Request::ServiceStop { key }).await
 }
 
 #[derive(Serialize)]
@@ -272,6 +295,10 @@ fn main() {
             mail_clear,
             get_settings,
             update_settings,
+            service_list,
+            service_install,
+            service_start,
+            service_stop,
             php_list,
             secure_site,
             isolate_site,

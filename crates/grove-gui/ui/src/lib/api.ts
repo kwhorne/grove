@@ -9,6 +9,7 @@ import type {
   EmailSummary,
   PhpBuild,
   ResolvedSite,
+  ServiceStatus,
   SettingsPatch,
   SettingsView,
 } from "./types";
@@ -43,6 +44,11 @@ export const api = {
   getSettings: (): Promise<SettingsView> => invoke("get_settings"),
   updateSettings: (patch: SettingsPatch): Promise<string> =>
     invoke("update_settings", { patch }),
+
+  serviceList: (): Promise<ServiceStatus[]> => invoke("service_list"),
+  serviceInstall: (key: string): Promise<string> => invoke("service_install", { key }),
+  serviceStart: (key: string): Promise<string> => invoke("service_start", { key }),
+  serviceStop: (key: string): Promise<string> => invoke("service_stop", { key }),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),

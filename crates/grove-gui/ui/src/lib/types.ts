@@ -23,6 +23,16 @@ export interface ServiceState {
   port?: number;
 }
 
+export interface ServiceStatus {
+  key: string;
+  name: string;
+  category: string;
+  installed: boolean;
+  running: boolean;
+  port: number;
+  version: string;
+}
+
 export interface DaemonStatus {
   version: string;
   tld: string;

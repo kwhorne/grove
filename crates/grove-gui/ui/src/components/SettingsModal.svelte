@@ -145,7 +145,7 @@
               <div class="flabel">Launch at login</div>
               <div class="fhelp">Start the Grove daemon automatically.</div>
             </div>
-            <button class="toggle {s.auto_start ? 'on' : ''}" onclick={() => (s!.auto_start = !s!.auto_start)}>
+            <button aria-label="Toggle launch at login" class="toggle {s.auto_start ? 'on' : ''}" onclick={() => (s!.auto_start = !s!.auto_start)}>
               <span class="knob"></span>
             </button>
           </div>
@@ -178,7 +178,7 @@
               <div class="flabel">Enable mail-catcher</div>
               <div class="fhelp">Run the built-in SMTP server. Restart required.</div>
             </div>
-            <button class="toggle {s.mail_enabled ? 'on' : ''}" onclick={() => (s!.mail_enabled = !s!.mail_enabled)}>
+            <button aria-label="Toggle mail-catcher" class="toggle {s.mail_enabled ? 'on' : ''}" onclick={() => (s!.mail_enabled = !s!.mail_enabled)}>
               <span class="knob"></span>
             </button>
           </div>

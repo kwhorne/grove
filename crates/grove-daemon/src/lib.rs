@@ -49,11 +49,15 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     // Built-in mail-catcher store, shared with the SMTP listener + IPC queries.
     let mail = grove_services::MailStore::new();
 
+    // Bundled service supervisor (downloads + runs PostgreSQL, …).
+    let services = Arc::new(grove_services::ServiceManager::new(paths.clone()));
+
     let daemon = Arc::new(DaemonState::new(
         paths.clone(),
         config,
         shared.clone(),
         mail.clone(),
+        services,
     ));
 
     // Write the pidfile so `grove stop/restart` can find us, and arrange for it

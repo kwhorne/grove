@@ -67,6 +67,11 @@ impl GrovePaths {
         self.base.join("runtimes")
     }
 
+    /// Bundled local services (PostgreSQL, …): binaries + data dirs.
+    pub fn services_dir(&self) -> PathBuf {
+        self.base.join("services")
+    }
+
     /// Runtime sockets (daemon IPC, FPM pools).
     pub fn run_dir(&self) -> PathBuf {
         self.base.join("run")
@@ -89,6 +94,7 @@ impl GrovePaths {
             self.certs_dir(),
             self.logs_dir(),
             self.runtimes_dir(),
+            self.services_dir(),
             self.run_dir(),
         ] {
             std::fs::create_dir_all(&dir)?;

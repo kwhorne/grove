@@ -1,11 +1,16 @@
 //! grove-services — local service supervisor (PRD §6.5, §8.1).
 //!
-//! v1 ships a built-in mail-catcher: an SMTP server that captures outgoing mail
-//! locally so developers can inspect what their app sends without a real mail
-//! provider. DB/Redis supervision is planned for a later iteration.
+//! Ships two things so the user never installs anything separately:
+//!   * a built-in **mail-catcher** (SMTP server capturing outgoing mail), and
+//!   * a **bundled service manager** that downloads + supervises portable
+//!     database/cache builds (PostgreSQL today) under `$GROVE_HOME/services`.
 
+pub mod catalog;
 pub mod mail;
+pub mod manager;
 pub mod store;
 
+pub use catalog::{ServiceKind, ServiceSpec, CATALOG};
 pub use mail::serve_smtp;
+pub use manager::{ServiceManager, ServiceStatus};
 pub use store::{CapturedEmail, EmailSummary, MailStore};

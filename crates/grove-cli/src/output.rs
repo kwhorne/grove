@@ -84,6 +84,22 @@ pub fn print_response(resp: &Response, json: bool) {
             }
         },
         Some(ResponseData::Settings(_)) => println!("✓ ok"),
+        Some(ResponseData::Services(svcs)) => {
+            println!(
+                "{:<12} {:<14} {:<10} {:<9} PORT",
+                "SERVICE", "CATEGORY", "INSTALLED", "RUNNING"
+            );
+            for s in svcs {
+                println!(
+                    "{:<12} {:<14} {:<10} {:<9} {}",
+                    s.name,
+                    s.category,
+                    if s.installed { "yes" } else { "no" },
+                    if s.running { "yes" } else { "no" },
+                    s.port
+                );
+            }
+        }
         Some(ResponseData::Doctor(entries)) => {
             for e in entries {
                 let mark = match e.status {

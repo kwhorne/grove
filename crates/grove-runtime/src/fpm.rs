@@ -43,7 +43,7 @@ impl Drop for FpmPool {
 /// Supervises FPM pools and answers FastCGI socket lookups for the proxy.
 pub struct FpmManager {
     paths: GrovePaths,
-    registry: PhpRegistry,
+    registry: Mutex<PhpRegistry>,
     pools: Mutex<HashMap<String, FpmPool>>,
 }
 
@@ -51,9 +51,24 @@ impl FpmManager {
     pub fn new(paths: GrovePaths, registry: PhpRegistry) -> Self {
         Self {
             paths,
-            registry,
+            registry: Mutex::new(registry),
             pools: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Look up a build, reloading the on-disk registry once if it is missing
+    /// (e.g. just installed via the GUI while the daemon is running).
+    fn build_for(&self, version: &str) -> Option<crate::registry::PhpBuild> {
+        {
+            let reg = self.registry.lock().unwrap();
+            if let Some(b) = reg.get(version) {
+                return Some(b.clone());
+            }
+        }
+        let fresh = PhpRegistry::load(&self.paths);
+        let build = fresh.get(version).cloned();
+        *self.registry.lock().unwrap() = fresh;
+        build
     }
 
     fn socket_path(&self, version: &str) -> PathBuf {
@@ -79,8 +94,7 @@ impl FpmManager {
         }
 
         let build = self
-            .registry
-            .get(version)
+            .build_for(version)
             .ok_or_else(|| FpmError::UnknownVersion(version.to_string()))?;
 
         self.paths.ensure()?;
@@ -152,10 +166,6 @@ clear_env = no
         );
         std::fs::write(&conf_path, body)?;
         Ok(conf_path)
-    }
-
-    pub fn registry(&self) -> &PhpRegistry {
-        &self.registry
     }
 }
 
