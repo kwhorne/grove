@@ -84,7 +84,10 @@ pub fn print_php_list(registry: &PhpRegistry, json: bool) {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&builds).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&builds).unwrap_or_default()
+        );
         return;
     }
     let mut any = false;

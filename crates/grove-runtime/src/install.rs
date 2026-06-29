@@ -44,7 +44,7 @@ impl SemVer {
         }
         Some(SemVer(a, b, c))
     }
-    fn to_string(self) -> String {
+    fn dotted(self) -> String {
         format!("{}.{}.{}", self.0, self.1, self.2)
     }
     /// Key used in config / registry (major.minor, e.g. "8.4").
@@ -83,7 +83,7 @@ pub fn install(
 
     progress(&format!("resolving latest {version_req} for {plat}…"));
     let resolved = resolve_version(version_req, &suffix)?;
-    let filename = format!("php-{}-fpm-{plat}.tar.gz", resolved.to_string());
+    let filename = format!("php-{}-fpm-{plat}.tar.gz", resolved.dotted());
     let url = format!("{BASE_URL}{filename}");
     let key = resolved.minor_key();
 
@@ -103,7 +103,13 @@ pub fn install(
         .arg("--version")
         .output()
         .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
         .unwrap_or_default();
     progress(&format!("installed: {actual}"));
 
@@ -114,9 +120,7 @@ pub fn install(
         user_registered: false,
     };
     registry.register(build.clone());
-    registry
-        .save(paths)
-        .map_err(InstallError::Io)?;
+    registry.save(paths).map_err(InstallError::Io)?;
     Ok(build)
 }
 
@@ -155,7 +159,10 @@ fn resolve_version(version_req: &str, suffix: &str) -> Result<SemVer> {
 
     chosen.ok_or_else(|| InstallError::NoMatch {
         req: version_req.to_string(),
-        plat: suffix.trim_start_matches("-fpm-").trim_end_matches(".tar.gz").to_string(),
+        plat: suffix
+            .trim_start_matches("-fpm-")
+            .trim_end_matches(".tar.gz")
+            .to_string(),
     })
 }
 
@@ -179,10 +186,7 @@ fn extract_fpm(gz_bytes: &[u8], dest: &PathBuf) -> Result<()> {
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.to_path_buf();
-        let is_fpm = path
-            .file_name()
-            .map(|n| n == "php-fpm")
-            .unwrap_or(false);
+        let is_fpm = path.file_name().map(|n| n == "php-fpm").unwrap_or(false);
         if is_fpm {
             let mut out = std::fs::File::create(dest)?;
             std::io::copy(&mut entry, &mut out)?;

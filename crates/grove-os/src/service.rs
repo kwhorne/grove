@@ -106,7 +106,10 @@ pub fn uninstall() -> Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = run("systemctl", &["--user", "disable", "--now", "grove.service"]);
+        let _ = run(
+            "systemctl",
+            &["--user", "disable", "--now", "grove.service"],
+        );
         if let Some(path) = unit_path() {
             let _ = std::fs::remove_file(&path);
         }

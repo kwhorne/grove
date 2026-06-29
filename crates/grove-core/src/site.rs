@@ -37,6 +37,7 @@ pub struct ResolvedSite {
 }
 
 impl ResolvedSite {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         name: String,
         tld: &str,

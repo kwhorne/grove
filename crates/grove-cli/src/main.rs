@@ -82,7 +82,10 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         Command::List => Request::ListSites,
         Command::Status => Request::Status,
         Command::Secure { name } => Request::Secure { name, enable: true },
-        Command::Unsecure { name } => Request::Secure { name, enable: false },
+        Command::Unsecure { name } => Request::Secure {
+            name,
+            enable: false,
+        },
         Command::Isolate { name, version } => Request::Isolate {
             name,
             version: Some(version),
@@ -139,7 +142,10 @@ mod lifecycle {
         let err = out.try_clone()?;
 
         let mut cmd = std::process::Command::new(exe);
-        cmd.arg("daemon").stdout(out).stderr(err).stdin(std::process::Stdio::null());
+        cmd.arg("daemon")
+            .stdout(out)
+            .stderr(err)
+            .stdin(std::process::Stdio::null());
         // Preserve a custom GROVE_HOME if one is set.
         if let Ok(home) = std::env::var("GROVE_HOME") {
             cmd.env("GROVE_HOME", home);
@@ -154,7 +160,10 @@ mod lifecycle {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        anyhow::bail!("daemon did not come up in time; see {}", paths.base().join("daemon.log").display());
+        anyhow::bail!(
+            "daemon did not come up in time; see {}",
+            paths.base().join("daemon.log").display()
+        );
     }
 
     /// Ask the daemon to shut down (IPC), falling back to SIGTERM via pidfile.
@@ -219,12 +228,7 @@ mod lifecycle {
 
     /// First-run setup. Idempotent: safe to run repeatedly. Does everything that
     /// does not need the daemon, and clearly reports the privileged steps.
-    pub fn init(
-        paths: &GrovePaths,
-        php: String,
-        no_php: bool,
-        json: bool,
-    ) -> anyhow::Result<()> {
+    pub fn init(paths: &GrovePaths, php: String, no_php: bool, json: bool) -> anyhow::Result<()> {
         use grove_os::PlatformIntegration;
         use grove_runtime::PhpRegistry;
         use grove_tls::CertificateAuthority;
@@ -278,7 +282,10 @@ mod lifecycle {
         let platform = grove_os::current();
         if grove_os::is_elevated() {
             match platform.install_resolver(&config.general.tld, config.general.dns_port) {
-                Ok(()) => steps.push((true, format!("resolver installed for .{}", config.general.tld))),
+                Ok(()) => steps.push((
+                    true,
+                    format!("resolver installed for .{}", config.general.tld),
+                )),
                 Err(e) => steps.push((false, format!("resolver: {e}"))),
             }
             match platform.trust_ca(&paths.ca_cert()) {
@@ -434,7 +441,11 @@ mod local {
                 })
                 .context("installing static PHP build")?;
                 output::print_message(
-                    &format!("php@{} ready at {}", build.version, build.fpm_binary.display()),
+                    &format!(
+                        "php@{} ready at {}",
+                        build.version,
+                        build.fpm_binary.display()
+                    ),
                     json,
                 );
             }

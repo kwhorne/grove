@@ -100,7 +100,10 @@ impl CertificateAuthority {
             .map(|n| SanType::DnsName(n.clone().try_into().expect("valid dns name")))
             .collect();
         let mut dn = DistinguishedName::new();
-        dn.push(DnType::CommonName, names.first().cloned().unwrap_or_default());
+        dn.push(
+            DnType::CommonName,
+            names.first().cloned().unwrap_or_default(),
+        );
         params.distinguished_name = dn;
         params.not_before = OffsetDateTime::now_utc() - Duration::days(1);
         // Keep leaves short-lived; the daemon renews them automatically.
@@ -118,7 +121,10 @@ impl CertificateAuthority {
         let key_path = paths.certs_dir().join(format!("{safe}.key"));
 
         if cert_path.exists() && key_path.exists() {
-            return Ok((fs::read_to_string(&cert_path)?, fs::read_to_string(&key_path)?));
+            return Ok((
+                fs::read_to_string(&cert_path)?,
+                fs::read_to_string(&key_path)?,
+            ));
         }
 
         let names = vec![hostname.to_string(), format!("*.{hostname}")];

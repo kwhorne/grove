@@ -95,20 +95,17 @@ impl PhpRegistry {
 
 /// Probe a php-fpm binary for its version → build descriptor.
 fn probe(fpm: &Path) -> Option<PhpBuild> {
-    let output = std::process::Command::new(fpm).arg("--version").output().ok()?;
+    let output = std::process::Command::new(fpm)
+        .arg("--version")
+        .output()
+        .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     // e.g. "PHP 8.4.3 (fpm-fcgi) ..."
-    let version = text
-        .split_whitespace()
-        .nth(1)
-        .and_then(|v| {
-            let mut it = v.split('.');
-            Some(format!("{}.{}", it.next()?, it.next()?))
-        })?;
-    let cli = fpm
-        .parent()
-        .map(|d| d.join("php"))
-        .filter(|p| p.exists());
+    let version = text.split_whitespace().nth(1).and_then(|v| {
+        let mut it = v.split('.');
+        Some(format!("{}.{}", it.next()?, it.next()?))
+    })?;
+    let cli = fpm.parent().map(|d| d.join("php")).filter(|p| p.exists());
     Some(PhpBuild {
         version,
         fpm_binary: fpm.to_path_buf(),

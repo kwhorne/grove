@@ -58,9 +58,7 @@ pub enum Command {
         path: Option<String>,
     },
     /// Stop parking a directory.
-    Unpark {
-        path: Option<String>,
-    },
+    Unpark { path: Option<String> },
     /// Link the current (or given) directory as a single named site.
     Link {
         /// Optional site name (defaults to the directory name).
@@ -70,22 +68,16 @@ pub enum Command {
         path: Option<String>,
     },
     /// Remove a linked site.
-    Unlink {
-        name: String,
-    },
+    Unlink { name: String },
     /// List every site Grove is serving.
     #[command(alias = "links")]
     List,
     /// Daemon + environment status.
     Status,
     /// Enable HTTPS for a site.
-    Secure {
-        name: String,
-    },
+    Secure { name: String },
     /// Disable HTTPS for a site.
-    Unsecure {
-        name: String,
-    },
+    Unsecure { name: String },
     /// Pin a PHP version for a site.
     Isolate {
         name: String,
@@ -93,9 +85,7 @@ pub enum Command {
         version: String,
     },
     /// Revert a site to the default PHP version.
-    Unisolate {
-        name: String,
-    },
+    Unisolate { name: String },
     /// Route a `<name>.test` host to a running dev server.
     Proxy {
         name: String,

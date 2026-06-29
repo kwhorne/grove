@@ -52,7 +52,9 @@ impl PlatformIntegration for Linux {
     fn untrust_ca(&self, _ca_cert: &Path) -> Result<()> {
         let dest = Path::new("/usr/local/share/ca-certificates/grove-ca.crt");
         let _ = std::fs::remove_file(dest);
-        let _ = Command::new("update-ca-certificates").arg("--fresh").status();
+        let _ = Command::new("update-ca-certificates")
+            .arg("--fresh")
+            .status();
         Ok(())
     }
 

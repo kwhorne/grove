@@ -46,10 +46,9 @@ impl SniResolver {
             .map_err(|e| tracing::error!(error = %e, hostname, "leaf issuance failed"))
             .ok()?;
 
-        let certs: Vec<CertificateDer<'static>> =
-            rustls_pemfile::certs(&mut cert_pem.as_bytes())
-                .filter_map(|c| c.ok())
-                .collect();
+        let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_pem.as_bytes())
+            .filter_map(|c| c.ok())
+            .collect();
         let key: PrivateKeyDer<'static> =
             rustls_pemfile::private_key(&mut key_pem.as_bytes()).ok()??;
 

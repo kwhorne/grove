@@ -24,7 +24,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub general: General,
@@ -106,16 +106,6 @@ pub struct SiteConfig {
     /// For proxy driver: upstream URL the site forwards to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy_to: Option<String>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: General::default(),
-            parked: Vec::new(),
-            sites: Vec::new(),
-        }
-    }
 }
 
 impl Config {
@@ -237,10 +227,7 @@ proxy_to = "http://127.0.0.1:5173"
         assert_eq!(cfg.sites.len(), 2);
         let frontend = cfg.find_site("frontend").unwrap();
         assert_eq!(frontend.driver, Some(crate::driver::Driver::Proxy));
-        assert_eq!(
-            frontend.proxy_to.as_deref(),
-            Some("http://127.0.0.1:5173")
-        );
+        assert_eq!(frontend.proxy_to.as_deref(), Some("http://127.0.0.1:5173"));
     }
 
     #[test]

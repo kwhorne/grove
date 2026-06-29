@@ -118,7 +118,7 @@ impl FpmManager {
     fn write_pool_config(
         &self,
         version: &str,
-        socket: &PathBuf,
+        socket: &std::path::Path,
         log: &std::path::Path,
     ) -> Result<PathBuf, FpmError> {
         let conf_path = self
