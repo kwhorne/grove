@@ -71,18 +71,19 @@ impl ServiceManager {
 
     /// Directory containing the service's executables.
     fn bin_dir(&self, spec: &ServiceSpec) -> Option<PathBuf> {
-        match spec.kind {
-            ServiceKind::Postgres => {
-                let root = catalog::postgres_archive_root(spec)?;
-                Some(self.service_root(spec).join(root).join("bin"))
-            }
-        }
+        let root = self.service_root(spec).join(catalog::archive_root(spec)?);
+        Some(match spec.kind {
+            ServiceKind::Postgres => root.join("bin"),
+            // Redis builds in place; binaries land in `src/`.
+            ServiceKind::Redis => root.join("src"),
+        })
     }
 
     fn primary_binary(&self, spec: &ServiceSpec) -> Option<PathBuf> {
         let bin = self.bin_dir(spec)?;
         let exe = match spec.kind {
             ServiceKind::Postgres => "postgres",
+            ServiceKind::Redis => "redis-server",
         };
         Some(bin.join(exe))
     }
@@ -131,14 +132,50 @@ impl ServiceManager {
             let bytes = http_get(&url)?;
             progress("extracting…");
             extract_tar_gz(&bytes, &root)?;
+            // Redis ships source only; compile it in place (no external deps).
+            if spec.kind == ServiceKind::Redis {
+                self.build_redis(spec, &progress)?;
+            }
             make_executables(&self.bin_dir(spec))?;
         }
 
         // One-time initialisation.
-        match spec.kind {
-            ServiceKind::Postgres => self.init_postgres(spec, &progress)?,
+        if spec.kind == ServiceKind::Postgres {
+            self.init_postgres(spec, &progress)?;
         }
         progress(&format!("{} ready", spec.name));
+        Ok(())
+    }
+
+    /// Compile Redis from source with `make` (libc malloc, no TLS) — yields a
+    /// self-contained `redis-server` linking only system libraries.
+    fn build_redis(&self, spec: &ServiceSpec, progress: &impl Fn(&str)) -> Result<()> {
+        let src = self.service_root(spec).join(
+            catalog::archive_root(spec)
+                .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?,
+        );
+        progress("compiling Redis (make)…");
+        let out = std::process::Command::new("make")
+            .current_dir(&src)
+            .args(["-j4", "MALLOC=libc", "BUILD_TLS=no"])
+            .output()
+            .map_err(|e| {
+                ServiceError::Init(format!(
+                    "make failed to start ({e}); a C toolchain is required"
+                ))
+            })?;
+        if !out.status.success() {
+            let tail: String = String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .rev()
+                .take(8)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(ServiceError::Init(tail));
+        }
         Ok(())
     }
 
@@ -190,6 +227,18 @@ impl ServiceManager {
                 .stdout(logf.try_clone()?)
                 .stderr(logf)
                 .spawn()?,
+            ServiceKind::Redis => {
+                let data = self.data_dir(spec);
+                std::fs::create_dir_all(&data)?;
+                std::process::Command::new(bin.join("redis-server"))
+                    .args(["--port", &spec.default_port.to_string()])
+                    .arg("--dir")
+                    .arg(&data)
+                    .args(["--daemonize", "no", "--save", ""])
+                    .stdout(logf.try_clone()?)
+                    .stderr(logf)
+                    .spawn()?
+            }
         };
         tracing::info!(service = key, port = spec.default_port, "started service");
         self.procs.lock().unwrap().insert(key.to_string(), child);

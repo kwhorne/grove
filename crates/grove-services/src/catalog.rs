@@ -7,7 +7,10 @@
 /// How a particular service is initialised and launched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServiceKind {
+    /// Portable prebuilt binaries (initdb + postgres).
     Postgres,
+    /// Built from source at install time (`make`), producing `src/redis-server`.
+    Redis,
 }
 
 #[derive(Debug, Clone)]
@@ -27,14 +30,24 @@ pub struct ServiceSpec {
 
 /// Everything Grove can bundle today. PostgreSQL ships self-contained binaries
 /// for every platform; more services slot in here as portable builds are added.
-pub const CATALOG: &[ServiceSpec] = &[ServiceSpec {
-    key: "postgres",
-    name: "PostgreSQL",
-    category: "Database",
-    kind: ServiceKind::Postgres,
-    default_port: 5432,
-    version: "18.4.0",
-}];
+pub const CATALOG: &[ServiceSpec] = &[
+    ServiceSpec {
+        key: "postgres",
+        name: "PostgreSQL",
+        category: "Database",
+        kind: ServiceKind::Postgres,
+        default_port: 5432,
+        version: "18.4.0",
+    },
+    ServiceSpec {
+        key: "redis",
+        name: "Redis",
+        category: "Cache & Queue",
+        kind: ServiceKind::Redis,
+        default_port: 6379,
+        version: "7.4.2",
+    },
+];
 
 pub fn spec(key: &str) -> Option<&'static ServiceSpec> {
     CATALOG.iter().find(|s| s.key == key)
@@ -50,13 +63,22 @@ pub fn download_url(spec: &ServiceSpec) -> Option<String> {
                 v = spec.version,
             ))
         }
+        ServiceKind::Redis => Some(format!(
+            "https://github.com/redis/redis/archive/refs/tags/{v}.tar.gz",
+            v = spec.version,
+        )),
     }
 }
 
-/// Top-level directory inside the postgres tarball.
-pub fn postgres_archive_root(spec: &ServiceSpec) -> Option<String> {
-    let triple = postgres_triple()?;
-    Some(format!("postgresql-{}-{triple}", spec.version))
+/// Top-level directory inside a service's archive.
+pub fn archive_root(spec: &ServiceSpec) -> Option<String> {
+    match spec.kind {
+        ServiceKind::Postgres => {
+            let triple = postgres_triple()?;
+            Some(format!("postgresql-{}-{triple}", spec.version))
+        }
+        ServiceKind::Redis => Some(format!("redis-{}", spec.version)),
+    }
 }
 
 fn postgres_triple() -> Option<&'static str> {
