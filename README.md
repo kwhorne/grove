@@ -18,6 +18,7 @@ Fase 0 (PoC) + kjernen av Fase 1 er på plass og verifisert ende-til-ende på ma
 | FastCGI-klient → PHP-FPM (lazy pools, `pm = ondemand`) | ✅ |
 | Drivere: Laravel, WordPress, generisk PHP, statisk, proxy | ✅ |
 | Lokal CA + on-demand SNI leaf-sertifikater | ✅ |
+| Innebygd PHP: last ned statisk PHP-FPM (`grove php install 8.4`) | ✅ |
 | Bring-your-own PHP-binær (`grove php register`) | ✅ |
 | Deklarativ TOML-config som kilde til sannhet | ✅ |
 | CLI ↔ daemon over Unix-socket (JSON-RPC), `--json` | ✅ |
@@ -63,8 +64,10 @@ dns_port = 5354
 path = "~/Code"
 EOF
 
-# Registrer en php-fpm-binær (f.eks. fra Herd eller Homebrew)
-grove php register 8.4 /path/to/php-fpm
+# Last ned en innebygd, statisk PHP-FPM (ingen Homebrew/Herd nødvendig)
+grove php install 8.4
+# ...eller pek på din egen binær med ekstra extensions:
+# grove php register 8.4 /path/to/php-fpm
 
 # Start daemonen (binder porter, serverer sites)
 grove daemon &
@@ -78,6 +81,14 @@ grove doctor --json
 
 I produksjon binder daemonen 80/443/53 og krever ett minimalt elevert steg for
 port-binding + resolver/trust store (PRD §10).
+
+### Null eksterne avhengigheter
+
+Grove har ingen kjøretidsavhengighet til Homebrew, Composer, dnsmasq, OpenSSL eller
+Laravel Valet. DNS, proxy, FastCGI og TLS er innebygd i Rust-kjernen. Selv PHP kan
+lastes ned som en selvstendig statisk binær via `grove php install` — den lenker
+kun mot operativsystemets egne biblioteker. `grove import` *leser* en eksisterende
+Valet-config hvis den finnes, men krever ikke at Valet er installert.
 
 ## Tester
 

@@ -6,7 +6,9 @@
 //! reaped after inactivity to keep idle RAM low (PRD §7).
 
 pub mod fpm;
+pub mod install;
 pub mod registry;
 
 pub use fpm::{FpmManager, FpmPool};
+pub use install::{install as install_php, InstallError};
 pub use registry::{PhpBuild, PhpRegistry};

@@ -330,6 +330,18 @@ mod local {
     pub fn php(paths: &GrovePaths, action: PhpAction, json: bool) -> anyhow::Result<()> {
         let mut registry = PhpRegistry::load(paths);
         match action {
+            PhpAction::Install { version } => {
+                let build = grove_runtime::install_php(paths, &mut registry, &version, |msg| {
+                    if !json {
+                        eprintln!("  {msg}");
+                    }
+                })
+                .context("installing static PHP build")?;
+                output::print_message(
+                    &format!("php@{} ready at {}", build.version, build.fpm_binary.display()),
+                    json,
+                );
+            }
             PhpAction::Discover => {
                 let n = registry.discover();
                 registry.save(paths)?;
