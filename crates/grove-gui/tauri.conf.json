@@ -4,10 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.elyra.grove.gui",
   "build": {
-    "frontendDist": "ui/dist",
-    "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "pnpm --dir ui dev",
-    "beforeBuildCommand": "pnpm --dir ui build"
+    "frontendDist": "ui/dist"
   },
   "app": {
     "withGlobalTauri": true,
