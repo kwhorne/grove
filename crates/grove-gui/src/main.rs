@@ -11,8 +11,8 @@ use grove_core::paths::GrovePaths;
 use grove_core::site::ResolvedSite;
 use grove_ipc::client;
 use grove_ipc::protocol::{
-    DaemonStatus, DiagnosticEntry, LogEntry, LogSource, Request, ResponseData, SettingsPatch,
-    SettingsView,
+    DaemonStatus, DiagnosticEntry, LogEntry, LogSource, NodeVersion, Request, ResponseData,
+    SettingsPatch, SettingsView,
 };
 use grove_runtime::PhpRegistry;
 use grove_services::{CapturedEmail, EmailSummary, ServiceStatus};
@@ -164,6 +164,19 @@ async fn log_entries(path: String, limit: usize) -> CmdResult<Vec<LogEntry>> {
         ResponseData::LogEntries(e) => Ok(e),
         _ => Err("unexpected response".into()),
     }
+}
+
+#[tauri::command]
+async fn node_list() -> CmdResult<Vec<NodeVersion>> {
+    match call(Request::NodeList).await? {
+        ResponseData::Nodes(n) => Ok(n),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn node_install(version: String) -> CmdResult<String> {
+    message(Request::NodeInstall { version }).await
 }
 
 #[derive(Serialize)]
@@ -336,6 +349,8 @@ fn main() {
             env_snippet,
             log_sources,
             log_entries,
+            node_list,
+            node_install,
             php_list,
             secure_site,
             isolate_site,

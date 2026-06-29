@@ -363,6 +363,46 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             Ok(Response::ok(ResponseData::LogEntries(entries)))
         }
 
+        Request::NodeList => {
+            let reg = grove_runtime::NodeRegistry::load(&state.paths);
+            let mut majors: Vec<String> = grove_runtime::node::OFFERED_MAJORS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            for b in reg.iter() {
+                if !majors.contains(&b.major) {
+                    majors.push(b.major.clone());
+                }
+            }
+            let nodes = majors
+                .into_iter()
+                .map(|m| {
+                    let installed = reg.get(&m);
+                    grove_ipc::protocol::NodeVersion {
+                        major: m.clone(),
+                        installed: installed.is_some(),
+                        version: installed.map(|b| b.version.clone()),
+                    }
+                })
+                .collect();
+            Ok(Response::ok(ResponseData::Nodes(nodes)))
+        }
+
+        Request::NodeInstall { version } => {
+            let paths = state.paths.clone();
+            let build = tokio::task::spawn_blocking(move || {
+                let mut reg = grove_runtime::NodeRegistry::load(&paths);
+                grove_runtime::install_node(&paths, &mut reg, &version, |_| {})
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("install task panicked: {e}"))?
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "installed Node v{}",
+                build.version
+            ))))
+        }
+
         Request::Doctor => Ok(Response::ok(ResponseData::Doctor(doctor(state).await))),
 
         Request::Shutdown => {

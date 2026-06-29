@@ -89,6 +89,12 @@ export interface SettingsView {
   php_versions: string[];
 }
 
+export interface NodeVersion {
+  major: string;
+  installed: boolean;
+  version?: string;
+}
+
 export interface LogSource {
   name: string;
   path: string;
