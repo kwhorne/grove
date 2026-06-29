@@ -47,6 +47,13 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     let daemon = Arc::new(DaemonState::new(paths.clone(), config, shared.clone()));
 
+    // Write the pidfile so `grove stop/restart` can find us, and arrange for it
+    // (and the socket) to be cleaned up on graceful shutdown.
+    write_pidfile(&paths)?;
+
+    // Translate OS signals into a graceful shutdown notification.
+    spawn_signal_handler(daemon.shutdown.clone());
+
     // Spawn network listeners. A failure to bind a privileged port is logged but
     // does not abort the others, so e.g. DNS can still work without root.
     let mut tasks = Vec::new();
@@ -88,11 +95,42 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         }));
     }
 
-    // IPC listener (foreground task).
+    // IPC listener (foreground task). Returns when shutdown is requested.
     ipc::serve(paths.ipc_socket(), daemon).await?;
 
     for t in tasks {
         t.abort();
     }
+    let _ = std::fs::remove_file(paths.pid_file());
+    tracing::info!("groved stopped");
     Ok(())
+}
+
+fn write_pidfile(paths: &GrovePaths) -> anyhow::Result<()> {
+    paths.ensure()?;
+    std::fs::write(paths.pid_file(), std::process::id().to_string())?;
+    Ok(())
+}
+
+/// On Unix, listen for SIGTERM/SIGINT and convert them into a graceful
+/// shutdown. On other platforms, fall back to Ctrl-C.
+fn spawn_signal_handler(shutdown: std::sync::Arc<tokio::sync::Notify>) {
+    tokio::spawn(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+            let mut int = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+            tokio::select! {
+                _ = term.recv() => tracing::info!("received SIGTERM"),
+                _ = int.recv() => tracing::info!("received SIGINT"),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tokio::signal::ctrl_c().await;
+            tracing::info!("received Ctrl-C");
+        }
+        shutdown.notify_waiters();
+    });
 }

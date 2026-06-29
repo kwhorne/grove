@@ -2,7 +2,9 @@
 //! registry. All config mutations funnel through here so they are persisted and
 //! the registry rebuilt atomically.
 
-use tokio::sync::Mutex;
+use std::sync::Arc;
+
+use tokio::sync::{Mutex, Notify};
 
 use grove_core::{paths::GrovePaths, Config, SiteRegistry};
 use grove_proxy::SharedState;
@@ -11,6 +13,8 @@ pub struct DaemonState {
     pub paths: GrovePaths,
     pub config: Mutex<Config>,
     pub shared: SharedState,
+    /// Notified when a graceful shutdown is requested (via IPC or signal).
+    pub shutdown: Arc<Notify>,
 }
 
 impl DaemonState {
@@ -19,7 +23,13 @@ impl DaemonState {
             paths,
             config: Mutex::new(config),
             shared,
+            shutdown: Arc::new(Notify::new()),
         }
+    }
+
+    /// Trigger a graceful shutdown.
+    pub fn request_shutdown(&self) {
+        self.shutdown.notify_waiters();
     }
 
     /// Persist the current config and rebuild + swap the live registry.
