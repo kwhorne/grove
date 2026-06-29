@@ -50,7 +50,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 📦 **Bundled PHP** — `grove php install 8.4` downloads a self-contained static binary.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer in the GUI.
-- 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL and Redis itself (Redis is compiled from source on install), so there is no database/cache or Homebrew to install separately.
+- 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself (Redis is compiled from source on install), so there is no database/cache or Homebrew to install separately.
 - 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon (JSON-RPC).
 - 🪶 **Low footprint** — target < 15 MB idle RAM, < 200 ms cold start.
 - 🔌 **Zero external dependencies** — DNS, proxy, FastCGI and TLS are all built in.
@@ -203,7 +203,7 @@ grove daemon
 - [x] Phase 1 — CLI MVP: park/link, drivers, local HTTPS, service install
 - [x] Phase 2 — multi-version PHP, bring-your-own + bundled static PHP, proxy driver
 - [x] Phase 3 — Tauri + Svelte GUI
-- [x] Phase 4 (in progress) — mail-catcher + bundled PostgreSQL & Redis supervisor; MySQL next
+- [x] Phase 4 (in progress) — mail-catcher + bundled PostgreSQL, MySQL & Redis supervisor
 - [ ] Full Linux & Windows resolver/trust integration
 
 ## License
