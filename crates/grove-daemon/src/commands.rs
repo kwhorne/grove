@@ -8,7 +8,7 @@ use grove_core::registry::name_from_path;
 use grove_core::Config;
 use grove_ipc::protocol::{
     DaemonStatus, DiagnosticEntry, DiagnosticStatus, Request, Response, ResponseData, ServiceState,
-    SiteStatus,
+    SettingsView, SiteStatus,
 };
 
 use crate::state::DaemonState;
@@ -176,6 +176,65 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             Ok(Response::ok(ResponseData::Message(format!(
                 "default PHP set to php@{version}"
             ))))
+        }
+
+        Request::GetSettings => {
+            let config = state.config.lock().await;
+            let registry = state.shared.registry.read().await;
+            let php_versions: Vec<String> = {
+                let reg = grove_runtime::PhpRegistry::load(&state.paths);
+                reg.iter().map(|b| b.version.clone()).collect()
+            };
+            let _ = &registry;
+            let view = SettingsView {
+                tld: config.general.tld.clone(),
+                default_php: config.general.default_php.clone(),
+                auto_start: config.general.auto_start,
+                http_port: config.general.http_port,
+                https_port: config.general.https_port,
+                dns_port: config.general.dns_port,
+                mail_enabled: config.services.mail_enabled,
+                mail_port: config.services.mail_port,
+                parked: config
+                    .parked
+                    .iter()
+                    .map(|p| p.path.to_string_lossy().into_owned())
+                    .collect(),
+                php_versions,
+            };
+            Ok(Response::ok(ResponseData::Settings(view)))
+        }
+
+        Request::UpdateSettings { patch } => {
+            {
+                let mut config = state.config.lock().await;
+                if let Some(v) = patch.tld {
+                    config.general.tld = v;
+                }
+                if let Some(v) = patch.default_php {
+                    config.general.default_php = v;
+                }
+                if let Some(v) = patch.auto_start {
+                    config.general.auto_start = v;
+                }
+                if let Some(v) = patch.http_port {
+                    config.general.http_port = v;
+                }
+                if let Some(v) = patch.https_port {
+                    config.general.https_port = v;
+                }
+                if let Some(v) = patch.dns_port {
+                    config.general.dns_port = v;
+                }
+                if let Some(v) = patch.mail_enabled {
+                    config.services.mail_enabled = v;
+                }
+                if let Some(v) = patch.mail_port {
+                    config.services.mail_port = v;
+                }
+            }
+            state.persist_and_reload().await?;
+            Ok(Response::ok(ResponseData::Message("settings saved".into())))
         }
 
         Request::Reload => {

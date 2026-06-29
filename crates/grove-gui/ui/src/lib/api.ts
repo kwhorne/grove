@@ -9,6 +9,8 @@ import type {
   EmailSummary,
   PhpBuild,
   ResolvedSite,
+  SettingsPatch,
+  SettingsView,
 } from "./types";
 
 export const api = {
@@ -37,6 +39,10 @@ export const api = {
   mailList: (): Promise<EmailSummary[]> => invoke("mail_list"),
   mailGet: (id: number): Promise<CapturedEmail | null> => invoke("mail_get", { id }),
   mailClear: (): Promise<string> => invoke("mail_clear"),
+
+  getSettings: (): Promise<SettingsView> => invoke("get_settings"),
+  updateSettings: (patch: SettingsPatch): Promise<string> =>
+    invoke("update_settings", { patch }),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),

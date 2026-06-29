@@ -83,6 +83,7 @@ pub fn print_response(resp: &Response, json: bool) {
                 println!("\n{body}");
             }
         },
+        Some(ResponseData::Settings(_)) => println!("✓ ok"),
         Some(ResponseData::Doctor(entries)) => {
             for e in entries {
                 let mark = match e.status {
