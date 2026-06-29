@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-06-29
+
 ### Added
 
 - **In-app auto-update** (macOS/Linux GUI): the app checks for new releases on
@@ -86,4 +88,5 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.1.1]: https://github.com/kwhorne/grove/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kwhorne/grove/releases/tag/v0.1.0
