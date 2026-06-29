@@ -51,6 +51,8 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     // Bundled service supervisor (downloads + runs PostgreSQL, …).
     let services = Arc::new(grove_services::ServiceManager::new(paths.clone()));
+    // Auto-start only services that are installed and were left running.
+    services.autostart_installed();
 
     let daemon = Arc::new(DaemonState::new(
         paths.clone(),

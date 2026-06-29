@@ -127,6 +127,8 @@ pub enum ServiceAction {
     Start { key: String },
     /// Stop a bundled service.
     Stop { key: String },
+    /// Restart a bundled service.
+    Restart { key: String },
 }
 
 #[derive(Subcommand, Debug)]

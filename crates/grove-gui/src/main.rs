@@ -134,6 +134,11 @@ async fn service_stop(key: String) -> CmdResult<String> {
     message(Request::ServiceStop { key }).await
 }
 
+#[tauri::command]
+async fn service_restart(key: String) -> CmdResult<String> {
+    message(Request::ServiceRestart { key }).await
+}
+
 #[derive(Serialize)]
 struct PhpBuildView {
     version: String,
@@ -299,6 +304,7 @@ fn main() {
             service_install,
             service_start,
             service_stop,
+            service_restart,
             php_list,
             secure_site,
             isolate_site,
