@@ -127,6 +127,46 @@ pub fn install(
     Ok(build)
 }
 
+/// Download a static PHP **CLI** build (for running composer/artisan during
+/// project scaffolding) and return the path to the `php` binary.
+pub fn install_cli(
+    paths: &GrovePaths,
+    version_req: &str,
+    progress: impl Fn(&str),
+) -> Result<PathBuf> {
+    let (os, arch) = platform_slug()?;
+    let plat = format!("{os}-{arch}");
+    let suffix = format!("-cli-{plat}.tar.gz");
+    let resolved = resolve_version(version_req, &suffix)?;
+    let key = resolved.minor_key();
+    let dest_dir = paths.runtimes_dir().join("cli").join(&key);
+    let php_path = dest_dir.join("php");
+    if php_path.exists() {
+        return Ok(php_path);
+    }
+    std::fs::create_dir_all(&dest_dir)?;
+    let filename = format!("php-{}-cli-{plat}.tar.gz", resolved.dotted());
+    progress(&format!("downloading {filename}…"));
+    let bytes = http_get(&format!("{BASE_URL}{filename}"))?;
+    let decoder = flate2::read::GzDecoder::new(&bytes[..]);
+    let mut archive = tar::Archive::new(decoder);
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        if entry
+            .path()?
+            .file_name()
+            .map(|n| n == "php")
+            .unwrap_or(false)
+        {
+            let mut out = std::fs::File::create(&php_path)?;
+            std::io::copy(&mut entry, &mut out)?;
+            break;
+        }
+    }
+    make_executable(&php_path)?;
+    Ok(php_path)
+}
+
 /// Scrape the listing and pick the best matching version.
 fn resolve_version(version_req: &str, suffix: &str) -> Result<SemVer> {
     // Exact 3-part version: use as-is (still validate it exists in the listing).

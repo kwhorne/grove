@@ -72,6 +72,23 @@ pub enum Command {
     },
     /// Remove a linked site.
     Unlink { name: String },
+    /// Create a new site (a fresh Laravel or static project) and link it.
+    New {
+        /// Project name (becomes <name>.test).
+        name: String,
+        /// Project kind: laravel | static.
+        #[arg(long, default_value = "laravel")]
+        kind: String,
+        /// Parent directory (defaults to ~/Code).
+        #[arg(long, default_value = "~/Code")]
+        path: String,
+        /// PHP version to scaffold with (defaults to the global default).
+        #[arg(long)]
+        php: Option<String>,
+        /// Initialize a git repository.
+        #[arg(long)]
+        git: bool,
+    },
     /// List every site Grove is serving.
     #[command(alias = "links")]
     List,

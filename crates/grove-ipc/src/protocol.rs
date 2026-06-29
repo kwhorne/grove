@@ -24,6 +24,15 @@ pub enum Request {
     Link { path: String, name: Option<String> },
     /// Remove a linked site.
     Unlink { name: String },
+    /// Create a new site. `kind` is "laravel" | "static". The project is created
+    /// at `parent`/`name` and linked.
+    CreateSite {
+        name: String,
+        parent: String,
+        kind: String,
+        php: Option<String>,
+        init_git: bool,
+    },
     /// Toggle HTTPS for a site.
     Secure { name: String, enable: bool },
     /// Pin a PHP version for a site (isolate / unisolate when `version` is None).

@@ -252,6 +252,24 @@ async fn unlink_site(name: String) -> CmdResult<String> {
 }
 
 #[tauri::command]
+async fn create_site(
+    name: String,
+    parent: String,
+    kind: String,
+    php: Option<String>,
+    init_git: bool,
+) -> CmdResult<String> {
+    message(Request::CreateSite {
+        name,
+        parent,
+        kind,
+        php,
+        init_git,
+    })
+    .await
+}
+
+#[tauri::command]
 async fn proxy_site(name: String, url: String) -> CmdResult<String> {
     message(Request::Proxy { name, url }).await
 }
@@ -390,6 +408,7 @@ fn main() {
             unpark_dir,
             link_dir,
             unlink_site,
+            create_site,
             proxy_site,
             stop_daemon,
             start_daemon,
