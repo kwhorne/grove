@@ -49,6 +49,33 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
+        Command::Logs { target, lines } => {
+            let socket = paths.ipc_socket();
+            if !client::is_running(&socket).await {
+                anyhow::bail!("Grove daemon is not running. Start it with `grove start`.");
+            }
+            let sources_resp = client::send(&socket, &Request::LogSources).await?;
+            match target {
+                None => output::print_response(&sources_resp, args.json),
+                Some(q) => {
+                    let path = match &sources_resp.data {
+                        Some(ResponseData::LogSources(list)) => list
+                            .iter()
+                            .find(|s| s.name.to_lowercase().contains(&q.to_lowercase()))
+                            .map(|s| s.path.clone()),
+                        _ => None,
+                    };
+                    let Some(path) = path else {
+                        anyhow::bail!("no log source matching {q:?}; run `grove logs` to list");
+                    };
+                    let resp =
+                        client::send(&socket, &Request::LogEntries { path, limit: lines }).await?;
+                    output::print_response(&resp, args.json);
+                }
+            }
+            Ok(())
+        }
+
         Command::Start => lifecycle::start(&paths, args.json).await,
         Command::Stop => lifecycle::stop(&paths, args.json).await,
         Command::Restart => lifecycle::restart(&paths, args.json).await,
@@ -139,7 +166,8 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Uninstall
         | Command::Import
         | Command::Init { .. }
-        | Command::Env { .. } => {
+        | Command::Env { .. }
+        | Command::Logs { .. } => {
             unreachable!("handled before to_request")
         }
     })

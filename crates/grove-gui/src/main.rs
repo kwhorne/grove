@@ -11,7 +11,8 @@ use grove_core::paths::GrovePaths;
 use grove_core::site::ResolvedSite;
 use grove_ipc::client;
 use grove_ipc::protocol::{
-    DaemonStatus, DiagnosticEntry, Request, ResponseData, SettingsPatch, SettingsView,
+    DaemonStatus, DiagnosticEntry, LogEntry, LogSource, Request, ResponseData, SettingsPatch,
+    SettingsView,
 };
 use grove_runtime::PhpRegistry;
 use grove_services::{CapturedEmail, EmailSummary, ServiceStatus};
@@ -147,6 +148,22 @@ async fn service_set_port(key: String, port: u16) -> CmdResult<String> {
 #[tauri::command]
 async fn env_snippet(site: Option<String>) -> CmdResult<String> {
     message(Request::EnvSnippet { site }).await
+}
+
+#[tauri::command]
+async fn log_sources() -> CmdResult<Vec<LogSource>> {
+    match call(Request::LogSources).await? {
+        ResponseData::LogSources(s) => Ok(s),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn log_entries(path: String, limit: usize) -> CmdResult<Vec<LogEntry>> {
+    match call(Request::LogEntries { path, limit }).await? {
+        ResponseData::LogEntries(e) => Ok(e),
+        _ => Err("unexpected response".into()),
+    }
 }
 
 #[derive(Serialize)]
@@ -317,6 +334,8 @@ fn main() {
             service_restart,
             service_set_port,
             env_snippet,
+            log_sources,
+            log_entries,
             php_list,
             secure_site,
             isolate_site,

@@ -89,6 +89,19 @@ export interface SettingsView {
   php_versions: string[];
 }
 
+export interface LogSource {
+  name: string;
+  path: string;
+  kind: string;
+}
+
+export interface LogEntry {
+  level: string;
+  datetime: string;
+  message: string;
+  context?: string;
+}
+
 export interface SettingsPatch {
   tld?: string;
   default_php?: string;

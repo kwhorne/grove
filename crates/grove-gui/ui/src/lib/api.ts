@@ -7,6 +7,8 @@ import type {
   DaemonStatus,
   DiagnosticEntry,
   EmailSummary,
+  LogEntry,
+  LogSource,
   PhpBuild,
   ResolvedSite,
   ServiceStatus,
@@ -53,6 +55,10 @@ export const api = {
   serviceSetPort: (key: string, port: number): Promise<string> =>
     invoke("service_set_port", { key, port }),
   envSnippet: (site: string | null): Promise<string> => invoke("env_snippet", { site }),
+
+  logSources: (): Promise<LogSource[]> => invoke("log_sources"),
+  logEntries: (path: string, limit: number): Promise<LogEntry[]> =>
+    invoke("log_entries", { path, limit }),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),
