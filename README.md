@@ -25,6 +25,7 @@ Fase 0 (PoC) + kjernen av Fase 1 er på plass og verifisert ende-til-ende på ma
 | OS-integrasjon: macOS resolver + trust store | ✅ |
 | Tjeneste-livssyklus: `start`/`stop`/`restart` (pidfil + graceful shutdown) | ✅ |
 | OS-tjenesteinstall: `install`/`uninstall` (launchd/systemd) | ✅ |
+| Onboarding (`grove init`) + default PHP (`grove use`) | ✅ |
 | Valet-import (`grove import`) | ✅ |
 | Linux/Windows OS-integrasjon | 🚧 stubs |
 | GUI (Tauri + Svelte) | ⏳ Fase 3 |
@@ -64,9 +65,10 @@ dns_port = 5354
 path = "~/Code"
 EOF
 
-# Last ned en innebygd, statisk PHP-FPM (ingen Homebrew/Herd nødvendig)
-grove php install 8.4
-# ...eller pek på din egen binær med ekstra extensions:
+# Førstegangs-oppsett: config, rot-CA, statisk PHP, resolver + trust
+grove init            # legg til sudo for resolver/CA-trust: `sudo grove init`
+
+# ...eller pek på din egen PHP-binær med ekstra extensions:
 # grove php register 8.4 /path/to/php-fpm
 
 # Start daemonen (binder porter, serverer sites)
