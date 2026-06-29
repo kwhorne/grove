@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { open } from "@tauri-apps/plugin-dialog";
   import { api } from "./lib/api";
   import type {
     DaemonStatus,
@@ -109,6 +110,20 @@
     { id: "doctor", icon: "✚", label: "Doctor" },
   ];
 
+  // Import existing projects: pick a directory and park it (every subfolder
+  // becomes a <name>.test site).
+  async function parkFolder() {
+    const picked = await open({ directory: true, multiple: false, title: "Choose a directory to park" });
+    if (typeof picked === "string") {
+      try {
+        notify(await api.park(picked));
+        await refresh();
+      } catch (e) {
+        notify(String(e));
+      }
+    }
+  }
+
   async function selectTab(t: Tab) {
     tab = t;
     if (t === "doctor" && running) diagnostics = await api.doctor();
@@ -147,7 +162,7 @@
     <div class="spacer"></div>
     <span class="status-pill {running ? 'up' : 'down'}">
       <span class="dot"></span>
-      {running ? `groved ${status?.version ?? ""}` : "stopped"}
+      {running ? "Running" : "Stopped"}
     </span>
     <button class="btn" onclick={toggleDaemon}>{running ? "Stop" : "Start"}</button>
     <button class="btn icon" title="Settings (⌘,)" onclick={() => (settingsOpen = true)}>⚙</button>
@@ -182,8 +197,13 @@
       {:else if loading}
         <div class="empty">Loading…</div>
       {:else if tab === "sites"}
-        <h2>Sites</h2>
-        <p class="subtitle">Everything Grove is serving on .{status?.tld ?? "test"}</p>
+        <div class="page-head">
+          <div>
+            <h2>Sites</h2>
+            <p class="subtitle">Everything Grove is serving on .{status?.tld ?? "test"}</p>
+          </div>
+          <button class="btn primary" onclick={parkFolder}>+ Park folder…</button>
+        </div>
         <SiteTable {sites} {phpVersions} {nodeVersions} {notify} onchange={refresh} />
       {:else if tab === "services"}
         <h2>Services</h2>
@@ -195,8 +215,8 @@
         <Mail {notify} />
       {:else if tab === "php"}
         <h2>PHP runtimes</h2>
-        <p class="subtitle">Installed builds and their extensions</p>
-        <PhpPanel {php} />
+        <p class="subtitle">Install and manage PHP versions</p>
+        <PhpPanel {php} {notify} />
       {:else if tab === "node"}
         <h2>Node.js</h2>
         <p class="subtitle">Install and manage Node.js versions</p>

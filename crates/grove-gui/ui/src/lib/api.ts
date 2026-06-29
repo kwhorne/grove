@@ -66,6 +66,9 @@ export const api = {
   nodeList: (): Promise<NodeVersion[]> => invoke("node_list"),
   nodeInstall: (version: string): Promise<string> => invoke("node_install", { version }),
 
+  phpVersions: (): Promise<NodeVersion[]> => invoke("php_versions"),
+  phpInstall: (version: string): Promise<string> => invoke("php_install", { version }),
+
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),
 };

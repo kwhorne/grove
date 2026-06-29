@@ -15,6 +15,9 @@ use crate::registry::{PhpBuild, PhpRegistry};
 /// Mirror that hosts prebuilt static PHP binaries.
 const BASE_URL: &str = "https://dl.static-php.dev/static-php-cli/common/";
 
+/// PHP major versions Grove offers in the GUI (latest first).
+pub const OFFERED_MAJORS: &[&str] = &["8.5", "8.4", "8.3"];
+
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
     #[error("unsupported platform: {0}")]

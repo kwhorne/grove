@@ -215,6 +215,16 @@ h2 {
   font-size: 16px;
   font-weight: 600;
 }
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.page-head .btn {
+  flex: none;
+  margin-top: 2px;
+}
 .subtitle {
   color: var(--text-dim);
   margin: 0 0 16px;

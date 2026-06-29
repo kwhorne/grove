@@ -186,6 +186,19 @@ struct PhpBuildView {
     user_registered: bool,
 }
 
+#[tauri::command]
+async fn php_versions() -> CmdResult<Vec<NodeVersion>> {
+    match call(Request::PhpVersionList).await? {
+        ResponseData::PhpVersions(v) => Ok(v),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn php_install(version: String) -> CmdResult<String> {
+    message(Request::PhpInstall { version }).await
+}
+
 /// PHP builds are local, re-derivable state — read the registry directly.
 #[tauri::command]
 fn php_list() -> CmdResult<Vec<PhpBuildView>> {
@@ -367,6 +380,8 @@ fn main() {
             log_entries,
             node_list,
             node_install,
+            php_versions,
+            php_install,
             php_list,
             secure_site,
             isolate_site,
