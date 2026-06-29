@@ -1,5 +1,5 @@
 //! Per-request dispatch: map a `Host` header to a site and serve it according
-//! to its driver (PRD §6.2).
+//! to its driver.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -26,7 +26,7 @@ pub trait FpmLocator: Send + Sync {
 }
 
 /// Handle one incoming request end to end. Never panics — every error path
-/// becomes an HTTP status so one bad site can't take down the daemon (PRD §7).
+/// becomes an HTTP status so one bad site can't take down the daemon.
 pub async fn handle(
     req: Request<Incoming>,
     state: SharedState,
@@ -149,7 +149,7 @@ async fn serve_php(
     Ok(resp)
 }
 
-/// Forward to an upstream dev server (Vite/Node) — PRD §6.2 proxy driver.
+/// Forward to an upstream dev server (Vite/Node) proxy driver.
 async fn serve_proxy(
     req: Request<Incoming>,
     site: &ResolvedSite,

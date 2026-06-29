@@ -1,4 +1,4 @@
-//! Minimal FastCGI client (PRD §8.2 — "egen minimal FastCGI-klient").
+//! Minimal FastCGI client ("egen minimal FastCGI-klient").
 //!
 //! Rather than depend on an unmaintained crate, Grove ships a tiny, focused
 //! FastCGI responder client: enough to dispatch one request to a PHP-FPM pool

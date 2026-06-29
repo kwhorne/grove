@@ -1,4 +1,4 @@
-//! grove-daemon — the single long-running process (PRD §8.3).
+//! grove-daemon — the single long-running process.
 //!
 //! Binds the privileged ports (DNS 53, HTTP 80, HTTPS 443), supervises FPM
 //! pools, and exposes an IPC endpoint the CLI/GUI drive. The CLI and GUI are

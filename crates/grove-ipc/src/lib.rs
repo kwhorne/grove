@@ -1,4 +1,4 @@
-//! Newline-delimited JSON-RPC over a Unix socket / named pipe (PRD §8.1).
+//! Newline-delimited JSON-RPC over a Unix socket / named pipe.
 //!
 //! The CLI and GUI are thin clients; all privileged, stateful work lives in the
 //! daemon. Keeping the wire format plain JSON makes `--json` output and

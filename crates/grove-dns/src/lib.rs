@@ -1,4 +1,4 @@
-//! Embedded authoritative resolver for `*.<tld>` (PRD §6.1).
+//! Embedded authoritative resolver for `*.<tld>`.
 //!
 //! The resolver is deliberately *not* an open resolver: it only answers for the
 //! configured TLD (e.g. `test`) and returns loopback. Anything else gets

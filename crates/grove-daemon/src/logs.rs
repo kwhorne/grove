@@ -1,4 +1,4 @@
-//! Log discovery + parsing for the GUI/CLI log viewer (PRD §6.2, §6.8).
+//! Log discovery + parsing for the GUI/CLI log viewer.
 //!
 //! Two kinds of sources are surfaced:
 //!   * **laravel** — each site's `storage/logs/*.log`, parsed into level/date/

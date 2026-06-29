@@ -1,4 +1,4 @@
-//! Download + install static PHP-FPM builds (PRD §6.4).
+//! Download + install static PHP-FPM builds.
 //!
 //! This is what makes Grove genuinely zero-dependency: instead of requiring
 //! Homebrew/Herd/Composer to supply PHP, Grove fetches a self-contained static
