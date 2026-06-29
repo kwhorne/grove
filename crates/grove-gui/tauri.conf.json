@@ -17,7 +17,11 @@
         "width": 1100,
         "height": 720,
         "minWidth": 820,
-        "minHeight": 520
+        "minHeight": 520,
+        "center": true,
+        "focus": true,
+        "visible": true,
+        "resizable": true
       }
     ],
     "security": {
