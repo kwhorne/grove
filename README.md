@@ -219,6 +219,12 @@ grove daemon
 - [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
 - [Changelog](CHANGELOG.md)
 
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) to get started,
+and please follow our [Code of Conduct](CODE_OF_CONDUCT.md). For security issues,
+see [SECURITY.md](SECURITY.md).
+
 ## License
 
 [MIT](LICENSE)
