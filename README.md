@@ -47,6 +47,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🌐 **Automatic `*.test` routing** via an embedded DNS resolver — no manual hosts editing.
 - 🔒 **Local HTTPS** with a private root CA and on-demand per-site leaf certificates.
 - 🐘 **Multi-version PHP** — global default plus per-site `isolate`, with lazy FPM pools.
+- ⬢ **Bundled Node.js** — download and manage Node versions (node · npm · npx); no nvm or Homebrew needed.
 - 📦 **Bundled PHP** — `grove php install 8.4` downloads a self-contained static binary.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer in the GUI.
@@ -94,6 +95,7 @@ no Homebrew, no Composer, no Valet.
 | Lifecycle | `daemon`, `start`, `stop`, `restart` |
 | Sites | `park` / `unpark`, `link` / `unlink`, `list`, `secure` / `unsecure`, `isolate` / `unisolate`, `proxy` |
 | PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
+| Node | `node list`, `node install <version>` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |
 | Mail | `mail`, `mail show <id>`, `mail clear` |
 | Logs | `logs` (list sources), `logs <site>` (view entries) |

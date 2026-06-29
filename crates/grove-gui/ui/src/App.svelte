@@ -9,13 +9,14 @@
   import SiteTable from "./components/SiteTable.svelte";
   import Services from "./components/Services.svelte";
   import PhpPanel from "./components/PhpPanel.svelte";
+  import NodePanel from "./components/NodePanel.svelte";
   import Doctor from "./components/Doctor.svelte";
   import Mail from "./components/Mail.svelte";
   import Logs from "./components/Logs.svelte";
   import AboutModal from "./components/AboutModal.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
 
-  type Tab = "sites" | "services" | "mail" | "php" | "logs" | "doctor";
+  type Tab = "sites" | "services" | "mail" | "php" | "node" | "logs" | "doctor";
 
   let tab = $state<Tab>("sites");
   let running = $state(false);
@@ -99,6 +100,7 @@
     { id: "services", icon: "⚙", label: "Services" },
     { id: "mail", icon: "✉", label: "Mail" },
     { id: "php", icon: "🐘", label: "PHP" },
+    { id: "node", icon: "⬢", label: "Node" },
     { id: "logs", icon: "≡", label: "Logs" },
     { id: "doctor", icon: "✚", label: "Doctor" },
   ];
@@ -191,6 +193,10 @@
         <h2>PHP runtimes</h2>
         <p class="subtitle">Installed builds and their extensions</p>
         <PhpPanel {php} />
+      {:else if tab === "node"}
+        <h2>Node.js</h2>
+        <p class="subtitle">Install and manage Node.js versions</p>
+        <NodePanel {notify} />
       {:else if tab === "logs"}
         <h2>Logs</h2>
         <p class="subtitle">Application and service logs</p>

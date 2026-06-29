@@ -9,6 +9,7 @@ import type {
   EmailSummary,
   LogEntry,
   LogSource,
+  NodeVersion,
   PhpBuild,
   ResolvedSite,
   ServiceStatus,
@@ -59,6 +60,9 @@ export const api = {
   logSources: (): Promise<LogSource[]> => invoke("log_sources"),
   logEntries: (path: string, limit: number): Promise<LogEntry[]> =>
     invoke("log_entries", { path, limit }),
+
+  nodeList: (): Promise<NodeVersion[]> => invoke("node_list"),
+  nodeInstall: (version: string): Promise<string> => invoke("node_install", { version }),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),

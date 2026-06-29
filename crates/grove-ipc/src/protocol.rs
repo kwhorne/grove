@@ -59,6 +59,10 @@ pub enum Request {
     LogSources,
     /// Read recent parsed entries from one log file (must be a known source).
     LogEntries { path: String, limit: usize },
+    /// List installed + offered Node.js versions.
+    NodeList,
+    /// Download + install a Node.js version (major or exact).
+    NodeInstall { version: String },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).
@@ -123,6 +127,17 @@ pub enum ResponseData {
     Services(Vec<ServiceStatus>),
     LogSources(Vec<LogSource>),
     LogEntries(Vec<LogEntry>),
+    Nodes(Vec<NodeVersion>),
+}
+
+/// A Node.js major version: offered for install and, if present, its installed
+/// full version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeVersion {
+    pub major: String,
+    pub installed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 /// A discoverable log file.

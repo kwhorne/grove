@@ -128,6 +128,11 @@ pub enum Command {
         #[command(subcommand)]
         action: PhpAction,
     },
+    /// Node.js runtime management.
+    Node {
+        #[command(subcommand)]
+        action: NodeAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -154,6 +159,14 @@ pub enum MailAction {
     Show { id: u64 },
     /// Discard all captured emails.
     Clear,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NodeAction {
+    /// List installed + installable Node versions.
+    List,
+    /// Download + install a Node version (major like 22, or exact 22.23.1).
+    Install { version: String },
 }
 
 #[derive(Subcommand, Debug)]

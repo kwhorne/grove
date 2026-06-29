@@ -84,6 +84,19 @@ pub fn print_response(resp: &Response, json: bool) {
             }
         },
         Some(ResponseData::Settings(_)) => println!("✓ ok"),
+        Some(ResponseData::Nodes(nodes)) => {
+            for n in nodes {
+                if n.installed {
+                    println!(
+                        "node@{}  installed (v{})",
+                        n.major,
+                        n.version.as_deref().unwrap_or("?")
+                    );
+                } else {
+                    println!("node@{}  available", n.major);
+                }
+            }
+        }
         Some(ResponseData::LogSources(sources)) => {
             if sources.is_empty() {
                 println!("No log files found yet.");

@@ -7,8 +7,10 @@
 
 pub mod fpm;
 pub mod install;
+pub mod node;
 pub mod registry;
 
 pub use fpm::{FpmManager, FpmPool};
 pub use install::{install as install_php, InstallError};
+pub use node::{install as install_node, NodeBuild, NodeRegistry};
 pub use registry::{PhpBuild, PhpRegistry};
