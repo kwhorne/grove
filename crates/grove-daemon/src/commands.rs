@@ -335,6 +335,34 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             Ok(Response::ok(ResponseData::Message(snippet)))
         }
 
+        Request::LogSources => {
+            let config = state.config.lock().await;
+            let registry = state.shared.registry.read().await;
+            let sources = crate::logs::discover(&config, &registry, &state.paths);
+            Ok(Response::ok(ResponseData::LogSources(sources)))
+        }
+
+        Request::LogEntries { path, limit } => {
+            // Only allow reading files Grove itself discovered.
+            let source = {
+                let config = state.config.lock().await;
+                let registry = state.shared.registry.read().await;
+                crate::logs::discover(&config, &registry, &state.paths)
+                    .into_iter()
+                    .find(|s| s.path == path)
+            };
+            let Some(source) = source else {
+                return Ok(Response::err("unknown log source"));
+            };
+            let entries = crate::logs::read_entries(
+                std::path::Path::new(&source.path),
+                &source.kind,
+                limit.clamp(1, 1000),
+            )
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Response::ok(ResponseData::LogEntries(entries)))
+        }
+
         Request::Doctor => Ok(Response::ok(ResponseData::Doctor(doctor(state).await))),
 
         Request::Shutdown => {

@@ -6,6 +6,7 @@
 
 pub mod commands;
 pub mod ipc;
+pub mod logs;
 pub mod state;
 
 pub use state::DaemonState;

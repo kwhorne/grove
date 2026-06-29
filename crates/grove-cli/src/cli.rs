@@ -99,6 +99,14 @@ pub enum Command {
         /// Optional site name; used as the database name.
         site: Option<String>,
     },
+    /// View logs. With no argument, lists available log files.
+    Logs {
+        /// Log source to read (matches part of its name, e.g. a site name).
+        target: Option<String>,
+        /// Max entries to show.
+        #[arg(long, default_value_t = 100)]
+        lines: usize,
+    },
     /// Inspect captured emails (built-in mail-catcher).
     Mail {
         #[command(subcommand)]

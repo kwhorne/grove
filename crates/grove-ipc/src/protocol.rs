@@ -55,6 +55,10 @@ pub enum Request {
     ServiceSetPort { key: String, port: u16 },
     /// Generate a `.env` snippet wiring an app to Grove's bundled services.
     EnvSnippet { site: Option<String> },
+    /// List discoverable log files (per-site Laravel logs + Grove service logs).
+    LogSources,
+    /// Read recent parsed entries from one log file (must be a known source).
+    LogEntries { path: String, limit: usize },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).
@@ -117,6 +121,30 @@ pub enum ResponseData {
     MailMessage(Option<CapturedEmail>),
     Settings(SettingsView),
     Services(Vec<ServiceStatus>),
+    LogSources(Vec<LogSource>),
+    LogEntries(Vec<LogEntry>),
+}
+
+/// A discoverable log file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogSource {
+    /// Display label, e.g. "myapp · laravel.log".
+    pub name: String,
+    /// Absolute path on disk.
+    pub path: String,
+    /// "laravel" | "service".
+    pub kind: String,
+}
+
+/// A single parsed log entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub level: String,
+    pub datetime: String,
+    pub message: String,
+    /// Stacktrace / JSON context belonging to this entry, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
 }
 
 /// Snapshot of the editable settings shown in the GUI settings panel.

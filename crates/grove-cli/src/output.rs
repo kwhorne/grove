@@ -84,6 +84,25 @@ pub fn print_response(resp: &Response, json: bool) {
             }
         },
         Some(ResponseData::Settings(_)) => println!("✓ ok"),
+        Some(ResponseData::LogSources(sources)) => {
+            if sources.is_empty() {
+                println!("No log files found yet.");
+                return;
+            }
+            for s in sources {
+                println!("{:<10} {}", s.kind, s.name);
+            }
+        }
+        Some(ResponseData::LogEntries(entries)) => {
+            for e in entries.iter().rev() {
+                let date = if e.datetime.is_empty() {
+                    "-"
+                } else {
+                    e.datetime.as_str()
+                };
+                println!("{:<8} {:<20} {}", e.level, date, truncate(&e.message, 90));
+            }
+        }
         Some(ResponseData::Services(svcs)) => {
             println!(
                 "{:<12} {:<14} {:<10} {:<9} PORT",
