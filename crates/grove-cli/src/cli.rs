@@ -25,6 +25,9 @@ pub enum Command {
     /// Run the Grove daemon in the foreground (used by the service manager).
     Daemon,
 
+    /// Launch the desktop GUI (starts the daemon first if needed).
+    Gui,
+
     /// Start the daemon in the background (spawns `grove daemon`).
     Start,
     /// Stop the running daemon gracefully.
