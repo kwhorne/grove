@@ -164,6 +164,11 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
         }
 
         Request::Doctor => Ok(Response::ok(ResponseData::Doctor(doctor(state).await))),
+
+        Request::Shutdown => {
+            state.request_shutdown();
+            Ok(Response::ok(ResponseData::Message("shutting down".into())))
+        }
     }
 }
 

@@ -77,6 +77,11 @@ impl GrovePaths {
         self.run_dir().join("groved.sock")
     }
 
+    /// PID file for the running daemon.
+    pub fn pid_file(&self) -> PathBuf {
+        self.run_dir().join("groved.pid")
+    }
+
     /// Create every directory in the tree if missing.
     pub fn ensure(&self) -> std::io::Result<()> {
         for dir in [

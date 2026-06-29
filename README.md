@@ -22,6 +22,9 @@ Fase 0 (PoC) + kjernen av Fase 1 er på plass og verifisert ende-til-ende på ma
 | Deklarativ TOML-config som kilde til sannhet | ✅ |
 | CLI ↔ daemon over Unix-socket (JSON-RPC), `--json` | ✅ |
 | OS-integrasjon: macOS resolver + trust store | ✅ |
+| Tjeneste-livssyklus: `start`/`stop`/`restart` (pidfil + graceful shutdown) | ✅ |
+| OS-tjenesteinstall: `install`/`uninstall` (launchd/systemd) | ✅ |
+| Valet-import (`grove import`) | ✅ |
 | Linux/Windows OS-integrasjon | 🚧 stubs |
 | GUI (Tauri + Svelte) | ⏳ Fase 3 |
 | Tjenester (DB/Redis/mail-catcher) | ⏳ Fase 4 |

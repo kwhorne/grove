@@ -33,6 +33,8 @@ pub enum Request {
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).
     Doctor,
+    /// Ask the daemon to shut down gracefully.
+    Shutdown,
 }
 
 /// Uniform response envelope. `ok=false` carries a human-readable `error`.

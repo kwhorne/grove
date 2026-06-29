@@ -7,6 +7,8 @@
 
 use std::path::Path;
 
+pub mod service;
+
 #[derive(Debug, thiserror::Error)]
 pub enum OsError {
     #[error("io: {0}")]

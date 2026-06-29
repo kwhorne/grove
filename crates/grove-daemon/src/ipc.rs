@@ -22,15 +22,26 @@ pub async fn serve(socket: PathBuf, state: Arc<DaemonState>) -> anyhow::Result<(
     let listener = UnixListener::bind(&socket)?;
     tracing::info!(socket = %socket.display(), "IPC listening");
 
+    let shutdown = state.shutdown.clone();
     loop {
-        let (stream, _addr) = listener.accept().await?;
-        let state = state.clone();
-        tokio::spawn(async move {
-            if let Err(e) = handle_conn(stream, state).await {
-                tracing::debug!(error = %e, "IPC connection error");
+        tokio::select! {
+            accepted = listener.accept() => {
+                let (stream, _addr) = accepted?;
+                let state = state.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = handle_conn(stream, state).await {
+                        tracing::debug!(error = %e, "IPC connection error");
+                    }
+                });
             }
-        });
+            _ = shutdown.notified() => {
+                tracing::info!("shutdown requested, stopping IPC listener");
+                break;
+            }
+        }
     }
+    let _ = std::fs::remove_file(&socket);
+    Ok(())
 }
 
 #[cfg(unix)]
