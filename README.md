@@ -1,74 +1,182 @@
+<div align="center">
+
+<img src="assets/logo.png" alt="Elyra Grove" width="96" height="96" />
+
 # Elyra Grove
 
-> Native lokalt utviklingsmiljø i Rust — din egen Valet/Herd, cross-platform og uten lisensvegg.
+**A native local development environment in Rust.**
 
-Grove serverer `*.test`-domener med automatisk ruting, lokal HTTPS, PHP-versjons­håndtering
-og tjenestestyring — fra én Rust-kjerne på macOS, Linux og Windows, uten Homebrew/Composer/dnsmasq.
+Grove serves `*.test` domains with automatic routing, local HTTPS, multi-version
+PHP and zero external dependencies — from a single Rust core.
 
-Se [PRD](docs/PRD.md) for full produktbeskrivelse.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#status)
+[![GUI](https://img.shields.io/badge/GUI-Tauri%202%20%2B%20Svelte%205-24c8db.svg?logo=tauri)](#gui-tauri--svelte)
 
-## Status
+</div>
 
-Fase 0 (PoC) + kjernen av Fase 1 er på plass og verifisert ende-til-ende på macOS:
+<p align="center">
+  <img src="assets/dashboard.png" alt="Grove dashboard" width="820" />
+</p>
 
-| Område | Status |
+---
+
+## Why Grove
+
+Local PHP/Laravel development today means choosing between friction points:
+
+- **Laravel Valet** is elegant and light, but macOS-only and leans on Homebrew + Composer + dnsmasq.
+- **Herd** ships static binaries but is closed, won't let you load custom PHP extensions, and gates databases, mail testing and dumps behind a Pro license.
+- **Docker / Sail** is flexible but heavy and slow for simple local work.
+
+Grove takes a different path: **one Rust codebase, three platforms, and nothing to install around it.**
+
+| | Valet | Herd | Docker/Sail | **Grove** |
+| --- | :---: | :---: | :---: | :---: |
+| Cross-platform | macOS only | macOS + Win | ✅ | ✅ |
+| No Homebrew/Composer/dnsmasq | ❌ | ✅ | ➖ | ✅ |
+| Custom / bring-your-own PHP | ✅ | ❌ | ✅ | ✅ |
+| Bundled static PHP | ❌ | ✅ | ➖ | ✅ |
+| Idle footprint | tiny | small | heavy | tiny |
+| Open / no license wall | ✅ | ❌ | ✅ | ✅ |
+
+## Features
+
+- 🌐 **Automatic `*.test` routing** via an embedded DNS resolver — no manual hosts editing.
+- 🔒 **Local HTTPS** with a private root CA and on-demand per-site leaf certificates.
+- 🐘 **Multi-version PHP** — global default plus per-site `isolate`, with lazy FPM pools.
+- 📦 **Bundled PHP** — `grove php install 8.4` downloads a self-contained static binary.
+- 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
+- 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon (JSON-RPC).
+- 🪶 **Low footprint** — target < 15 MB idle RAM, < 200 ms cold start.
+- 🔌 **Zero external dependencies** — DNS, proxy, FastCGI and TLS are all built in.
+
+## Zero external dependencies
+
+Grove has no runtime dependency on Homebrew, Composer, dnsmasq, OpenSSL or
+Laravel Valet. DNS, the reverse proxy, FastCGI and TLS are all built into the
+Rust core. Even PHP can be downloaded as a self-contained static binary via
+`grove php install` — it links only against the operating system's own
+libraries. `grove import` *reads* an existing Valet config if one is present,
+but it never requires Valet to be installed.
+
+## Quick start
+
+```bash
+# 1. First-run setup: config, root CA, a static PHP build, resolver + trust
+sudo grove init
+
+# 2. Start the daemon (binds 80/443/53)
+grove start
+
+# 3. Point Grove at your projects
+grove park ~/Code           # every subdirectory becomes <name>.test
+#   or, inside one project:
+grove link
+
+# 4. Open https://myproject.test 🎉
+grove secure myproject      # enable HTTPS
+grove isolate myproject 8.3 # pin a PHP version for this site
+```
+
+From a clean machine to a running `*.test` Laravel app in under five minutes —
+no Homebrew, no Composer, no Valet.
+
+## Command reference
+
+| Category | Commands |
 | --- | --- |
-| Embedded DNS-resolver (`*.test` → loopback, nekter andre TLD-er) | ✅ |
-| HTTP/HTTPS reverse proxy (binder 80/443, Host-basert oppslag) | ✅ |
-| FastCGI-klient → PHP-FPM (lazy pools, `pm = ondemand`) | ✅ |
-| Drivere: Laravel, WordPress, generisk PHP, statisk, proxy | ✅ |
-| Lokal CA + on-demand SNI leaf-sertifikater | ✅ |
-| Innebygd PHP: last ned statisk PHP-FPM (`grove php install 8.4`) | ✅ |
-| Bring-your-own PHP-binær (`grove php register`) | ✅ |
-| Deklarativ TOML-config som kilde til sannhet | ✅ |
-| CLI ↔ daemon over Unix-socket (JSON-RPC), `--json` | ✅ |
-| OS-integrasjon: macOS resolver + trust store | ✅ |
-| Tjeneste-livssyklus: `start`/`stop`/`restart` (pidfil + graceful shutdown) | ✅ |
-| OS-tjenesteinstall: `install`/`uninstall` (launchd/systemd) | ✅ |
-| Onboarding (`grove init`) + default PHP (`grove use`) | ✅ |
-| Valet-import (`grove import`) | ✅ |
-| Linux/Windows OS-integrasjon | 🚧 stubs |
-| GUI (Tauri + Svelte): dashboard, sites, services, PHP, doctor | ✅ |
-| Tjenester (DB/Redis/mail-catcher) | ⏳ Fase 4 |
+| Setup | `init`, `ca trust` / `ca uninstall`, `install` / `uninstall` (service) |
+| Lifecycle | `daemon`, `start`, `stop`, `restart` |
+| Sites | `park` / `unpark`, `link` / `unlink`, `list`, `secure` / `unsecure`, `isolate` / `unisolate`, `proxy` |
+| PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
+| Operations | `status`, `doctor`, `import` (Valet) |
 
-## Arkitektur (workspace)
-
-```
-grove-core      site-register, driver-deteksjon, config, paths   (ren, ingen I/O på OS)
-grove-ipc       JSON-RPC protokoll + transport (CLI/GUI ↔ daemon)
-grove-tls       rot-CA + leaf-utstedelse (rcgen/rustls)
-grove-dns       embedded resolver for *.<tld> (hickory)
-grove-proxy     HTTP/HTTPS proxy + minimal FastCGI-klient (hyper)
-grove-runtime   PHP-versjon + FPM-pool-supervisor
-grove-os        plattformintegrasjon (resolver, trust store, elevasjon)
-grove-daemon    langtkjørende prosess: binder porter, betjener IPC
-grove-cli       clap-frontend (binær: `grove`)
-grove-gui       Tauri 2 + Svelte 5 desktop-GUI (tynn klient over grove-ipc)
-```
+Every command supports `--json` for scripting and [Elyra Conductor](https://github.com/kwhorne/elyra-conductor) integration.
 
 ## GUI (Tauri + Svelte)
 
-GUI-en er en tynn klient som proxyer alt til daemonen over samme `grove-ipc`-
-protokoll som CLI-en — de er alltid i paritet. Frontenden er Svelte 5 + Vite.
+<p align="center">
+  <img src="assets/about.png" alt="Grove about" width="380" />
+</p>
+
+The GUI is a thin client that proxies everything to the daemon over the same
+`grove-ipc` JSON-RPC the CLI uses — they are always in parity. The frontend is
+Svelte 5 + Vite and shares the Elyra Conductor look & feel (Tokyo Night palette,
+JetBrains Mono). The dashboard surfaces every site with its driver, PHP version,
+a one-click HTTPS toggle, isolate, and shortcuts to open in the browser or
+Finder, alongside service and `doctor` panels.
 
 ```bash
-cd crates/grove-gui/ui && pnpm install && pnpm build   # bygg frontend
-cargo tauri dev        # utvikling (krever cargo-tauri: cargo install tauri-cli)
-cargo tauri build      # produksjonsbygg / bundling
+cd crates/grove-gui/ui && pnpm install && pnpm build   # build the frontend
+cargo tauri dev        # development (requires cargo-tauri: cargo install tauri-cli)
+cargo tauri build      # production build / bundling
 ```
 
-Dashbordet viser sites (driver, PHP-versjon, ettklikks secure-toggle, isolate,
-åpne i nettleser/finder), tjenester, PHP-runtimes og `doctor`-diagnostikk.
+## Configuration
 
-## Kom i gang (utvikling)
+Grove's source of truth is a single declarative TOML file
+(`$GROVE_HOME/config.toml`). Runtime state that can be re-derived is kept out of
+it, so the file stays human-readable and diff-friendly.
+
+```toml
+[general]
+tld = "test"
+default_php = "8.4"
+auto_start = true
+
+[[parked]]
+path = "~/Code"
+
+[[sites]]
+name = "inside-next"
+path = "~/Code/inside-next"
+php = "8.4"
+secure = true
+driver = "laravel"
+
+[[sites]]
+name = "frontend"
+path = "~/Code/frontend"
+driver = "proxy"
+proxy_to = "http://127.0.0.1:5173"
+```
+
+## Architecture
+
+A single long-running daemon binds the privileged ports (DNS 53, HTTP 80,
+HTTPS 443) and supervises the FPM pools. The CLI and GUI are thin clients that
+talk to the daemon over local IPC.
+
+```
+grove-core      site registry, driver detection, config, paths   (pure, no OS I/O)
+grove-ipc       JSON-RPC protocol + transport (CLI/GUI ↔ daemon)
+grove-tls       root CA + leaf issuance (rcgen/rustls)
+grove-dns       embedded resolver for *.<tld> (hickory)
+grove-proxy     HTTP/HTTPS proxy + minimal FastCGI client (hyper)
+grove-runtime   PHP version + FPM pool supervisor
+grove-os        platform integration (resolver, trust store, elevation)
+grove-daemon    long-running process: binds ports, serves IPC
+grove-cli       clap frontend (binary: `grove`)
+grove-gui       Tauri 2 + Svelte 5 desktop GUI (thin client over grove-ipc)
+```
+
+## Building from source
 
 ```bash
-cargo build
+# Requirements: Rust 1.80+, and (for the GUI) Node 20+ with pnpm.
+cargo build --release        # build the CLI + daemon
+cargo test                   # run the test suite
+```
 
-# Kjør med en isolert "grove home" og ikke-privilegerte porter for testing:
+For local testing without binding privileged ports, set an isolated home and
+high ports:
+
+```bash
 export GROVE_HOME=/tmp/grove-home
-mkdir -p $GROVE_HOME
-cat > $GROVE_HOME/config.toml <<'EOF'
+mkdir -p "$GROVE_HOME"
+cat > "$GROVE_HOME/config.toml" <<'EOF'
 [general]
 tld = "test"
 default_php = "8.4"
@@ -79,40 +187,22 @@ dns_port = 5354
 [[parked]]
 path = "~/Code"
 EOF
-
-# Førstegangs-oppsett: config, rot-CA, statisk PHP, resolver + trust
-grove init            # legg til sudo for resolver/CA-trust: `sudo grove init`
-
-# ...eller pek på din egen PHP-binær med ekstra extensions:
-# grove php register 8.4 /path/to/php-fpm
-
-# Start daemonen (binder porter, serverer sites)
-grove daemon &
-
-# Bruk CLI-en (snakker med daemonen over IPC)
-grove list
-grove secure mittprosjekt
-grove proxy frontend http://127.0.0.1:5173
-grove doctor --json
+grove daemon
 ```
 
-I produksjon binder daemonen 80/443/53 og krever ett minimalt elevert steg for
-port-binding + resolver/trust store (PRD §10).
+## Roadmap
 
-### Null eksterne avhengigheter
+- [x] Phase 0 — DNS + proxy + FastCGI proof of concept
+- [x] Phase 1 — CLI MVP: park/link, drivers, local HTTPS, service install
+- [x] Phase 2 — multi-version PHP, bring-your-own + bundled static PHP, proxy driver
+- [x] Phase 3 — Tauri + Svelte GUI
+- [ ] Phase 4 — services (mail-catcher, DB/Redis supervisor), deeper Conductor integration
+- [ ] Full Linux & Windows resolver/trust integration
 
-Grove har ingen kjøretidsavhengighet til Homebrew, Composer, dnsmasq, OpenSSL eller
-Laravel Valet. DNS, proxy, FastCGI og TLS er innebygd i Rust-kjernen. Selv PHP kan
-lastes ned som en selvstendig statisk binær via `grove php install` — den lenker
-kun mot operativsystemets egne biblioteker. `grove import` *leser* en eksisterende
-Valet-config hvis den finnes, men krever ikke at Valet er installert.
+## License
 
-## Tester
+[MIT](LICENSE) — provisional; see PRD §14 open questions.
 
-```bash
-cargo test
-```
-
-## Lisens
-
-MIT (foreløpig — se PRD §14 åpne spørsmål).
+<div align="center">
+<sub>Built by <a href="https://kwhorne.com">Knut W. Horne</a> · part of the Elyra ecosystem</sub>
+</div>
