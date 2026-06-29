@@ -129,6 +129,8 @@ pub enum ServiceAction {
     Stop { key: String },
     /// Restart a bundled service.
     Restart { key: String },
+    /// Set a bundled service's listen port (applied on next start/restart).
+    Port { key: String, port: u16 },
 }
 
 #[derive(Subcommand, Debug)]

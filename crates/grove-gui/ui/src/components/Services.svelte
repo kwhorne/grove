@@ -31,6 +31,33 @@
   const stop = (k: string) => act(k, () => api.serviceStop(k));
   const restart = (k: string) => act(k, () => api.serviceRestart(k));
 
+  let expanded = $state<string | null>(null);
+  let portEdit = $state<Record<string, number>>({});
+
+  function toggle(s: ServiceStatus) {
+    if (!s.installed) return;
+    expanded = expanded === s.key ? null : s.key;
+    if (expanded === s.key) portEdit = { ...portEdit, [s.key]: s.port };
+  }
+
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      notify("copied to clipboard");
+    } catch {
+      notify("copy failed");
+    }
+  }
+
+  async function savePort(key: string) {
+    const port = portEdit[key];
+    if (!port || port < 1 || port > 65535) {
+      notify("invalid port");
+      return;
+    }
+    await act(key, () => api.serviceSetPort(key, port));
+  }
+
   // Group bundled services by category for a Herd-style layout.
   const groups = $derived(
     bundled.reduce<Record<string, ServiceStatus[]>>((acc, s) => {
@@ -60,26 +87,72 @@
   <div class="cat-label">{category}</div>
   <div class="svc-list">
     {#each items as s (s.key)}
-      <div class="svc">
-        <span class="dot {s.running ? 'on' : s.installed ? 'idle' : ''}"></span>
-        <div class="info">
-          <div class="name">{s.name}</div>
-          <div class="meta mono">
-            {s.version}{#if s.installed}&nbsp;·&nbsp;Port {s.port}{/if}
+      <div class="svc-wrap">
+        <div class="svc">
+          <button
+            class="svc-head"
+            class:clickable={s.installed}
+            disabled={!s.installed}
+            onclick={() => toggle(s)}
+          >
+            <span class="dot {s.running ? 'on' : s.installed ? 'idle' : ''}"></span>
+            <div class="info">
+              <div class="name">
+                {s.name}
+                {#if s.installed}<span class="chev">{expanded === s.key ? "▾" : "▸"}</span>{/if}
+              </div>
+              <div class="meta mono">
+                {s.version}{#if s.installed}&nbsp;·&nbsp;Port {s.port}{/if}
+              </div>
+            </div>
+          </button>
+          <div class="actions">
+            {#if !s.installed}
+              <button class="btn primary" disabled={busy[s.key]} onclick={() => install(s.key)}>
+                {busy[s.key] ? "Installing…" : "Install"}
+              </button>
+            {:else if s.running}
+              <button class="btn" disabled={busy[s.key]} onclick={() => restart(s.key)}>Restart</button>
+              <button class="btn" disabled={busy[s.key]} onclick={() => stop(s.key)}>Stop</button>
+            {:else}
+              <button class="btn primary" disabled={busy[s.key]} onclick={() => start(s.key)}>Start</button>
+            {/if}
           </div>
         </div>
-        <div class="actions">
-          {#if !s.installed}
-            <button class="btn primary" disabled={busy[s.key]} onclick={() => install(s.key)}>
-              {busy[s.key] ? "Installing…" : "Install"}
-            </button>
-          {:else if s.running}
-            <button class="btn" disabled={busy[s.key]} onclick={() => restart(s.key)}>Restart</button>
-            <button class="btn" disabled={busy[s.key]} onclick={() => stop(s.key)}>Stop</button>
-          {:else}
-            <button class="btn primary" disabled={busy[s.key]} onclick={() => start(s.key)}>Start</button>
-          {/if}
-        </div>
+
+        {#if expanded === s.key && s.installed}
+          <div class="details">
+            <div class="drow">
+              <span class="dk">Connection URI</span>
+              <code class="dv">{s.uri}</code>
+              <button class="btn icon" title="Copy" onclick={() => copy(s.uri)}>⧉</button>
+            </div>
+            <div class="drow">
+              <span class="dk">Host</span>
+              <code class="dv">{s.host}</code>
+              <button class="btn icon" title="Copy" onclick={() => copy(s.host)}>⧉</button>
+            </div>
+            {#if s.username}
+              <div class="drow">
+                <span class="dk">Username</span>
+                <code class="dv">{s.username}</code>
+                <button class="btn icon" title="Copy" onclick={() => copy(s.username!)}>⧉</button>
+              </div>
+            {/if}
+            {#if s.socket}
+              <div class="drow">
+                <span class="dk">Socket</span>
+                <code class="dv">{s.socket}</code>
+                <button class="btn icon" title="Copy" onclick={() => copy(s.socket!)}>⧉</button>
+              </div>
+            {/if}
+            <div class="drow">
+              <span class="dk">Port</span>
+              <input class="port-inp" type="number" bind:value={portEdit[s.key]} />
+              <button class="btn" disabled={busy[s.key]} onclick={() => savePort(s.key)}>Save</button>
+            </div>
+          </div>
+        {/if}
       </div>
     {/each}
   </div>
@@ -123,15 +196,85 @@
     background: var(--panel);
     overflow: hidden;
   }
+  .svc-wrap {
+    border-bottom: 1px solid var(--border);
+  }
+  .svc-wrap:last-child {
+    border-bottom: 0;
+  }
   .svc {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 12px 14px;
-    border-bottom: 1px solid var(--border);
+    padding: 0 14px 0 0;
   }
-  .svc:last-child {
-    border-bottom: 0;
+  .svc-head {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    background: transparent;
+    border: 0;
+    color: var(--text);
+    text-align: left;
+  }
+  .svc-head.clickable {
+    cursor: pointer;
+  }
+  .svc-head.clickable:hover {
+    background: var(--bg-3);
+  }
+  .svc-head:disabled {
+    cursor: default;
+  }
+  .chev {
+    color: var(--text-dim);
+    font-size: 10px;
+    margin-left: 4px;
+  }
+  .details {
+    padding: 4px 14px 12px 35px;
+    background: var(--bg-2);
+  }
+  .drow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0;
+  }
+  .dk {
+    width: 110px;
+    font-size: 11px;
+    color: var(--text-dim);
+    flex: none;
+  }
+  .dv {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .port-inp {
+    width: 90px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 8px;
+  }
+  .port-inp:focus {
+    border-color: var(--accent);
+    outline: none;
   }
   .info {
     flex: 1;

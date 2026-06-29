@@ -45,6 +45,14 @@ pub struct ServiceStatus {
     pub running: bool,
     pub port: u16,
     pub version: String,
+    /// Loopback host clients connect to.
+    pub host: String,
+    /// Default username for local dev (if any).
+    pub username: Option<String>,
+    /// Unix socket path (Postgres/MySQL), if applicable.
+    pub socket: Option<String>,
+    /// Ready-to-copy connection URI.
+    pub uri: String,
 }
 
 /// Persisted, re-derivable service state: which services should auto-start.
@@ -53,6 +61,9 @@ struct ServicesState {
     /// service key -> auto-start on daemon boot.
     #[serde(default)]
     autostart: BTreeMap<String, bool>,
+    /// service key -> port override (falls back to the catalog default).
+    #[serde(default)]
+    ports: BTreeMap<String, u16>,
 }
 
 /// Supervises bundled services. Child handles live for the daemon's lifetime.
@@ -79,6 +90,29 @@ impl ServiceManager {
             .autostart
             .insert(key.to_string(), enabled);
         save_state(&self.paths, &self.state.lock().unwrap());
+    }
+
+    /// Effective listen port: a user override, else the catalog default.
+    fn effective_port(&self, spec: &ServiceSpec) -> u16 {
+        self.state
+            .lock()
+            .unwrap()
+            .ports
+            .get(spec.key)
+            .copied()
+            .unwrap_or(spec.default_port)
+    }
+
+    /// Override a service's listen port (takes effect on next start/restart).
+    pub fn set_port(&self, key: &str, port: u16) -> Result<()> {
+        let _ = catalog::spec(key).ok_or_else(|| ServiceError::Unknown(key.to_string()))?;
+        self.state
+            .lock()
+            .unwrap()
+            .ports
+            .insert(key.to_string(), port);
+        save_state(&self.paths, &self.state.lock().unwrap());
+        Ok(())
     }
 
     fn wants_autostart(&self, key: &str) -> bool {
@@ -150,20 +184,55 @@ impl ServiceManager {
         }
     }
 
-    /// Status for every catalog entry.
+    /// Status for every catalog entry, including connection details.
     pub fn status_all(&self) -> Vec<ServiceStatus> {
         catalog::CATALOG
             .iter()
-            .map(|spec| ServiceStatus {
-                key: spec.key.to_string(),
-                name: spec.name.to_string(),
-                category: spec.category.to_string(),
-                installed: self.is_installed(spec),
-                running: self.is_running(spec.key),
-                port: spec.default_port,
-                version: spec.version.to_string(),
+            .map(|spec| {
+                let port = self.effective_port(spec);
+                let (username, socket, uri) = self.connection_info(spec, port);
+                ServiceStatus {
+                    key: spec.key.to_string(),
+                    name: spec.name.to_string(),
+                    category: spec.category.to_string(),
+                    installed: self.is_installed(spec),
+                    running: self.is_running(spec.key),
+                    port,
+                    version: spec.version.to_string(),
+                    host: "127.0.0.1".to_string(),
+                    username,
+                    socket,
+                    uri,
+                }
             })
             .collect()
+    }
+
+    /// Build (username, socket, connection-uri) for a service.
+    fn connection_info(
+        &self,
+        spec: &ServiceSpec,
+        port: u16,
+    ) -> (Option<String>, Option<String>, String) {
+        match spec.kind {
+            ServiceKind::Postgres => (
+                Some("grove".into()),
+                Some(self.paths.run_dir().to_string_lossy().into_owned()),
+                format!("postgresql://grove@127.0.0.1:{port}/postgres"),
+            ),
+            ServiceKind::Mysql => (
+                Some("root".into()),
+                Some(
+                    self.paths
+                        .run_dir()
+                        .join("mysql.sock")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
+                format!("mysql://root@127.0.0.1:{port}"),
+            ),
+            ServiceKind::Redis => (None, None, format!("redis://127.0.0.1:{port}")),
+        }
     }
 
     /// Download + extract + initialise a service. Idempotent.
@@ -302,12 +371,13 @@ impl ServiceManager {
             .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
         let log = self.paths.logs_dir().join(format!("{key}.log"));
         let logf = std::fs::File::create(&log)?;
+        let port = self.effective_port(spec);
 
         let child = match spec.kind {
             ServiceKind::Postgres => std::process::Command::new(bin.join("postgres"))
                 .arg("-D")
                 .arg(self.data_dir(spec))
-                .args(["-p", &spec.default_port.to_string()])
+                .args(["-p", &port.to_string()])
                 .arg("-k")
                 .arg(self.paths.run_dir())
                 .stdout(logf.try_clone()?)
@@ -317,7 +387,7 @@ impl ServiceManager {
                 let data = self.data_dir(spec);
                 std::fs::create_dir_all(&data)?;
                 std::process::Command::new(bin.join("redis-server"))
-                    .args(["--port", &spec.default_port.to_string()])
+                    .args(["--port", &port.to_string()])
                     .arg("--dir")
                     .arg(&data)
                     .args(["--daemonize", "no", "--save", ""])
@@ -332,7 +402,7 @@ impl ServiceManager {
                 std::process::Command::new(bin.join("mysqld"))
                     .arg(format!("--datadir={}", self.data_dir(spec).display()))
                     .arg(format!("--basedir={}", base.display()))
-                    .args(["--port", &spec.default_port.to_string()])
+                    .args(["--port", &port.to_string()])
                     .arg(format!(
                         "--socket={}",
                         self.paths.run_dir().join("mysql.sock").display()
@@ -343,7 +413,7 @@ impl ServiceManager {
                     .spawn()?
             }
         };
-        tracing::info!(service = key, port = spec.default_port, "started service");
+        tracing::info!(service = key, port, "started service");
         self.procs.lock().unwrap().insert(key.to_string(), child);
         self.set_autostart(key, true);
         Ok(())
