@@ -113,6 +113,11 @@ pub enum CaAction {
 
 #[derive(Subcommand, Debug)]
 pub enum PhpAction {
+    /// Download + install a self-contained static PHP-FPM build into Grove.
+    Install {
+        /// PHP version, e.g. 8.4 (latest patch) or 8.4.22 (exact).
+        version: String,
+    },
     /// Auto-discover php-fpm binaries on this machine.
     Discover,
     /// List known PHP builds and their extensions.

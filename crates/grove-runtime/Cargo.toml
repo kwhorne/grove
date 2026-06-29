@@ -14,3 +14,7 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+# Pure-Rust HTTP(S) + archive handling — no OpenSSL / zlib C deps.
+ureq = { version = "2", default-features = false, features = ["tls"] }
+flate2 = "1"
+tar = "0.4"
