@@ -7,6 +7,7 @@ members = [
     "crates/grove-dns",
     "crates/grove-proxy",
     "crates/grove-runtime",
+    "crates/grove-services",
     "crates/grove-os",
     "crates/grove-daemon",
     "crates/grove-cli",

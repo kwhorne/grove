@@ -49,6 +49,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🐘 **Multi-version PHP** — global default plus per-site `isolate`, with lazy FPM pools.
 - 📦 **Bundled PHP** — `grove php install 8.4` downloads a self-contained static binary.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
+- 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer in the GUI.
 - 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon (JSON-RPC).
 - 🪶 **Low footprint** — target < 15 MB idle RAM, < 200 ms cold start.
 - 🔌 **Zero external dependencies** — DNS, proxy, FastCGI and TLS are all built in.
@@ -197,7 +198,7 @@ grove daemon
 - [x] Phase 1 — CLI MVP: park/link, drivers, local HTTPS, service install
 - [x] Phase 2 — multi-version PHP, bring-your-own + bundled static PHP, proxy driver
 - [x] Phase 3 — Tauri + Svelte GUI
-- [ ] Phase 4 — services (mail-catcher, DB/Redis supervisor), deeper Conductor integration
+- [x] Phase 4 (in progress) — built-in mail-catcher; DB/Redis supervisor next
 - [ ] Full Linux & Windows resolver/trust integration
 
 ## License

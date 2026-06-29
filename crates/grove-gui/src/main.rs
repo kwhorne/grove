@@ -12,6 +12,7 @@ use grove_core::site::ResolvedSite;
 use grove_ipc::client;
 use grove_ipc::protocol::{DaemonStatus, DiagnosticEntry, Request, ResponseData};
 use grove_runtime::PhpRegistry;
+use grove_services::{CapturedEmail, EmailSummary};
 use serde::Serialize;
 
 type CmdResult<T> = Result<T, String>;
@@ -72,6 +73,27 @@ async fn doctor() -> CmdResult<Vec<DiagnosticEntry>> {
         ResponseData::Doctor(d) => Ok(d),
         _ => Err("unexpected response".into()),
     }
+}
+
+#[tauri::command]
+async fn mail_list() -> CmdResult<Vec<EmailSummary>> {
+    match call(Request::MailList).await? {
+        ResponseData::Mail(m) => Ok(m),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn mail_get(id: u64) -> CmdResult<Option<CapturedEmail>> {
+    match call(Request::MailGet { id }).await? {
+        ResponseData::MailMessage(m) => Ok(m),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn mail_clear() -> CmdResult<String> {
+    message(Request::MailClear).await
 }
 
 #[derive(Serialize)]
@@ -229,6 +251,9 @@ fn main() {
             get_status,
             list_sites,
             doctor,
+            mail_list,
+            mail_get,
+            mail_clear,
             php_list,
             secure_site,
             isolate_site,

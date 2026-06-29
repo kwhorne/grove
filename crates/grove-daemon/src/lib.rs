@@ -26,6 +26,7 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     paths.ensure()?;
     let config = Config::load(&paths).context("loading config")?;
     let general = config.general.clone();
+    let general_services = config.services.clone();
 
     // Resolve PHP runtimes (auto-discover on first boot).
     let mut php_registry = PhpRegistry::load(&paths);
@@ -45,7 +46,15 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     let ca = Arc::new(CertificateAuthority::load_or_create(&paths)?);
     let sni = Arc::new(SniResolver::new(ca.clone(), paths.clone()));
 
-    let daemon = Arc::new(DaemonState::new(paths.clone(), config, shared.clone()));
+    // Built-in mail-catcher store, shared with the SMTP listener + IPC queries.
+    let mail = grove_services::MailStore::new();
+
+    let daemon = Arc::new(DaemonState::new(
+        paths.clone(),
+        config,
+        shared.clone(),
+        mail.clone(),
+    ));
 
     // Write the pidfile so `grove stop/restart` can find us, and arrange for it
     // (and the socket) to be cleaned up on graceful shutdown.
@@ -91,6 +100,16 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         tasks.push(tokio::spawn(async move {
             if let Err(e) = grove_proxy::serve_https(https_addr, shared, fpm, sni).await {
                 tracing::error!(error = %e, "HTTPS server stopped");
+            }
+        }));
+    }
+
+    if general_services.mail_enabled {
+        let mail_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, general_services.mail_port));
+        let mail = mail.clone();
+        tasks.push(tokio::spawn(async move {
+            if let Err(e) = grove_services::serve_smtp(mail_addr, mail).await {
+                tracing::error!(error = %e, %mail_addr, "mail-catcher stopped");
             }
         }));
     }
