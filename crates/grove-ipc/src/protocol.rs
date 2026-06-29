@@ -51,6 +51,8 @@ pub enum Request {
     ServiceStop { key: String },
     /// Restart a bundled service.
     ServiceRestart { key: String },
+    /// Override a bundled service's listen port.
+    ServiceSetPort { key: String, port: u16 },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).

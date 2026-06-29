@@ -139,6 +139,11 @@ async fn service_restart(key: String) -> CmdResult<String> {
     message(Request::ServiceRestart { key }).await
 }
 
+#[tauri::command]
+async fn service_set_port(key: String, port: u16) -> CmdResult<String> {
+    message(Request::ServiceSetPort { key, port }).await
+}
+
 #[derive(Serialize)]
 struct PhpBuildView {
     version: String,
@@ -305,6 +310,7 @@ fn main() {
             service_start,
             service_stop,
             service_restart,
+            service_set_port,
             php_list,
             secure_site,
             isolate_site,

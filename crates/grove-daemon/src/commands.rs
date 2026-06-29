@@ -297,6 +297,16 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             ))))
         }
 
+        Request::ServiceSetPort { key, port } => {
+            state
+                .services
+                .set_port(&key, port)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "{key} port set to {port} (restart the service to apply)"
+            ))))
+        }
+
         Request::Reload => {
             let n = state.reload().await?;
             Ok(Response::ok(ResponseData::Message(format!(

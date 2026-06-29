@@ -31,6 +31,10 @@ export interface ServiceStatus {
   running: boolean;
   port: number;
   version: string;
+  host: string;
+  username?: string;
+  socket?: string;
+  uri: string;
 }
 
 export interface DaemonStatus {

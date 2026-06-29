@@ -108,6 +108,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             ServiceAction::Start { key } => Request::ServiceStart { key },
             ServiceAction::Stop { key } => Request::ServiceStop { key },
             ServiceAction::Restart { key } => Request::ServiceRestart { key },
+            ServiceAction::Port { key, port } => Request::ServiceSetPort { key, port },
         },
         Command::Daemon
         | Command::Ca { .. }
