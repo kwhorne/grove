@@ -37,6 +37,20 @@ pub enum Command {
     Uninstall,
     /// Import sites/parked dirs from an existing Laravel Valet config.
     Import,
+    /// First-run setup: config, root CA, a PHP build, resolver + trust (where possible).
+    Init {
+        /// PHP version to ensure is installed (default: 8.4). Use --no-php to skip.
+        #[arg(long, default_value = "8.4")]
+        php: String,
+        /// Skip downloading/ensuring a PHP build.
+        #[arg(long)]
+        no_php: bool,
+    },
+    /// Set the global default PHP version.
+    Use {
+        /// PHP version, e.g. 8.4
+        version: String,
+    },
 
     /// Park a directory — every subdirectory becomes a `<name>.test` site.
     Park {

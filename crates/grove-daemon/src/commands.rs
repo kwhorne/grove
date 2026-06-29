@@ -156,6 +156,17 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             ))))
         }
 
+        Request::SetDefaultPhp { version } => {
+            {
+                let mut config = state.config.lock().await;
+                config.general.default_php = version.clone();
+            }
+            state.persist_and_reload().await?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "default PHP set to php@{version}"
+            ))))
+        }
+
         Request::Reload => {
             let n = state.reload().await?;
             Ok(Response::ok(ResponseData::Message(format!(

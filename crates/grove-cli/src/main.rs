@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Install => lifecycle::install(&paths, args.json),
         Command::Uninstall => lifecycle::uninstall(&paths, args.json),
         Command::Import => lifecycle::import_valet(&paths, args.json),
+        Command::Init { php, no_php } => lifecycle::init(&paths, php, no_php, args.json),
 
         // Everything else is an IPC round-trip to the daemon.
         other => {
@@ -92,6 +93,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         },
         Command::Proxy { name, url } => Request::Proxy { name, url },
         Command::Doctor => Request::Doctor,
+        Command::Use { version } => Request::SetDefaultPhp { version },
         Command::Daemon
         | Command::Ca { .. }
         | Command::Php { .. }
@@ -100,7 +102,8 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Restart
         | Command::Install
         | Command::Uninstall
-        | Command::Import => {
+        | Command::Import
+        | Command::Init { .. } => {
             unreachable!("handled before to_request")
         }
     })
@@ -211,6 +214,99 @@ mod lifecycle {
         let _ = platform.uninstall_resolver(&config.general.tld);
         let _ = platform.untrust_ca(&paths.ca_cert());
         output::print_message("service, resolver and CA trust removed", json);
+        Ok(())
+    }
+
+    /// First-run setup. Idempotent: safe to run repeatedly. Does everything that
+    /// does not need the daemon, and clearly reports the privileged steps.
+    pub fn init(
+        paths: &GrovePaths,
+        php: String,
+        no_php: bool,
+        json: bool,
+    ) -> anyhow::Result<()> {
+        use grove_os::PlatformIntegration;
+        use grove_runtime::PhpRegistry;
+        use grove_tls::CertificateAuthority;
+
+        let mut steps: Vec<(bool, String)> = Vec::new();
+        paths.ensure()?;
+
+        // 1. Config (create default if absent, never clobber).
+        let cfg_path = paths.config_file();
+        let mut config = Config::load(paths).unwrap_or_default();
+        if !cfg_path.exists() {
+            config.save(paths)?;
+            steps.push((true, format!("created config at {}", cfg_path.display())));
+        } else {
+            steps.push((true, format!("config present at {}", cfg_path.display())));
+        }
+
+        // 2. Root CA (no elevation needed to generate).
+        CertificateAuthority::load_or_create(paths)?;
+        steps.push((true, format!("root CA at {}", paths.ca_cert().display())));
+
+        // 3. Ensure a PHP build.
+        let mut registry = PhpRegistry::load(paths);
+        if !no_php {
+            if registry.iter().next().is_none() {
+                registry.discover();
+            }
+            if registry.get(&php).is_none() {
+                if !json {
+                    eprintln!("  installing php@{php} (static, self-contained)…");
+                }
+                match grove_runtime::install_php(paths, &mut registry, &php, |m| {
+                    if !json {
+                        eprintln!("    {m}");
+                    }
+                }) {
+                    Ok(build) => {
+                        config.general.default_php = build.version.clone();
+                        steps.push((true, format!("installed php@{}", build.version)));
+                    }
+                    Err(e) => steps.push((false, format!("PHP install failed: {e}"))),
+                }
+            } else {
+                config.general.default_php = php.clone();
+                steps.push((true, format!("php@{php} already available")));
+            }
+            config.save(paths)?;
+        }
+
+        // 4. Privileged steps: resolver + CA trust (only if we can).
+        let platform = grove_os::current();
+        if grove_os::is_elevated() {
+            match platform.install_resolver(&config.general.tld, config.general.dns_port) {
+                Ok(()) => steps.push((true, format!("resolver installed for .{}", config.general.tld))),
+                Err(e) => steps.push((false, format!("resolver: {e}"))),
+            }
+            match platform.trust_ca(&paths.ca_cert()) {
+                Ok(()) => steps.push((true, "root CA trusted in system store".into())),
+                Err(e) => steps.push((false, format!("CA trust: {e}"))),
+            }
+        } else {
+            steps.push((
+                false,
+                "resolver + CA trust need elevation — run `sudo grove init` or \
+                 `sudo grove ca trust`"
+                    .into(),
+            ));
+        }
+
+        if json {
+            let arr: Vec<_> = steps
+                .iter()
+                .map(|(ok, msg)| serde_json::json!({ "ok": ok, "step": msg }))
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
+        } else {
+            println!("Grove setup:");
+            for (ok, msg) in &steps {
+                println!("  {} {msg}", if *ok { "✓" } else { "!" });
+            }
+            println!("\nNext: `grove start`, then `grove park ~/Code` and open a site.");
+        }
         Ok(())
     }
 
