@@ -4,7 +4,6 @@ on:
   push:
     tags: ["v*"]
 
-# Allow the workflow to create the GitHub Release and upload assets.
 permissions:
   contents: write
 
@@ -12,8 +11,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build (${{ matrix.target }})
+  release:
+    name: Release (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
@@ -58,44 +57,40 @@ jobs:
           cache: pnpm
           cache-dependency-path: crates/grove-gui/ui/pnpm-lock.yaml
 
-      - name: Build frontend
+      - name: Install frontend deps
         working-directory: crates/grove-gui/ui
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm run build
+        run: pnpm install --frozen-lockfile
 
       - name: Build CLI (grove)
         run: cargo build --release -p grove-cli --target ${{ matrix.target }}
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2.0" --locked
-
-      - name: Build GUI bundle (.dmg / .deb / .AppImage)
-        id: gui
-        continue-on-error: true
-        working-directory: crates/grove-gui
-        run: cargo tauri build --target ${{ matrix.target }}
-
-      - name: Stage release assets
+      - name: Package CLI
         shell: bash
         run: |
           mkdir -p dist
-          # CLI binary, tarred per platform.
           tar -C "target/${{ matrix.target }}/release" -czf \
             "dist/grove-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" grove
-          # GUI bundles, if the bundling step produced any.
-          find "target/${{ matrix.target }}/release/bundle" -type f \
-            \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
-            -exec cp {} dist/ \; 2>/dev/null || true
-          ls -lh dist
 
-      - name: Upload to the GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
-          draft: false
-          generate_release_notes: true
-          body_path: ${{ github.workspace }}/.github/release-intro.md
-          append_body: true
+      # Builds + signs the GUI, generates latest.json, creates/updates the
+      # GitHub Release and uploads the bundles + updater artifacts.
+      - name: Build & release GUI (Tauri)
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: crates/grove-gui
+          tagName: ${{ github.ref_name }}
+          releaseName: "Grove ${{ github.ref_name }}"
+          releaseBody: "See the assets below to download. The macOS app auto-updates. Changelog: https://github.com/kwhorne/grove/blob/main/CHANGELOG.md"
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }}
+
+      - name: Attach CLI tarball to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" dist/*.tar.gz --clobber

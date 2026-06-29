@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **In-app auto-update** (macOS/Linux GUI): the app checks for new releases on
+  launch and offers a one-click “Install & restart”. Updates are cryptographically
+  signed; the release pipeline publishes signed updater artifacts + `latest.json`.
+
 ## [0.1.0] — 2026-06-29
 
 First public release. A native, cross-platform local development environment in

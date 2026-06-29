@@ -21,6 +21,8 @@ grove-runtime = { path = "../grove-runtime" }
 grove-services = { path = "../grove-services" }
 tauri = { version = "2", features = ["devtools", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

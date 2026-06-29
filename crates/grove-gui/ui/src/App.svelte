@@ -1,5 +1,7 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
+  import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import { api } from "./lib/api";
   import type {
     DaemonStatus,
@@ -32,6 +34,49 @@
   let aboutOpen = $state(false);
   let settingsOpen = $state(false);
   let newSiteOpen = $state(false);
+
+  // ---- auto-update ----
+  let update = $state<Update | null>(null);
+  let updateStatus = $state<"" | "downloading" | "ready" | "error">("");
+  let updateProgress = $state(0);
+  let updateError = $state("");
+  let updateDismissed = $state(false);
+
+  async function checkForUpdate(manual = false) {
+    try {
+      const u = await checkUpdate();
+      if (u) {
+        update = u;
+        updateDismissed = false;
+      } else if (manual) {
+        notify("You're on the latest version.");
+      }
+    } catch (e) {
+      if (manual) notify(`Update check failed: ${e}`);
+      else console.warn("update check failed", e);
+    }
+  }
+
+  async function installUpdate() {
+    if (!update) return;
+    updateStatus = "downloading";
+    let total = 0;
+    let got = 0;
+    try {
+      await update.downloadAndInstall((ev) => {
+        if (ev.event === "Started") total = ev.data?.contentLength ?? 0;
+        else if (ev.event === "Progress") {
+          got += ev.data.chunkLength;
+          updateProgress = total ? Math.round((got / total) * 100) : 0;
+        } else if (ev.event === "Finished") updateProgress = 100;
+      });
+      updateStatus = "ready";
+      await relaunch();
+    } catch (e) {
+      updateStatus = "error";
+      updateError = String(e);
+    }
+  }
 
   function notify(msg: string) {
     toast = msg;
@@ -80,6 +125,7 @@
 
   $effect(() => {
     refresh();
+    checkForUpdate(false); // silent check on startup
     const id = setInterval(refresh, 4000);
     return () => clearInterval(id);
   });
@@ -169,6 +215,22 @@
     <button class="btn" onclick={toggleDaemon}>{running ? "Stop" : "Start"}</button>
     <button class="btn icon" title="Settings (⌘,)" onclick={() => (settingsOpen = true)}>⚙</button>
   </header>
+
+  {#if update && !updateDismissed}
+    <div class="update-bar">
+      {#if updateStatus === "error"}
+        <span>⚠ Update failed: {updateError}</span>
+        <button class="btn" onclick={() => (updateStatus = "")}>Dismiss</button>
+      {:else if updateStatus === "downloading"}
+        <span>Downloading update… {updateProgress}%</span>
+      {:else}
+        <span>⬆ Update available: <strong>v{update.version}</strong></span>
+        <div class="spacer"></div>
+        <button class="btn" onclick={() => (updateDismissed = true)}>Later</button>
+        <button class="btn primary" onclick={installUpdate}>Install &amp; restart</button>
+      {/if}
+    </div>
+  {/if}
 
   <div class="body">
     <nav class="sidebar">

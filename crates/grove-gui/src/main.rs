@@ -416,6 +416,8 @@ fn install_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // macOS menu-bar (system tray) icon with a small menu.
             install_tray(app.handle())?;
