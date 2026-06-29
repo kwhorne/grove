@@ -10,7 +10,9 @@ use std::path::PathBuf;
 use grove_core::paths::GrovePaths;
 use grove_core::site::ResolvedSite;
 use grove_ipc::client;
-use grove_ipc::protocol::{DaemonStatus, DiagnosticEntry, Request, ResponseData};
+use grove_ipc::protocol::{
+    DaemonStatus, DiagnosticEntry, Request, ResponseData, SettingsPatch, SettingsView,
+};
 use grove_runtime::PhpRegistry;
 use grove_services::{CapturedEmail, EmailSummary};
 use serde::Serialize;
@@ -94,6 +96,19 @@ async fn mail_get(id: u64) -> CmdResult<Option<CapturedEmail>> {
 #[tauri::command]
 async fn mail_clear() -> CmdResult<String> {
     message(Request::MailClear).await
+}
+
+#[tauri::command]
+async fn get_settings() -> CmdResult<SettingsView> {
+    match call(Request::GetSettings).await? {
+        ResponseData::Settings(s) => Ok(s),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn update_settings(patch: SettingsPatch) -> CmdResult<String> {
+    message(Request::UpdateSettings { patch }).await
 }
 
 #[derive(Serialize)]
@@ -246,6 +261,7 @@ extern "C" {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             daemon_running,
             get_status,
@@ -254,6 +270,8 @@ fn main() {
             mail_list,
             mail_get,
             mail_clear,
+            get_settings,
+            update_settings,
             php_list,
             secure_site,
             isolate_site,

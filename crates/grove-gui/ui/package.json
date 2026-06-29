@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8",
-    "@tauri-apps/api": "^2.0.0"
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0",

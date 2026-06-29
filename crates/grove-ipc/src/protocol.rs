@@ -35,6 +35,10 @@ pub enum Request {
     Proxy { name: String, url: String },
     /// Set the global default PHP version (`grove use`).
     SetDefaultPhp { version: String },
+    /// Fetch the editable settings (general + services + parked paths).
+    GetSettings,
+    /// Apply a partial settings update. Unset fields are left unchanged.
+    UpdateSettings { patch: SettingsPatch },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).
@@ -95,6 +99,38 @@ pub enum ResponseData {
     Doctor(Vec<DiagnosticEntry>),
     Mail(Vec<EmailSummary>),
     MailMessage(Option<CapturedEmail>),
+    Settings(SettingsView),
+}
+
+/// Snapshot of the editable settings shown in the GUI settings panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsView {
+    pub tld: String,
+    pub default_php: String,
+    pub auto_start: bool,
+    pub http_port: u16,
+    pub https_port: u16,
+    pub dns_port: u16,
+    pub mail_enabled: bool,
+    pub mail_port: u16,
+    /// Parked directories (raw, unexpanded).
+    pub parked: Vec<String>,
+    /// PHP versions currently available to Grove.
+    pub php_versions: Vec<String>,
+}
+
+/// Partial update; only `Some` fields are applied. Changing ports or the TLD
+/// requires a daemon restart to take effect on the listeners.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SettingsPatch {
+    pub tld: Option<String>,
+    pub default_php: Option<String>,
+    pub auto_start: Option<bool>,
+    pub http_port: Option<u16>,
+    pub https_port: Option<u16>,
+    pub dns_port: Option<u16>,
+    pub mail_enabled: Option<bool>,
+    pub mail_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

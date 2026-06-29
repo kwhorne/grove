@@ -108,7 +108,9 @@ The GUI is a thin client that proxies everything to the daemon over the same
 Svelte 5 + Vite and shares the Elyra Conductor look & feel (Tokyo Night palette,
 JetBrains Mono). The dashboard surfaces every site with its driver, PHP version,
 a one-click HTTPS toggle, isolate, and shortcuts to open in the browser or
-Finder, alongside service and `doctor` panels.
+Finder, alongside service, mail and `doctor` panels. A Settings panel (⌘,)
+manages parked paths, the TLD, default PHP, the mail-catcher port,
+launch-at-login and the theme (auto/light/dark).
 
 ```bash
 cd crates/grove-gui/ui && pnpm install && pnpm build   # build the frontend

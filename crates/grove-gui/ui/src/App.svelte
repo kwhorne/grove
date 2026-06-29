@@ -12,6 +12,7 @@
   import Doctor from "./components/Doctor.svelte";
   import Mail from "./components/Mail.svelte";
   import AboutModal from "./components/AboutModal.svelte";
+  import SettingsModal from "./components/SettingsModal.svelte";
 
   type Tab = "sites" | "services" | "mail" | "php" | "doctor";
 
@@ -24,6 +25,7 @@
   let toast = $state<string | null>(null);
   let loading = $state(true);
   let aboutOpen = $state(false);
+  let settingsOpen = $state(false);
 
   function notify(msg: string) {
     toast = msg;
@@ -71,6 +73,22 @@
     refresh();
     const id = setInterval(refresh, 4000);
     return () => clearInterval(id);
+  });
+
+  // Cmd/Ctrl+, opens Settings, matching the macOS convention.
+  $effect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        settingsOpen = true;
+      }
+      if (e.key === "Escape") {
+        settingsOpen = false;
+        aboutOpen = false;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   });
 
   const phpVersions = $derived(php.map((b) => b.version));
@@ -124,6 +142,7 @@
       {running ? `groved ${status?.version ?? ""}` : "stopped"}
     </span>
     <button class="btn" onclick={toggleDaemon}>{running ? "Stop" : "Start"}</button>
+    <button class="btn icon" title="Settings (⌘,)" onclick={() => (settingsOpen = true)}>⚙</button>
   </header>
 
   <div class="body">
@@ -183,4 +202,5 @@
   {/if}
 
   <AboutModal open={aboutOpen} onclose={() => (aboutOpen = false)} />
+  <SettingsModal open={settingsOpen} onclose={() => (settingsOpen = false)} {notify} />
 </div>

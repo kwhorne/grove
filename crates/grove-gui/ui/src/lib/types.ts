@@ -61,3 +61,27 @@ export interface CapturedEmail extends EmailSummary {
   text?: string;
   html?: string;
 }
+
+export interface SettingsView {
+  tld: string;
+  default_php: string;
+  auto_start: boolean;
+  http_port: number;
+  https_port: number;
+  dns_port: number;
+  mail_enabled: boolean;
+  mail_port: number;
+  parked: string[];
+  php_versions: string[];
+}
+
+export interface SettingsPatch {
+  tld?: string;
+  default_php?: string;
+  auto_start?: boolean;
+  http_port?: number;
+  https_port?: number;
+  dns_port?: number;
+  mail_enabled?: boolean;
+  mail_port?: number;
+}
