@@ -10,6 +10,7 @@
   import Services from "./components/Services.svelte";
   import PhpPanel from "./components/PhpPanel.svelte";
   import Doctor from "./components/Doctor.svelte";
+  import AboutModal from "./components/AboutModal.svelte";
 
   type Tab = "sites" | "services" | "php" | "doctor";
 
@@ -21,6 +22,7 @@
   let diagnostics = $state<DiagnosticEntry[]>([]);
   let toast = $state<string | null>(null);
   let loading = $state(true);
+  let aboutOpen = $state(false);
 
   function notify(msg: string) {
     toast = msg;
@@ -64,7 +66,6 @@
     await refresh();
   }
 
-  // Initial load + poll while the window is open.
   $effect(() => {
     refresh();
     const id = setInterval(refresh, 4000);
@@ -72,11 +73,41 @@
   });
 
   const phpVersions = $derived(php.map((b) => b.version));
+
+  const navItems: { id: Tab; icon: string; label: string }[] = [
+    { id: "sites", icon: "◰", label: "Sites" },
+    { id: "services", icon: "⚙", label: "Services" },
+    { id: "php", icon: "🐘", label: "PHP" },
+    { id: "doctor", icon: "✚", label: "Doctor" },
+  ];
+
+  async function selectTab(t: Tab) {
+    tab = t;
+    if (t === "doctor" && running) diagnostics = await api.doctor();
+  }
 </script>
 
 <div class="app">
-  <header class="topbar">
-    <div class="brand"><span class="leaf">🌳</span> Grove</div>
+  <header class="toolbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="22" height="22">
+        <rect width="24" height="24" rx="5" fill="#0a0a0a" />
+        <g stroke="#fb923c" stroke-width="1" stroke-linecap="round" opacity="0.45">
+          <line x1="12" y1="3.5" x2="7" y2="10.5" />
+          <line x1="12" y1="3.5" x2="16" y2="9.5" />
+          <line x1="7" y1="10.5" x2="16" y2="9.5" />
+          <line x1="7" y1="10.5" x2="9" y2="19" />
+          <line x1="16" y1="9.5" x2="17.5" y2="18" />
+          <line x1="9" y1="19" x2="17.5" y2="18" />
+        </g>
+        <circle cx="12" cy="3.5" r="1.9" fill="#fb923c" />
+        <circle cx="7" cy="10.5" r="1.15" fill="#fb923c" />
+        <circle cx="16" cy="9.5" r="1.15" fill="#fb923c" />
+        <circle cx="9" cy="19" r="1.15" fill="#fb923c" />
+        <circle cx="17.5" cy="18" r="1.15" fill="#fb923c" />
+      </svg>
+      Grove
+    </div>
     {#if status}
       <div class="meta">
         <span>TLD <b>.{status.tld}</b></span>
@@ -90,31 +121,27 @@
       <span class="dot"></span>
       {running ? `groved ${status?.version ?? ""}` : "stopped"}
     </span>
-    <button class="btn" onclick={toggleDaemon}>
-      {running ? "Stop" : "Start"}
-    </button>
+    <button class="btn" onclick={toggleDaemon}>{running ? "Stop" : "Start"}</button>
   </header>
 
   <div class="body">
     <nav class="sidebar">
-      <button class="nav-item {tab === 'sites' ? 'active' : ''}" onclick={() => (tab = "sites")}>
-        ◰ Sites
-      </button>
-      <button class="nav-item {tab === 'services' ? 'active' : ''}" onclick={() => (tab = "services")}>
-        ⚙ Services
-      </button>
-      <button class="nav-item {tab === 'php' ? 'active' : ''}" onclick={() => (tab = "php")}>
-        🐘 PHP
-      </button>
-      <button
-        class="nav-item {tab === 'doctor' ? 'active' : ''}"
-        onclick={async () => {
-          tab = "doctor";
-          if (running) diagnostics = await api.doctor();
-        }}
-      >
-        ✚ Doctor
-      </button>
+      <div class="section-label">Manage</div>
+      {#each navItems as item (item.id)}
+        <button
+          class="nav-item {tab === item.id ? 'active' : ''}"
+          onclick={() => selectTab(item.id)}
+        >
+          <span class="ico">{item.icon}</span>
+          {item.label}
+        </button>
+      {/each}
+      <div class="foot">
+        <button class="nav-item" onclick={() => (aboutOpen = true)}>
+          <span class="ico">ⓘ</span>
+          About
+        </button>
+      </div>
     </nav>
 
     <main class="content">
@@ -148,4 +175,6 @@
   {#if toast}
     <div class="toast">{toast}</div>
   {/if}
+
+  <AboutModal open={aboutOpen} onclose={() => (aboutOpen = false)} />
 </div>
