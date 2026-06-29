@@ -1,0 +1,23 @@
+[package]
+name = "grove-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+grove-core = { path = "../grove-core" }
+grove-tls = { path = "../grove-tls" }
+tokio.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+rustls-pemfile.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+futures.workspace = true
+anyhow.workspace = true

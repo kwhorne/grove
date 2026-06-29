@@ -1,0 +1,25 @@
+[package]
+name = "grove-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "grove"
+path = "src/main.rs"
+
+[dependencies]
+grove-core = { path = "../grove-core" }
+grove-ipc = { path = "../grove-ipc" }
+grove-daemon = { path = "../grove-daemon" }
+grove-tls = { path = "../grove-tls" }
+grove-os = { path = "../grove-os" }
+grove-runtime = { path = "../grove-runtime" }
+clap.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

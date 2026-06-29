@@ -1,0 +1,20 @@
+[package]
+name = "grove-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+grove-core = { path = "../grove-core" }
+grove-ipc = { path = "../grove-ipc" }
+grove-dns = { path = "../grove-dns" }
+grove-proxy = { path = "../grove-proxy" }
+grove-runtime = { path = "../grove-runtime" }
+grove-tls = { path = "../grove-tls" }
+grove-os = { path = "../grove-os" }
+tokio.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
