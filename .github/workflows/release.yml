@@ -57,9 +57,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: crates/grove-gui/ui/pnpm-lock.yaml
 
-      - name: Install frontend deps
+      - name: Build frontend
         working-directory: crates/grove-gui/ui
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
 
       - name: Build CLI (grove)
         run: cargo build --release -p grove-cli --target ${{ matrix.target }}
