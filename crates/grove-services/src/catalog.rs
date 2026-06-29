@@ -11,6 +11,8 @@ pub enum ServiceKind {
     Postgres,
     /// Built from source at install time (`make`), producing `src/redis-server`.
     Redis,
+    /// Portable prebuilt binaries (mysqld --initialize-insecure).
+    Mysql,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +42,14 @@ pub const CATALOG: &[ServiceSpec] = &[
         version: "18.4.0",
     },
     ServiceSpec {
+        key: "mysql",
+        name: "MySQL",
+        category: "Database",
+        kind: ServiceKind::Mysql,
+        default_port: 3306,
+        version: "8.4.3",
+    },
+    ServiceSpec {
         key: "redis",
         name: "Redis",
         category: "Cache & Queue",
@@ -67,6 +77,15 @@ pub fn download_url(spec: &ServiceSpec) -> Option<String> {
             "https://github.com/redis/redis/archive/refs/tags/{v}.tar.gz",
             v = spec.version,
         )),
+        ServiceKind::Mysql => {
+            let plat = mysql_platform()?;
+            // Use the CDN archive path directly; the dev.mysql.com redirect
+            // 403s for non-browser clients.
+            Some(format!(
+                "https://cdn.mysql.com/archives/mysql-8.4/mysql-{v}-{plat}.tar.gz",
+                v = spec.version,
+            ))
+        }
     }
 }
 
@@ -78,6 +97,17 @@ pub fn archive_root(spec: &ServiceSpec) -> Option<String> {
             Some(format!("postgresql-{}-{triple}", spec.version))
         }
         ServiceKind::Redis => Some(format!("redis-{}", spec.version)),
+        ServiceKind::Mysql => Some(format!("mysql-{}-{}", spec.version, mysql_platform()?)),
+    }
+}
+
+/// MySQL's platform slug. Only macOS ships a `.tar.gz`; Linux uses `.tar.xz`
+/// (handled in a later iteration), so this returns `None` there for now.
+fn mysql_platform() -> Option<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some("macos14-arm64"),
+        ("macos", "x86_64") => Some("macos14-x86_64"),
+        _ => None,
     }
 }
 

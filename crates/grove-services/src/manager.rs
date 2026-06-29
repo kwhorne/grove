@@ -73,10 +73,15 @@ impl ServiceManager {
     fn bin_dir(&self, spec: &ServiceSpec) -> Option<PathBuf> {
         let root = self.service_root(spec).join(catalog::archive_root(spec)?);
         Some(match spec.kind {
-            ServiceKind::Postgres => root.join("bin"),
+            ServiceKind::Postgres | ServiceKind::Mysql => root.join("bin"),
             // Redis builds in place; binaries land in `src/`.
             ServiceKind::Redis => root.join("src"),
         })
+    }
+
+    /// Service base directory (the extracted archive root) — needed by mysqld.
+    fn base_dir(&self, spec: &ServiceSpec) -> Option<PathBuf> {
+        Some(self.service_root(spec).join(catalog::archive_root(spec)?))
     }
 
     fn primary_binary(&self, spec: &ServiceSpec) -> Option<PathBuf> {
@@ -84,6 +89,7 @@ impl ServiceManager {
         let exe = match spec.kind {
             ServiceKind::Postgres => "postgres",
             ServiceKind::Redis => "redis-server",
+            ServiceKind::Mysql => "mysqld",
         };
         Some(bin.join(exe))
     }
@@ -140,10 +146,39 @@ impl ServiceManager {
         }
 
         // One-time initialisation.
-        if spec.kind == ServiceKind::Postgres {
-            self.init_postgres(spec, &progress)?;
+        match spec.kind {
+            ServiceKind::Postgres => self.init_postgres(spec, &progress)?,
+            ServiceKind::Mysql => self.init_mysql(spec, &progress)?,
+            ServiceKind::Redis => {}
         }
         progress(&format!("{} ready", spec.name));
+        Ok(())
+    }
+
+    /// Initialise a MySQL data directory with a passwordless root (local dev).
+    fn init_mysql(&self, spec: &ServiceSpec, progress: &impl Fn(&str)) -> Result<()> {
+        let data = self.data_dir(spec);
+        if data.join("auto.cnf").exists() {
+            return Ok(()); // already initialised
+        }
+        let bin = self
+            .bin_dir(spec)
+            .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
+        let base = self
+            .base_dir(spec)
+            .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
+        progress("initialising MySQL data directory…");
+        std::fs::create_dir_all(&data)?;
+        let out = std::process::Command::new(bin.join("mysqld"))
+            .arg("--initialize-insecure")
+            .arg(format!("--datadir={}", data.display()))
+            .arg(format!("--basedir={}", base.display()))
+            .output()?;
+        if !out.status.success() {
+            return Err(ServiceError::Init(
+                String::from_utf8_lossy(&out.stderr).into_owned(),
+            ));
+        }
         Ok(())
     }
 
@@ -239,6 +274,23 @@ impl ServiceManager {
                     .stderr(logf)
                     .spawn()?
             }
+            ServiceKind::Mysql => {
+                let base = self
+                    .base_dir(spec)
+                    .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
+                std::process::Command::new(bin.join("mysqld"))
+                    .arg(format!("--datadir={}", self.data_dir(spec).display()))
+                    .arg(format!("--basedir={}", base.display()))
+                    .args(["--port", &spec.default_port.to_string()])
+                    .arg(format!(
+                        "--socket={}",
+                        self.paths.run_dir().join("mysql.sock").display()
+                    ))
+                    .arg("--mysqlx=OFF")
+                    .stdout(logf.try_clone()?)
+                    .stderr(logf)
+                    .spawn()?
+            }
         };
         tracing::info!(service = key, port = spec.default_port, "started service");
         self.procs.lock().unwrap().insert(key.to_string(), child);
@@ -269,7 +321,13 @@ impl Drop for ServiceManager {
 // ---- download / extract helpers -----------------------------------------
 
 fn http_get(url: &str) -> Result<Vec<u8>> {
+    // A browser-like UA is required by some mirrors (e.g. Oracle's MySQL CDN
+    // returns 403 without one).
     let resp = ureq::get(url)
+        .set(
+            "User-Agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Grove/0.1",
+        )
         .call()
         .map_err(|e| ServiceError::Http(e.to_string()))?;
     let mut buf = Vec::new();
