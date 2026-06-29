@@ -1,7 +1,7 @@
 // Prevents an extra console window on Windows in release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Grove desktop GUI (PRD §6.8). The Rust side is a thin bridge: every command
+//! Grove desktop GUI. The Rust side is a thin bridge: every command
 //! proxies to the running daemon over the same `grove-ipc` JSON-RPC the CLI
 //! uses, so the GUI and CLI are always in parity.
 

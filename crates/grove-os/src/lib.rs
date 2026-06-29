@@ -1,9 +1,9 @@
-//! Platform integration (PRD §8.4): DNS resolver hookup, CA trust store, and
+//! Platform integration: DNS resolver hookup, CA trust store, and
 //! service installation. Each OS gets its own module behind a common API; the
 //! rest of Grove never touches platform specifics directly.
 //!
 //! Privileged operations are concentrated here so the rest of the daemon can
-//! run unprivileged (PRD §10).
+//! run unprivileged.
 
 use std::path::Path;
 

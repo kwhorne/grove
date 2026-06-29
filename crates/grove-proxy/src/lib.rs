@@ -1,4 +1,4 @@
-//! grove-proxy — HTTP/HTTPS reverse proxy + FastCGI client (PRD §6.2, §8.1).
+//! grove-proxy — HTTP/HTTPS reverse proxy + FastCGI client.
 
 pub mod fastcgi;
 pub mod handler;

@@ -1,4 +1,4 @@
-//! Local certificate authority + on-demand leaf issuance (PRD §6.7, §10).
+//! Local certificate authority + on-demand leaf issuance.
 //!
 //! Grove generates a single long-lived root CA on first run, which the user
 //! trusts once via the OS trust store (`grove-os`). Per-site leaf certificates

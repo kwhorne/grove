@@ -1,4 +1,4 @@
-//! Linux integration (PRD §8.4). v1 uses an `/etc/hosts`-independent approach
+//! Linux integration. v1 uses an `/etc/hosts`-independent approach
 //! where possible via systemd-resolved; a full NetworkManager/per-domain
 //! resolver hookup is tracked for fase 1/2.
 

@@ -1,4 +1,4 @@
-//! grove-services — local service supervisor (PRD §6.5, §8.1).
+//! grove-services — local service supervisor.
 //!
 //! Ships two things so the user never installs anything separately:
 //!   * a built-in **mail-catcher** (SMTP server capturing outgoing mail), and

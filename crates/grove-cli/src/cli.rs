@@ -1,5 +1,5 @@
 //! clap command definitions. Command names mirror Valet where it makes sense
-//! to keep the learning curve low (PRD §6.9).
+//! to keep the learning curve low.
 
 use clap::{Parser, Subcommand};
 
@@ -212,7 +212,7 @@ pub enum PhpAction {
     Discover,
     /// List known PHP builds and their extensions.
     List,
-    /// Register a custom php-fpm binary (bring-your-own — PRD §6.4).
+    /// Register a custom php-fpm binary (bring-your-own).
     Register {
         /// Version label, e.g. 8.4
         version: String,

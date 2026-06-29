@@ -1,4 +1,4 @@
-//! OS service installation (PRD §8.4). Installs Grove's daemon so it starts at
+//! OS service installation. Installs Grove's daemon so it starts at
 //! login and restarts on crash. Each platform writes the appropriate unit and
 //! (un)loads it.
 

@@ -6,7 +6,7 @@ use grove_core::site::ResolvedSite;
 use grove_services::{CapturedEmail, EmailSummary, ServiceStatus};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
-/// frontends stay in parity (PRD §6.9).
+/// frontends stay in parity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
@@ -81,7 +81,7 @@ pub enum Request {
     NodeInstall { version: String },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
-    /// Diagnostics (PRD §7 — `grove doctor`).
+    /// Diagnostics (`grove doctor`).
     Doctor,
     /// List captured emails (newest first).
     MailList,

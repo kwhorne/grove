@@ -1,4 +1,4 @@
-//! Driver system (PRD §6.3).
+//! Driver system.
 //!
 //! A *driver* decides how a site's requests are served. Detection is based on
 //! filesystem signatures (e.g. `artisan` + `public/index.php` ⇒ Laravel). The

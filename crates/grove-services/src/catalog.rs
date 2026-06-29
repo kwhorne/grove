@@ -1,5 +1,5 @@
 //! Catalog of bundled services Grove can download and supervise itself, so the
-//! user never has to install MySQL/Redis/Postgres separately (PRD §6.5).
+//! user never has to install MySQL/Redis/Postgres separately.
 //!
 //! Each entry knows where to fetch a portable, self-contained build per
 //! platform and how to initialise + run it under `$GROVE_HOME/services`.

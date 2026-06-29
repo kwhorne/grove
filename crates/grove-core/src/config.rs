@@ -1,4 +1,4 @@
-//! Declarative TOML configuration — the single source of truth (PRD §9).
+//! Declarative TOML configuration — the single source of truth.
 //!
 //! Only things that *cannot* be re-derived live here. Runtime state (which FPM
 //! pool is hot, issued leaf certs, etc.) is kept out of config on purpose so the

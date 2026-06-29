@@ -1,4 +1,4 @@
-//! Windows integration (PRD §8.4, §12). Wildcard DNS on Windows is hard, so v1
+//! Windows integration. Wildcard DNS on Windows is hard, so v1
 //! leans on a local DNS proxy plus a `hosts` fallback for known sites. Trust
 //! store work uses `certutil`.
 

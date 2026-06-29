@@ -46,14 +46,13 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 
 - 🌐 **Automatic `*.test` routing** via an embedded DNS resolver — no manual hosts editing.
 - 🔒 **Local HTTPS** with a private root CA and on-demand per-site leaf certificates.
-- 🐘 **Multi-version PHP** — global default plus per-site `isolate`, with lazy FPM pools.
-- ⬢ **Bundled Node.js** — download and manage Node versions (node · npm · npx); no nvm or Homebrew needed.
-- 📦 **Bundled PHP** — `grove php install 8.4` downloads a self-contained static binary.
+- 🐘 **Bundled PHP** — install multiple self-contained versions (`grove php install 8.5|8.4|8.3`), with per-site `isolate` and lazy FPM pools.
+- ⬢ **Bundled Node.js** — download node · npm · npx, with per-site Node versions; no nvm or Homebrew.
+- 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself, so there is no database/cache or Homebrew to install separately.
+- 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
-- 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer in the GUI.
-- 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself (Redis is compiled from source on install), so there is no database/cache or Homebrew to install separately.
-- 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon (JSON-RPC).
-- 🪶 **Low footprint** — target < 15 MB idle RAM, < 200 ms cold start.
+- 🌱 **Create / import sites** — scaffold a new Laravel or static project, or link existing ones.
+- 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon, plus a macOS menu-bar icon.
 - 🔌 **Zero external dependencies** — DNS, proxy, FastCGI and TLS are all built in.
 
 ## Zero external dependencies
@@ -121,10 +120,17 @@ manages parked paths, the TLD, default PHP, the mail-catcher port,
 launch-at-login and the theme (auto/light/dark).
 
 ```bash
-cd crates/grove-gui/ui && pnpm install && pnpm build   # build the frontend
-cargo tauri dev        # development (requires cargo-tauri: cargo install tauri-cli)
-cargo tauri build      # production build / bundling
+# Build the frontend (the GUI binary embeds it at compile time)
+cd crates/grove-gui/ui && pnpm install && pnpm build && cd -
+
+# Build and launch
+cargo build --release -p grove-cli -p grove-gui
+grove gui              # starts the daemon if needed, then opens the app
 ```
+
+After changing the UI, rebuild the frontend **and** `grove-gui` so the new bundle
+is re-embedded. Closing the window keeps Grove running in the menu bar; quit via
+the menu-bar icon.
 
 ## Configuration
 
@@ -141,10 +147,15 @@ auto_start = true
 [[parked]]
 path = "~/Code"
 
+[services]
+mail_enabled = true
+mail_port = 1025
+
 [[sites]]
 name = "inside-next"
 path = "~/Code/inside-next"
-php = "8.4"
+php = "8.4"          # per-site PHP
+node = "22"          # per-site Node
 secure = true
 driver = "laravel"
 
@@ -202,23 +213,14 @@ EOF
 grove daemon
 ```
 
-## Roadmap
-
-- [x] Phase 0 — DNS + proxy + FastCGI proof of concept
-- [x] Phase 1 — CLI MVP: park/link, drivers, local HTTPS, service install
-- [x] Phase 2 — multi-version PHP, bring-your-own + bundled static PHP, proxy driver
-- [x] Phase 3 — Tauri + Svelte GUI
-- [x] Phase 4 (in progress) — mail-catcher + bundled PostgreSQL, MySQL & Redis supervisor
-- [ ] Full Linux & Windows resolver/trust integration
-
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md) · [PRD](docs/PRD.md)
+- [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
 - [Changelog](CHANGELOG.md)
 
 ## License
 
-[MIT](LICENSE) — provisional; see PRD §14 open questions.
+[MIT](LICENSE)
 
 <div align="center">
 <sub>Built by <a href="https://kwhorne.com">Knut W. Horne</a> · part of the Elyra ecosystem</sub>
