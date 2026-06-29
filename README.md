@@ -211,6 +211,11 @@ grove daemon
 - [x] Phase 4 (in progress) — mail-catcher + bundled PostgreSQL, MySQL & Redis supervisor
 - [ ] Full Linux & Windows resolver/trust integration
 
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md) · [PRD](docs/PRD.md)
+- [Changelog](CHANGELOG.md)
+
 ## License
 
 [MIT](LICENSE) — provisional; see PRD §14 open questions.
