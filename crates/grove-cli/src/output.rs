@@ -84,6 +84,15 @@ pub fn print_response(resp: &Response, json: bool) {
             }
         },
         Some(ResponseData::Settings(_)) => println!("✓ ok"),
+        Some(ResponseData::PhpVersions(vers)) => {
+            for v in vers {
+                if v.installed {
+                    println!("php@{}  installed", v.major);
+                } else {
+                    println!("php@{}  available", v.major);
+                }
+            }
+        }
         Some(ResponseData::Nodes(nodes)) => {
             for n in nodes {
                 if n.installed {

@@ -46,6 +46,8 @@ pub enum Request {
     UpdateSettings { patch: SettingsPatch },
     /// Download + install a static PHP-FPM build for the given version.
     PhpInstall { version: String },
+    /// List offered + installed PHP versions (for the GUI PHP panel).
+    PhpVersionList,
     /// List bundled services and their install/run state.
     ServiceList,
     /// Download + initialise a bundled service.
@@ -133,6 +135,7 @@ pub enum ResponseData {
     LogSources(Vec<LogSource>),
     LogEntries(Vec<LogEntry>),
     Nodes(Vec<NodeVersion>),
+    PhpVersions(Vec<NodeVersion>),
 }
 
 /// A Node.js major version: offered for install and, if present, its installed

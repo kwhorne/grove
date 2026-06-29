@@ -343,6 +343,16 @@ mod lifecycle {
         let cfg_path = paths.config_file();
         let mut config = Config::load(paths).unwrap_or_default();
         if !cfg_path.exists() {
+            // Park ~/Code by default so existing projects are picked up.
+            let code = std::path::PathBuf::from("~/Code");
+            let expanded = Config::expand(&code);
+            if expanded.is_dir() {
+                config.add_parked(code);
+                steps.push((
+                    true,
+                    "parked ~/Code (existing projects auto-imported)".into(),
+                ));
+            }
             config.save(paths)?;
             steps.push((true, format!("created config at {}", cfg_path.display())));
         } else {

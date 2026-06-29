@@ -374,6 +374,31 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             Ok(Response::ok(ResponseData::LogEntries(entries)))
         }
 
+        Request::PhpVersionList => {
+            let reg = grove_runtime::PhpRegistry::load(&state.paths);
+            let mut majors: Vec<String> = grove_runtime::install::OFFERED_MAJORS
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            for b in reg.iter() {
+                if !majors.contains(&b.version) {
+                    majors.push(b.version.clone());
+                }
+            }
+            let versions = majors
+                .into_iter()
+                .map(|m| {
+                    let installed = reg.get(&m);
+                    grove_ipc::protocol::NodeVersion {
+                        major: m.clone(),
+                        installed: installed.is_some(),
+                        version: installed.map(|b| b.version.clone()),
+                    }
+                })
+                .collect();
+            Ok(Response::ok(ResponseData::PhpVersions(versions)))
+        }
+
         Request::NodeList => {
             let reg = grove_runtime::NodeRegistry::load(&state.paths);
             let mut majors: Vec<String> = grove_runtime::node::OFFERED_MAJORS
