@@ -363,19 +363,79 @@ extern "C" {
     fn libc_setsid() -> i32;
 }
 
+/// Build the menu-bar tray icon + menu, and wire its actions.
+fn install_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::Manager;
+
+    fn show_main(app: &tauri::AppHandle) {
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.show();
+            let _ = win.unminimize();
+            let _ = win.set_focus();
+        }
+    }
+
+    let open_i = MenuItem::with_id(app, "open", "Open Grove", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "Quit Grove", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[&open_i, &PredefinedMenuItem::separator(app)?, &quit_i],
+    )?;
+
+    // Embed the icon so it works even when run unbundled; render as a template
+    // so it adapts to the light/dark menu bar.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
+
+    TrayIconBuilder::with_id("grove-tray")
+        .icon(icon)
+        .icon_as_template(true)
+        .tooltip("Grove")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_main(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|_app| {
+        .setup(|app| {
+            use tauri::Manager;
+
+            // macOS menu-bar (system tray) icon with a small menu.
+            install_tray(app.handle())?;
+
             // Open devtools automatically only in debug builds.
             #[cfg(debug_assertions)]
-            {
-                use tauri::Manager;
-                if let Some(win) = _app.get_webview_window("main") {
-                    win.open_devtools();
-                }
+            if let Some(win) = app.get_webview_window("main") {
+                win.open_devtools();
             }
             Ok(())
+        })
+        // Closing the window hides it (Grove keeps running in the menu bar);
+        // quit via the tray menu.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             daemon_running,
