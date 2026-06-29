@@ -76,6 +76,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
+        Command::Gui => lifecycle::gui(&paths).await,
         Command::Start => lifecycle::start(&paths, args.json).await,
         Command::Stop => lifecycle::stop(&paths, args.json).await,
         Command::Restart => lifecycle::restart(&paths, args.json).await,
@@ -179,7 +180,8 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Import
         | Command::Init { .. }
         | Command::Env { .. }
-        | Command::Logs { .. } => {
+        | Command::Logs { .. }
+        | Command::Gui => {
             unreachable!("handled before to_request")
         }
     })
@@ -263,6 +265,34 @@ mod lifecycle {
     pub async fn restart(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
         stop(paths, false).await?;
         start(paths, json).await
+    }
+
+    /// Ensure the daemon is up, then launch the desktop GUI.
+    pub async fn gui(paths: &GrovePaths) -> anyhow::Result<()> {
+        if !client::is_running(&paths.ipc_socket()).await {
+            start(paths, false).await?;
+        }
+        let exe = std::env::current_exe().context("resolving grove binary path")?;
+        let dir = exe.parent().context("binary has no parent dir")?;
+        let gui = dir.join("grove-gui");
+        if !gui.exists() {
+            anyhow::bail!(
+                "grove-gui not found next to grove ({}). Build it with \
+                 `cargo build --release -p grove-gui` (after `pnpm --dir crates/grove-gui/ui build`).",
+                gui.display()
+            );
+        }
+        let mut cmd = std::process::Command::new(&gui);
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        if let Ok(home) = std::env::var("GROVE_HOME") {
+            cmd.env("GROVE_HOME", home);
+        }
+        detach(&mut cmd);
+        cmd.spawn().context("launching grove-gui")?;
+        println!("✓ Grove GUI launched");
+        Ok(())
     }
 
     /// Send SIGTERM to the PID in the pidfile. Returns false if no pidfile.
