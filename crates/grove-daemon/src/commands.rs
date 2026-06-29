@@ -106,6 +106,7 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                     name: site_name.clone(),
                     path: Some(PathBuf::from(path)),
                     php: None,
+                    node: None,
                     secure: false,
                     driver: None,
                     proxy_to: None,
@@ -148,6 +149,15 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             Ok(Response::ok(ResponseData::Message(msg)))
         }
 
+        Request::SiteNode { name, version } => {
+            mutate_site(state, &name, |sc| sc.node = version.clone()).await?;
+            let msg = match version {
+                Some(v) => format!("{name} pinned to node@{v}"),
+                None => format!("{name} node version cleared"),
+            };
+            Ok(Response::ok(ResponseData::Message(msg)))
+        }
+
         Request::Proxy { name, url } => {
             {
                 let mut config = state.config.lock().await;
@@ -156,6 +166,7 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                     name: name.clone(),
                     path: None,
                     php: None,
+                    node: None,
                     secure: false,
                     driver: Some(grove_core::Driver::Proxy),
                     proxy_to: Some(url.clone()),
@@ -431,6 +442,7 @@ async fn mutate_site(
                 name: name.to_string(),
                 path: Some(resolved.path.clone()),
                 php: None,
+                node: resolved.node.clone(),
                 secure: resolved.secure,
                 driver: Some(resolved.driver),
                 proxy_to: resolved.proxy_to.clone(),

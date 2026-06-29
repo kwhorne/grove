@@ -167,6 +167,10 @@ pub enum NodeAction {
     List,
     /// Download + install a Node version (major like 22, or exact 22.23.1).
     Install { version: String },
+    /// Pin a Node version for a site.
+    Use { site: String, version: String },
+    /// Clear a site's pinned Node version.
+    Unuse { site: String },
 }
 
 #[derive(Subcommand, Debug)]

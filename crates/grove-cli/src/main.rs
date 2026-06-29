@@ -151,6 +151,14 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         Command::Node { action } => match action {
             NodeAction::List => Request::NodeList,
             NodeAction::Install { version } => Request::NodeInstall { version },
+            NodeAction::Use { site, version } => Request::SiteNode {
+                name: site,
+                version: Some(version),
+            },
+            NodeAction::Unuse { site } => Request::SiteNode {
+                name: site,
+                version: None,
+            },
         },
         Command::Service { action } => match action {
             ServiceAction::List => Request::ServiceList,
@@ -422,6 +430,7 @@ mod lifecycle {
                             name,
                             path: Some(target),
                             php: None,
+                            node: None,
                             secure: false,
                             driver: None,
                             proxy_to: None,
