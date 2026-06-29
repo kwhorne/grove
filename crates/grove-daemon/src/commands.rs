@@ -76,12 +76,12 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let target = Config::expand(&PathBuf::from(&path));
             {
                 let mut config = state.config.lock().await;
-                config
-                    .parked
-                    .retain(|p| Config::expand(&p.path) != target);
+                config.parked.retain(|p| Config::expand(&p.path) != target);
             }
             state.persist_and_reload().await?;
-            Ok(Response::ok(ResponseData::Message(format!("unparked {path}"))))
+            Ok(Response::ok(ResponseData::Message(format!(
+                "unparked {path}"
+            ))))
         }
 
         Request::Link { path, name } => {
@@ -119,13 +119,17 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 return Ok(Response::err(format!("no linked site named {name}")));
             }
             state.persist_and_reload().await?;
-            Ok(Response::ok(ResponseData::Message(format!("unlinked {name}"))))
+            Ok(Response::ok(ResponseData::Message(format!(
+                "unlinked {name}"
+            ))))
         }
 
         Request::Secure { name, enable } => {
             mutate_site(state, &name, |sc| sc.secure = enable).await?;
             let verb = if enable { "secured" } else { "unsecured" };
-            Ok(Response::ok(ResponseData::Message(format!("{verb} {name}"))))
+            Ok(Response::ok(ResponseData::Message(format!(
+                "{verb} {name}"
+            ))))
         }
 
         Request::Isolate { name, version } => {

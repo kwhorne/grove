@@ -57,7 +57,7 @@ pub use windows::Windows as Platform;
 
 /// Construct the platform integration for the current OS.
 pub fn current() -> Platform {
-    Platform::default()
+    Platform
 }
 
 /// Whether the current process is running with elevated privileges.

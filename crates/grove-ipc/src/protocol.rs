@@ -26,7 +26,10 @@ pub enum Request {
     /// Toggle HTTPS for a site.
     Secure { name: String, enable: bool },
     /// Pin a PHP version for a site (isolate / unisolate when `version` is None).
-    Isolate { name: String, version: Option<String> },
+    Isolate {
+        name: String,
+        version: Option<String>,
+    },
     /// Route a `*.tld` host to a running upstream dev server.
     Proxy { name: String, url: String },
     /// Set the global default PHP version (`grove use`).

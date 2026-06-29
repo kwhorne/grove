@@ -99,9 +99,8 @@ pub async fn serve_https(
                 }
             };
             let io = TokioIo::new(tls_stream);
-            let service = service_fn(move |req| {
-                handler::handle(req, state.clone(), fpm.clone(), true, peer)
-            });
+            let service =
+                service_fn(move |req| handler::handle(req, state.clone(), fpm.clone(), true, peer));
             if let Err(e) = http1::Builder::new()
                 .serve_connection(io, service)
                 .with_upgrades()

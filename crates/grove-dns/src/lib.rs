@@ -32,7 +32,9 @@ pub struct GroveResolver {
 
 impl GroveResolver {
     pub fn new(tld: impl Into<String>) -> Self {
-        Self { tld: into_label(tld) }
+        Self {
+            tld: into_label(tld),
+        }
     }
 
     fn owns(&self, name: &Name) -> bool {

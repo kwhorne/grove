@@ -197,7 +197,9 @@ pub fn split_headers(stdout: &[u8]) -> (Vec<(String, String)>, Vec<u8>) {
         }
         if let Some(colon) = line.iter().position(|&b| b == b':') {
             let name = String::from_utf8_lossy(&line[..colon]).trim().to_string();
-            let value = String::from_utf8_lossy(&line[colon + 1..]).trim().to_string();
+            let value = String::from_utf8_lossy(&line[colon + 1..])
+                .trim()
+                .to_string();
             headers.push((name, value));
         }
     }
@@ -211,9 +213,7 @@ fn trim_cr(line: &[u8]) -> &[u8] {
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 #[cfg(test)]

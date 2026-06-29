@@ -4,8 +4,108 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Grove</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #16161e; }
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: #16161e;
+        transition: opacity 0.4s ease;
+      }
+      #splash.hide { opacity: 0; pointer-events: none; }
+      #splash .logo-wrap {
+        position: relative;
+        width: 140px;
+        height: 140px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #splash .glow {
+        position: absolute;
+        inset: -20%;
+        background: radial-gradient(circle, rgba(249, 115, 22, 0.25), rgba(249, 115, 22, 0) 65%);
+        animation: splash-glow 1.8s ease-in-out infinite;
+      }
+      #splash svg {
+        width: 128px;
+        height: 128px;
+        animation: splash-pulse 1.8s ease-in-out infinite;
+        filter: drop-shadow(0 8px 24px rgba(0, 0, 0, 0.5));
+      }
+      #splash .label {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        color: #c0caf5;
+      }
+      #splash .dots { display: flex; gap: 6px; }
+      #splash .dots span {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #fb923c;
+        animation: splash-dot 1.1s ease-in-out infinite;
+      }
+      #splash .dots span:nth-child(2) { animation-delay: 0.18s; }
+      #splash .dots span:nth-child(3) { animation-delay: 0.36s; }
+      @keyframes splash-pulse {
+        0%, 100% { transform: scale(1); opacity: 0.9; }
+        50% { transform: scale(1.06); opacity: 1; }
+      }
+      @keyframes splash-glow {
+        0%, 100% { opacity: 0.5; transform: scale(0.95); }
+        50% { opacity: 1; transform: scale(1.05); }
+      }
+      @keyframes splash-dot {
+        0%, 100% { opacity: 0.3; transform: translateY(0); }
+        50% { opacity: 1; transform: translateY(-4px); }
+      }
+    </style>
   </head>
   <body>
+    <div id="splash">
+      <div class="logo-wrap">
+        <div class="glow"></div>
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#f97316" stop-opacity="0.55" />
+              <stop offset="60%" stop-color="#f97316" stop-opacity="0.12" />
+              <stop offset="100%" stop-color="#f97316" stop-opacity="0" />
+            </radialGradient>
+          </defs>
+          <rect width="24" height="24" rx="5" fill="#0a0a0a" />
+          <g stroke="#fb923c" stroke-width="1" stroke-linecap="round" opacity="0.45">
+            <line x1="12" y1="3.5" x2="7" y2="10.5" />
+            <line x1="12" y1="3.5" x2="16" y2="9.5" />
+            <line x1="7" y1="10.5" x2="16" y2="9.5" />
+            <line x1="7" y1="10.5" x2="9" y2="19" />
+            <line x1="16" y1="9.5" x2="17.5" y2="18" />
+            <line x1="9" y1="19" x2="17.5" y2="18" />
+          </g>
+          <circle cx="12" cy="3.5" r="4" fill="url(#halo)" />
+          <circle cx="12" cy="3.5" r="1.9" fill="#fb923c" />
+          <g stroke="#fb923c" stroke-width="0.6" stroke-linecap="round" opacity="0.9">
+            <line x1="12" y1="0.5" x2="12" y2="6.5" />
+            <line x1="9" y1="3.5" x2="15" y2="3.5" />
+          </g>
+          <circle cx="7" cy="10.5" r="1.15" fill="#fb923c" />
+          <circle cx="16" cy="9.5" r="1.15" fill="#fb923c" />
+          <circle cx="9" cy="19" r="1.15" fill="#fb923c" />
+          <circle cx="17.5" cy="18" r="1.15" fill="#fb923c" />
+        </svg>
+      </div>
+      <div class="label">Elyra Grove</div>
+      <div class="dots"><span></span><span></span><span></span></div>
+    </div>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

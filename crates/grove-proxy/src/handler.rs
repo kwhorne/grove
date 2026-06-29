@@ -85,7 +85,10 @@ async fn serve_static(
         if fallback.exists() {
             target = fallback;
         } else {
-            return Ok(text_response(StatusCode::NOT_FOUND, "Grove: file not found"));
+            return Ok(text_response(
+                StatusCode::NOT_FOUND,
+                "Grove: file not found",
+            ));
         }
     }
 
@@ -140,7 +143,9 @@ async fn serve_php(
         }
         builder = builder.header(name, value);
     }
-    let resp = builder.status(status).body(Full::new(Bytes::from(php_body)))?;
+    let resp = builder
+        .status(status)
+        .body(Full::new(Bytes::from(php_body)))?;
     Ok(resp)
 }
 
@@ -171,8 +176,7 @@ async fn serve_proxy(
     let body_bytes = body.collect().await?.to_bytes();
     let forwarded = Request::from_parts(parts, Full::new(body_bytes));
 
-    let client: Client<_, Full<Bytes>> =
-        Client::builder(TokioExecutor::new()).build_http();
+    let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
     let resp = client.request(forwarded).await?;
     let (parts, body) = resp.into_parts();
     let collected = body.collect().await?.to_bytes();
@@ -198,7 +202,10 @@ fn build_fcgi_params(
     p.insert("REQUEST_METHOD".into(), parts.method.to_string());
     p.insert("SCRIPT_FILENAME".into(), script.to_string_lossy().into());
     p.insert("SCRIPT_NAME".into(), format!("/{}", front.display()));
-    p.insert("DOCUMENT_ROOT".into(), site.document_root.to_string_lossy().into());
+    p.insert(
+        "DOCUMENT_ROOT".into(),
+        site.document_root.to_string_lossy().into(),
+    );
     p.insert("REQUEST_URI".into(), {
         if query.is_empty() {
             path.clone()
@@ -209,10 +216,19 @@ fn build_fcgi_params(
     p.insert("PATH_INFO".into(), path.clone());
     p.insert("QUERY_STRING".into(), query);
     p.insert("SERVER_NAME".into(), site.hostname.clone());
-    p.insert("SERVER_PORT".into(), if https { "443".into() } else { "80".into() });
+    p.insert(
+        "SERVER_PORT".into(),
+        if https { "443".into() } else { "80".into() },
+    );
     p.insert("SERVER_PROTOCOL".into(), "HTTP/1.1".into());
-    p.insert("HTTPS".into(), if https { "on".into() } else { String::new() });
-    p.insert("REQUEST_SCHEME".into(), if https { "https".into() } else { "http".into() });
+    p.insert(
+        "HTTPS".into(),
+        if https { "on".into() } else { String::new() },
+    );
+    p.insert(
+        "REQUEST_SCHEME".into(),
+        if https { "https".into() } else { "http".into() },
+    );
     p.insert("CONTENT_LENGTH".into(), body.len().to_string());
 
     if let Some(ct) = parts.headers.get(hyper::header::CONTENT_TYPE) {
@@ -280,7 +296,10 @@ mod tests {
 
     #[test]
     fn sanitize_blocks_traversal() {
-        assert_eq!(sanitize_path("/../../etc/passwd"), PathBuf::from("etc/passwd"));
+        assert_eq!(
+            sanitize_path("/../../etc/passwd"),
+            PathBuf::from("etc/passwd")
+        );
         assert_eq!(sanitize_path("/css/app.css"), PathBuf::from("css/app.css"));
     }
 }
