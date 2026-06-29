@@ -125,6 +125,9 @@ pub struct SiteConfig {
     /// PHP version override (isolate). Falls back to `general.default_php`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub php: Option<String>,
+    /// Node.js version pinned for this site (used by tooling / dev servers).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
     #[serde(default)]
     pub secure: bool,
     /// Explicit driver override; otherwise auto-detected.

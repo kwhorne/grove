@@ -11,6 +11,7 @@ export interface ResolvedSite {
   document_root: string;
   driver: Driver;
   php: string;
+  node?: string;
   secure: boolean;
   kind: SiteKind;
   proxy_to?: string;

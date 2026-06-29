@@ -31,6 +31,11 @@ pub enum Request {
         name: String,
         version: Option<String>,
     },
+    /// Pin a Node.js version for a site (clear when `version` is None).
+    SiteNode {
+        name: String,
+        version: Option<String>,
+    },
     /// Route a `*.tld` host to a running upstream dev server.
     Proxy { name: String, url: String },
     /// Set the global default PHP version (`grove use`).

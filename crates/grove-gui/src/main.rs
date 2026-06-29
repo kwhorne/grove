@@ -214,6 +214,11 @@ async fn isolate_site(name: String, version: Option<String>) -> CmdResult<String
 }
 
 #[tauri::command]
+async fn site_node(name: String, version: Option<String>) -> CmdResult<String> {
+    message(Request::SiteNode { name, version }).await
+}
+
+#[tauri::command]
 async fn park_dir(path: String) -> CmdResult<String> {
     message(Request::Park { path }).await
 }
@@ -354,6 +359,7 @@ fn main() {
             php_list,
             secure_site,
             isolate_site,
+            site_node,
             park_dir,
             unpark_dir,
             link_dir,

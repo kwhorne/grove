@@ -23,6 +23,7 @@
   let status = $state<DaemonStatus | null>(null);
   let sites = $state<ResolvedSite[]>([]);
   let php = $state<PhpBuild[]>([]);
+  let nodeVersions = $state<string[]>([]);
   let diagnostics = $state<DiagnosticEntry[]>([]);
   let toast = $state<string | null>(null);
   let loading = $state(true);
@@ -48,6 +49,9 @@
         api.listSites(),
         api.phpList(),
       ]);
+      nodeVersions = (await api.nodeList())
+        .filter((n) => n.installed)
+        .map((n) => n.major);
       if (tab === "doctor") diagnostics = await api.doctor();
     } catch (e) {
       notify(String(e));
@@ -180,7 +184,7 @@
       {:else if tab === "sites"}
         <h2>Sites</h2>
         <p class="subtitle">Everything Grove is serving on .{status?.tld ?? "test"}</p>
-        <SiteTable {sites} {phpVersions} {notify} onchange={refresh} />
+        <SiteTable {sites} {phpVersions} {nodeVersions} {notify} onchange={refresh} />
       {:else if tab === "services"}
         <h2>Services</h2>
         <p class="subtitle">Local services managed by Grove</p>

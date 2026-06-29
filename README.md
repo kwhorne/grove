@@ -95,7 +95,7 @@ no Homebrew, no Composer, no Valet.
 | Lifecycle | `daemon`, `start`, `stop`, `restart` |
 | Sites | `park` / `unpark`, `link` / `unlink`, `list`, `secure` / `unsecure`, `isolate` / `unisolate`, `proxy` |
 | PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
-| Node | `node list`, `node install <version>` |
+| Node | `node list`, `node install <version>`, `node use <site> <version>`, `node unuse <site>` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |
 | Mail | `mail`, `mail show <id>`, `mail clear` |
 | Logs | `logs` (list sources), `logs <site>` (view entries) |

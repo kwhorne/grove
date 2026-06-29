@@ -29,6 +29,8 @@ export const api = {
     invoke("secure_site", { name, enable }),
   isolate: (name: string, version: string | null): Promise<string> =>
     invoke("isolate_site", { name, version }),
+  setNode: (name: string, version: string | null): Promise<string> =>
+    invoke("site_node", { name, version }),
   park: (path: string): Promise<string> => invoke("park_dir", { path }),
   unpark: (path: string): Promise<string> => invoke("unpark_dir", { path }),
   link: (path: string, name: string | null): Promise<string> =>

@@ -28,6 +28,9 @@ pub struct ResolvedSite {
     pub document_root: PathBuf,
     pub driver: Driver,
     pub php: String,
+    /// Node.js version pinned for this site, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
     pub secure: bool,
     pub kind: SiteKind,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -44,6 +47,7 @@ impl ResolvedSite {
         path: PathBuf,
         plan: DriverPlan,
         php: String,
+        node: Option<String>,
         secure: bool,
         kind: SiteKind,
         proxy_to: Option<String>,
@@ -56,6 +60,7 @@ impl ResolvedSite {
             document_root: plan.document_root,
             driver: plan.driver,
             php,
+            node,
             secure,
             kind,
             proxy_to,
