@@ -10,6 +10,7 @@ Grove serves `*.test` domains with automatic routing, local HTTPS, multi-version
 PHP and zero external dependencies — from a single Rust core.
 
 [![CI](https://github.com/kwhorne/grove/actions/workflows/ci.yml/badge.svg)](https://github.com/kwhorne/grove/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/kwhorne/grove?sort=semver)](https://github.com/kwhorne/grove/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#status)

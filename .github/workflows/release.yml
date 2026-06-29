@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Allow the workflow to create the GitHub Release and upload assets.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install Tauri system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            build-essential \
+            file
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: crates/grove-gui/ui/pnpm-lock.yaml
+
+      - name: Build frontend
+        working-directory: crates/grove-gui/ui
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Build CLI (grove)
+        run: cargo build --release -p grove-cli --target ${{ matrix.target }}
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Build GUI bundle (.dmg / .deb / .AppImage)
+        id: gui
+        continue-on-error: true
+        working-directory: crates/grove-gui
+        run: cargo tauri build --target ${{ matrix.target }}
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          mkdir -p dist
+          # CLI binary, tarred per platform.
+          tar -C "target/${{ matrix.target }}/release" -czf \
+            "dist/grove-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" grove
+          # GUI bundles, if the bundling step produced any.
+          find "target/${{ matrix.target }}/release/bundle" -type f \
+            \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
+            -exec cp {} dist/ \; 2>/dev/null || true
+          ls -lh dist
+
+      - name: Upload to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: false
+          generate_release_notes: true
+          body_path: ${{ github.workspace }}/.github/release-intro.md
+          append_body: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
