@@ -237,6 +237,56 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             Ok(Response::ok(ResponseData::Message("settings saved".into())))
         }
 
+        Request::PhpInstall { version } => {
+            let paths = state.paths.clone();
+            let build = tokio::task::spawn_blocking(move || {
+                let mut reg = grove_runtime::PhpRegistry::load(&paths);
+                grove_runtime::install_php(&paths, &mut reg, &version, |_| {})
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("install task panicked: {e}"))?
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "installed php@{}",
+                build.version
+            ))))
+        }
+
+        Request::ServiceList => Ok(Response::ok(ResponseData::Services(
+            state.services.status_all(),
+        ))),
+
+        Request::ServiceInstall { key } => {
+            let services = state.services.clone();
+            tokio::task::spawn_blocking(move || services.install(&key, |_| {}))
+                .await
+                .map_err(|e| anyhow::anyhow!("install task panicked: {e}"))?
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Response::ok(ResponseData::Message(
+                "service installed".into(),
+            )))
+        }
+
+        Request::ServiceStart { key } => {
+            state
+                .services
+                .start(&key)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "started {key}"
+            ))))
+        }
+
+        Request::ServiceStop { key } => {
+            state
+                .services
+                .stop(&key)
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "stopped {key}"
+            ))))
+        }
+
         Request::Reload => {
             let n = state.reload().await?;
             Ok(Response::ok(ResponseData::Message(format!(

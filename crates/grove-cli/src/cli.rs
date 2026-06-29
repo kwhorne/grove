@@ -99,6 +99,11 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<MailAction>,
     },
+    /// Manage bundled services (databases, caches) Grove installs itself.
+    Service {
+        #[command(subcommand)]
+        action: ServiceAction,
+    },
 
     /// Root CA management.
     Ca {
@@ -110,6 +115,18 @@ pub enum Command {
         #[command(subcommand)]
         action: PhpAction,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ServiceAction {
+    /// List bundled services and their state.
+    List,
+    /// Download + initialise a bundled service (e.g. postgres).
+    Install { key: String },
+    /// Start a bundled service.
+    Start { key: String },
+    /// Stop a bundled service.
+    Stop { key: String },
 }
 
 #[derive(Subcommand, Debug)]

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use grove_core::site::ResolvedSite;
-use grove_services::{CapturedEmail, EmailSummary};
+use grove_services::{CapturedEmail, EmailSummary, ServiceStatus};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
 /// frontends stay in parity (PRD §6.9).
@@ -39,6 +39,16 @@ pub enum Request {
     GetSettings,
     /// Apply a partial settings update. Unset fields are left unchanged.
     UpdateSettings { patch: SettingsPatch },
+    /// Download + install a static PHP-FPM build for the given version.
+    PhpInstall { version: String },
+    /// List bundled services and their install/run state.
+    ServiceList,
+    /// Download + initialise a bundled service.
+    ServiceInstall { key: String },
+    /// Start a bundled service.
+    ServiceStart { key: String },
+    /// Stop a bundled service.
+    ServiceStop { key: String },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
     /// Diagnostics (PRD §7 — `grove doctor`).
@@ -100,6 +110,7 @@ pub enum ResponseData {
     Mail(Vec<EmailSummary>),
     MailMessage(Option<CapturedEmail>),
     Settings(SettingsView),
+    Services(Vec<ServiceStatus>),
 }
 
 /// Snapshot of the editable settings shown in the GUI settings panel.

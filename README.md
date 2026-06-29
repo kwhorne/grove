@@ -50,6 +50,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 📦 **Bundled PHP** — `grove php install 8.4` downloads a self-contained static binary.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer in the GUI.
+- 🗄️ **Bundled services** — Grove downloads and supervises portable databases itself (PostgreSQL today), so there is no MySQL/Redis/Homebrew to install separately.
 - 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon (JSON-RPC).
 - 🪶 **Low footprint** — target < 15 MB idle RAM, < 200 ms cold start.
 - 🔌 **Zero external dependencies** — DNS, proxy, FastCGI and TLS are all built in.
@@ -93,6 +94,8 @@ no Homebrew, no Composer, no Valet.
 | Lifecycle | `daemon`, `start`, `stop`, `restart` |
 | Sites | `park` / `unpark`, `link` / `unlink`, `list`, `secure` / `unsecure`, `isolate` / `unisolate`, `proxy` |
 | PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
+| Services | `service list`, `service install`, `service start`, `service stop` |
+| Mail | `mail`, `mail show <id>`, `mail clear` |
 | Operations | `status`, `doctor`, `import` (Valet) |
 
 Every command supports `--json` for scripting and [Elyra Conductor](https://github.com/kwhorne/elyra-conductor) integration.
@@ -200,7 +203,7 @@ grove daemon
 - [x] Phase 1 — CLI MVP: park/link, drivers, local HTTPS, service install
 - [x] Phase 2 — multi-version PHP, bring-your-own + bundled static PHP, proxy driver
 - [x] Phase 3 — Tauri + Svelte GUI
-- [x] Phase 4 (in progress) — built-in mail-catcher; DB/Redis supervisor next
+- [x] Phase 4 (in progress) — mail-catcher + bundled PostgreSQL supervisor; more services next
 - [ ] Full Linux & Windows resolver/trust integration
 
 ## License

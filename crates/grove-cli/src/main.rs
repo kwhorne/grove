@@ -11,7 +11,7 @@ use grove_core::paths::GrovePaths;
 use grove_ipc::client;
 use grove_ipc::protocol::Request;
 
-use cli::{CaAction, Cli, Command, MailAction, PhpAction};
+use cli::{CaAction, Cli, Command, MailAction, PhpAction, ServiceAction};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -101,6 +101,12 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             Some(MailAction::Clear) => Request::MailClear,
             Some(MailAction::Show { id }) => Request::MailGet { id },
             Some(MailAction::List) | None => Request::MailList,
+        },
+        Command::Service { action } => match action {
+            ServiceAction::List => Request::ServiceList,
+            ServiceAction::Install { key } => Request::ServiceInstall { key },
+            ServiceAction::Start { key } => Request::ServiceStart { key },
+            ServiceAction::Stop { key } => Request::ServiceStop { key },
         },
         Command::Daemon
         | Command::Ca { .. }

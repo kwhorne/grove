@@ -180,7 +180,7 @@
       {:else if tab === "services"}
         <h2>Services</h2>
         <p class="subtitle">Local services managed by Grove</p>
-        <Services services={status?.services ?? []} />
+        <Services services={status?.services ?? []} {notify} />
       {:else if tab === "mail"}
         <h2>Mail</h2>
         <p class="subtitle">Outgoing email captured by the built-in mail-catcher</p>

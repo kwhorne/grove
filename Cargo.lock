@@ -1505,12 +1505,16 @@ dependencies = [
 name = "grove-services"
 version = "0.1.0"
 dependencies = [
+ "flate2",
+ "grove-core",
  "serde",
  "serde_json",
+ "tar",
  "thiserror 1.0.69",
  "time",
  "tokio",
  "tracing",
+ "ureq",
 ]
 
 [[package]]
