@@ -9,6 +9,7 @@ pub mod fpm;
 pub mod install;
 pub mod node;
 pub mod registry;
+pub mod scaffold;
 
 pub use fpm::{FpmManager, FpmPool};
 pub use install::{install as install_php, InstallError};

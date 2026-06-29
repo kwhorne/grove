@@ -225,6 +225,11 @@ h2 {
   flex: none;
   margin-top: 2px;
 }
+.head-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
 .subtitle {
   color: var(--text-dim);
   margin: 0 0 16px;

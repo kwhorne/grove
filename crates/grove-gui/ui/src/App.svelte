@@ -16,6 +16,7 @@
   import Logs from "./components/Logs.svelte";
   import AboutModal from "./components/AboutModal.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
+  import NewSiteModal from "./components/NewSiteModal.svelte";
 
   type Tab = "sites" | "services" | "mail" | "php" | "node" | "logs" | "doctor";
 
@@ -30,6 +31,7 @@
   let loading = $state(true);
   let aboutOpen = $state(false);
   let settingsOpen = $state(false);
+  let newSiteOpen = $state(false);
 
   function notify(msg: string) {
     toast = msg;
@@ -202,7 +204,10 @@
             <h2>Sites</h2>
             <p class="subtitle">Everything Grove is serving on .{status?.tld ?? "test"}</p>
           </div>
-          <button class="btn primary" onclick={parkFolder}>+ Park folder…</button>
+          <div class="head-actions">
+            <button class="btn" onclick={parkFolder}>Park folder…</button>
+            <button class="btn primary" onclick={() => (newSiteOpen = true)}>+ New site</button>
+          </div>
         </div>
         <SiteTable {sites} {phpVersions} {nodeVersions} {notify} onchange={refresh} />
       {:else if tab === "services"}
@@ -239,4 +244,12 @@
 
   <AboutModal open={aboutOpen} onclose={() => (aboutOpen = false)} />
   <SettingsModal open={settingsOpen} onclose={() => (settingsOpen = false)} {notify} />
+  <NewSiteModal
+    open={newSiteOpen}
+    onclose={() => {
+      newSiteOpen = false;
+      refresh();
+    }}
+    {notify}
+  />
 </div>

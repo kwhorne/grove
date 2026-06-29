@@ -36,6 +36,14 @@ export const api = {
   link: (path: string, name: string | null): Promise<string> =>
     invoke("link_dir", { path, name }),
   unlink: (name: string): Promise<string> => invoke("unlink_site", { name }),
+  createSite: (
+    name: string,
+    parent: string,
+    kind: string,
+    php: string | null,
+    initGit: boolean,
+  ): Promise<string> =>
+    invoke("create_site", { name, parent, kind, php, initGit }),
   proxy: (name: string, url: string): Promise<string> =>
     invoke("proxy_site", { name, url }),
 

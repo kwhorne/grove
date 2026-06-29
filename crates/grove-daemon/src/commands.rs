@@ -132,6 +132,58 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             ))))
         }
 
+        Request::CreateSite {
+            name,
+            parent,
+            kind,
+            php,
+            init_git,
+        } => {
+            let parent_dir = Config::expand(&PathBuf::from(&parent));
+            let target = parent_dir.join(&name);
+            let php_version = match php {
+                Some(v) => v,
+                None => state.config.lock().await.general.default_php.clone(),
+            };
+            let paths = state.paths.clone();
+            let target_for_task = target.clone();
+            let name_for_task = name.clone();
+            tokio::task::spawn_blocking(move || match kind.as_str() {
+                "laravel" => grove_runtime::scaffold::new_laravel(
+                    &paths,
+                    &php_version,
+                    &target_for_task,
+                    init_git,
+                    |_| {},
+                )
+                .map_err(|e| e.to_string()),
+                _ => grove_runtime::scaffold::new_static(&target_for_task, &name_for_task)
+                    .map_err(|e| e.to_string()),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("scaffold task panicked: {e}"))?
+            .map_err(|e| anyhow::anyhow!(e))?;
+
+            {
+                let mut config = state.config.lock().await;
+                config.remove_site(&name);
+                config.add_site(SiteConfig {
+                    name: name.clone(),
+                    path: Some(target.clone()),
+                    php: None,
+                    node: None,
+                    secure: false,
+                    driver: None,
+                    proxy_to: None,
+                })?;
+            }
+            state.persist_and_reload().await?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "created {name} at {}",
+                target.display()
+            ))))
+        }
+
         Request::Secure { name, enable } => {
             mutate_site(state, &name, |sc| sc.secure = enable).await?;
             let verb = if enable { "secured" } else { "unsecured" };

@@ -93,7 +93,7 @@ no Homebrew, no Composer, no Valet.
 | --- | --- |
 | Setup | `init`, `ca trust` / `ca uninstall`, `install` / `uninstall` (service) |
 | Lifecycle | `daemon`, `start`, `stop`, `restart` |
-| Sites | `park` / `unpark`, `link` / `unlink`, `list`, `secure` / `unsecure`, `isolate` / `unisolate`, `proxy` |
+| Sites | `new`, `park` / `unpark`, `link` / `unlink`, `list`, `secure` / `unsecure`, `isolate` / `unisolate`, `proxy` |
 | PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
 | Node | `node list`, `node install <version>`, `node use <site> <version>`, `node unuse <site>` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |
