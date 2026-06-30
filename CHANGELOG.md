@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-06-30
+
+### Fixed
+
+- **PHP now serves under a privileged (root) daemon**: PHP-FPM workers run as
+  the real user (`SUDO_USER`/`GROVE_RUN_USER`) with `--allow-to-run-as-root` on
+  the master, instead of php-fpm refusing to start as root.
+- **Static assets are served directly** (try_files): existing files such as
+  built Vite assets under `/build/` are returned as-is instead of being routed
+  through `index.php`, so SPA/Vite front-ends render correctly.
+
+### Changed
+
+- Bumped `tauri-action` to v1 and several GUI dev-dependencies (Dependabot).
+
 ## [0.1.2] — 2026-06-29
 
 ### Added
@@ -101,6 +116,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.1.3]: https://github.com/kwhorne/grove/releases/tag/v0.1.3
 [0.1.2]: https://github.com/kwhorne/grove/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kwhorne/grove/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kwhorne/grove/releases/tag/v0.1.0

@@ -58,7 +58,18 @@ pub async fn handle(
     let result = match site.driver {
         Driver::Proxy => serve_proxy(req, &site).await,
         Driver::Static => serve_static(req, &site).await,
-        d if d.is_php() => serve_php(req, &site, fpm.as_ref(), https).await,
+        d if d.is_php() => {
+            // try_files: serve an existing static file (e.g. built Vite assets
+            // under /build/) directly, otherwise hand off to the front
+            // controller (index.php).
+            let rel = sanitize_path(req.uri().path());
+            let candidate = site.document_root.join(&rel);
+            if !rel.as_os_str().is_empty() && candidate.is_file() {
+                serve_static(req, &site).await
+            } else {
+                serve_php(req, &site, fpm.as_ref(), https).await
+            }
+        }
         _ => serve_static(req, &site).await,
     };
 
