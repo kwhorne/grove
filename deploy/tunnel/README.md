@@ -44,14 +44,20 @@ sudo ufw allow 80,443,7000/tcp
 
 ## 3. Install the binaries
 
-`grove-tunnel` ships in every Grove CLI release tarball:
+`grove-tunnel` ships in every Grove CLI release tarball. The asset is named with
+the release tag, so resolve the latest tag first:
 
 ```bash
-# On the server (Linux x86_64):
-curl -sSL -o grove.tgz \
-  https://github.com/kwhorne/grove/releases/latest/download/grove-v0.2.2-x86_64-unknown-linux-gnu.tar.gz
+# On the server (Linux x86_64; use aarch64 for ARM):
+TARGET=x86_64-unknown-linux-gnu
+TAG=$(curl -fsSL https://api.github.com/repos/kwhorne/grove/releases/latest \
+  | grep -oE '"tag_name": *"[^"]+"' | head -1 | cut -d'"' -f4)
+curl -fsSL -o grove.tgz \
+  "https://github.com/kwhorne/grove/releases/download/${TAG}/grove-${TAG}-${TARGET}.tar.gz"
 tar xzf grove.tgz
 sudo install grove-tunnel /usr/local/bin/
+
+# (Easiest of all: just run deploy/tunnel/setup.sh, which does this for you.)
 
 # Caddy (Debian/Ubuntu):
 sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
@@ -87,6 +93,25 @@ needed:
 grove share myapp
 # 🌿 Tunnel online → https://<random>.grove.elyracode.com
 ```
+
+## Updating the server
+
+Swap the binary and restart — Caddy/DNS are untouched:
+
+```bash
+TARGET=x86_64-unknown-linux-gnu
+TAG=$(curl -fsSL https://api.github.com/repos/kwhorne/grove/releases/latest \
+  | grep -oE '"tag_name": *"[^"]+"' | head -1 | cut -d'"' -f4)
+curl -fsSL -o /tmp/grove.tgz \
+  "https://github.com/kwhorne/grove/releases/download/${TAG}/grove-${TAG}-${TARGET}.tar.gz"
+tar -C /tmp -xzf /tmp/grove.tgz
+sudo install /tmp/grove-tunnel /usr/local/bin/grove-tunnel
+sudo systemctl restart grove-tunnel
+grove-tunnel --version
+```
+
+> Keep the server and the developers' Grove apps on the **same minor version** —
+> tunnel behaviour (e.g. header handling) can change between versions.
 
 ---
 

@@ -147,14 +147,17 @@ path, headers and body, so signature verification keeps working.
 
 ## How it works
 
-- **One control connection** (TCP, token-authenticated) per shared site.
+- **One control connection** (TCP, optionally token-authenticated) per shared
+  site.
 - **yamux** multiplexes every public request as its own stream — full
   concurrency over a single socket.
 - **hyper on both ends**: the server runs an HTTP client over each stream, the
   client runs an HTTP server that proxies to the local `.test` site.
-- The client proxies to Grove's own HTTP port (`127.0.0.1:80`) with the `Host`
-  set to `<site>.test`, so Grove's normal routing, drivers and PHP handling all
-  apply unchanged.
+- The **public `Host` is preserved** end-to-end so the app builds correct public
+  URLs (Vite, assets, redirects). The local site is selected via an
+  `X-Grove-Site` header instead of rewriting `Host`, and `X-Forwarded-Proto`
+  tells Grove's proxy to present the request to PHP as HTTPS (`HTTPS=on`) — so
+  apps emit `https://` URLs without needing TrustProxies configured.
 
 See [`crates/grove-tunnel`](../crates/grove-tunnel) for the implementation and an
 end-to-end loopback test.
