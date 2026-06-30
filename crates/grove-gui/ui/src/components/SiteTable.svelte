@@ -74,6 +74,17 @@
   const setNode = (s: ResolvedSite, v: string) => run(api.setNode(s.name, v === "" ? null : v));
   const open = (s: ResolvedSite) => api.openUrl(url(s));
   const reveal = (s: ResolvedSite) => api.openPath(s.path);
+  async function copyShareUrl(host: string) {
+    const u = shared[host];
+    if (!u) return;
+    try {
+      await navigator.clipboard.writeText(u);
+      notify("Public URL copied");
+    } catch {
+      notify(u);
+    }
+  }
+
   async function forget(s: ResolvedSite) {
     const ok = confirm(
       `Remove ${s.hostname} from the list?\n\nThe project files in ${s.path} are kept — this only hides it from Grove.`,
@@ -111,6 +122,14 @@
               {s.hostname}
             </a>
             <div class="mono">{s.path}</div>
+            {#if shared[s.hostname]}
+              <button
+                class="share-url mono"
+                title="Public tunnel — click to copy"
+                onclick={() => copyShareUrl(s.hostname)}>
+                🌍 {shared[s.hostname]}
+              </button>
+            {/if}
           </td>
           <td><span class="badge {s.driver}">{s.driver}</span></td>
           <td>

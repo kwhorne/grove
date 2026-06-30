@@ -354,6 +354,20 @@ tbody tr:hover td {
   border-color: var(--red);
   color: var(--red);
 }
+.share-url {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--brand);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+  color: var(--brand);
+  font-size: 11px;
+  cursor: pointer;
+}
+.share-url:hover {
+  background: color-mix(in srgb, var(--brand) 26%, transparent);
+}
 .btn-row {
   display: flex;
   gap: 6px;

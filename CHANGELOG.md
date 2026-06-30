@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-06-30
+
+### Added
+
+- The **public tunnel URL now shows inline** in the Sites row (a 🌍 chip you can
+  click to copy) while a site is shared — not just in the transient toast. The
+  Tunnels panel continues to list every active tunnel.
+- A turnkey `deploy/tunnel/setup.sh` for standing up your own tunnel server in
+  one command.
+
 ## [0.2.2] — 2026-06-30
 
 ### Added
@@ -195,6 +205,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.2.3]: https://github.com/kwhorne/grove/releases/tag/v0.2.3
 [0.2.2]: https://github.com/kwhorne/grove/releases/tag/v0.2.2
 [0.2.1]: https://github.com/kwhorne/grove/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kwhorne/grove/releases/tag/v0.2.0
