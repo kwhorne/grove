@@ -19,7 +19,7 @@ PHP and zero external dependencies — from a single Rust core.
 </div>
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="Grove dashboard" width="820" />
+  <img src="assets/dashboard.png" alt="Grove dashboard — sites with local HTTPS and public tunnels" width="820" />
 </p>
 
 ---
