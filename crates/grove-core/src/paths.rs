@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use directories::ProjectDirs;
+use directories::BaseDirs;
 
 use crate::error::{Error, Result};
 
@@ -19,16 +19,18 @@ pub struct GrovePaths {
 impl GrovePaths {
     /// Discover the platform-appropriate base directory.
     ///
+    /// A fixed `Grove` directory (not a reverse-DNS ProjectDirs name) so the
+    /// CLI, daemon and GUI always agree on the same path:
     /// - macOS:   `~/Library/Application Support/Grove`
-    /// - Linux:   `~/.config/grove`
-    /// - Windows: `%APPDATA%\Grove\config`
+    /// - Linux:   `~/.local/share/Grove`
+    /// - Windows: `%APPDATA%\Grove`
     pub fn discover() -> Result<Self> {
         // Allow tests / power users to override the whole tree.
         if let Ok(custom) = std::env::var("GROVE_HOME") {
             return Ok(Self::with_base(custom));
         }
-        let dirs = ProjectDirs::from("com", "elyra", "Grove").ok_or(Error::NoConfigDir)?;
-        Ok(Self::with_base(dirs.config_dir()))
+        let dirs = BaseDirs::new().ok_or(Error::NoConfigDir)?;
+        Ok(Self::with_base(dirs.data_dir().join("Grove")))
     }
 
     pub fn with_base(base: impl Into<PathBuf>) -> Self {
