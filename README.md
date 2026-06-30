@@ -71,8 +71,8 @@ but it never requires Valet to be installed.
 # 1. First-run setup: config, root CA, a static PHP build, resolver + trust
 sudo grove init
 
-# 2. Start the daemon (binds 80/443/53)
-grove start
+# 2. Install the background service (root daemon, binds 80/443/53, starts at boot)
+sudo grove install
 
 # 3. Point Grove at your projects
 grove park ~/Code           # every subdirectory becomes <name>.test
@@ -83,6 +83,10 @@ grove link
 grove secure myproject      # enable HTTPS
 grove isolate myproject 8.3 # pin a PHP version for this site
 ```
+
+> The daemon binds privileged ports (53/80/443) and runs PHP as your user, so
+> it is installed as a root service. `sudo grove start` works too for a
+> foreground/one-off run.
 
 From a clean machine to a running `*.test` Laravel app in under five minutes —
 no Homebrew, no Composer, no Valet.
@@ -219,6 +223,9 @@ grove daemon
 From **0.1.2** the macOS app is **code-signed with a Developer ID and notarized
 by Apple**, so it opens normally — download the `.dmg`, drag Grove to
 `/Applications`, and launch it. No Gatekeeper warning, no workarounds.
+
+To actually serve `*.test` (which needs ports 53/80/443), install the background
+service once: `sudo grove install`. The GUI is a dashboard over that daemon.
 
 ## Documentation
 

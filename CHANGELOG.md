@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-06-30
+
+### Added
+
+- **Root background service** on macOS: `sudo grove install` now installs a
+  system **LaunchDaemon** that binds the privileged ports (53/80/443), starts at
+  boot, and runs PHP workers as your user (`GROVE_RUN_USER`). This is the piece
+  that makes `*.test` serving work after just installing the app + running
+  `sudo grove install` — no more manual `sudo grove start`.
+
+### Fixed
+
+- The daemon's IPC socket is now world-accessible, so the user-level GUI can
+  talk to the root daemon.
+
 ## [0.1.3] — 2026-06-30
 
 ### Fixed
@@ -116,6 +131,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.1.4]: https://github.com/kwhorne/grove/releases/tag/v0.1.4
 [0.1.3]: https://github.com/kwhorne/grove/releases/tag/v0.1.3
 [0.1.2]: https://github.com/kwhorne/grove/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kwhorne/grove/releases/tag/v0.1.1

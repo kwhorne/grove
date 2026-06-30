@@ -20,6 +20,12 @@ pub async fn serve(socket: PathBuf, state: Arc<DaemonState>) -> anyhow::Result<(
         std::fs::create_dir_all(parent)?;
     }
     let listener = UnixListener::bind(&socket)?;
+    // World-accessible so a user-level GUI can talk to a root daemon.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o777));
+    }
     tracing::info!(socket = %socket.display(), "IPC listening");
 
     let shutdown = state.shutdown.clone();

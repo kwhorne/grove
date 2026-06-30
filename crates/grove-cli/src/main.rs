@@ -324,10 +324,40 @@ mod lifecycle {
     }
 
     pub fn install(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
+        use std::path::PathBuf;
         let exe = std::env::current_exe().context("resolving grove binary path")?;
-        let unit = grove_os::service::install(&exe).context("installing service")?;
-        let _ = paths;
-        output::print_message(&format!("service installed: {}", unit.display()), json);
+        // When run via sudo, run PHP workers as the real user, not root.
+        let run_user = std::env::var("SUDO_USER")
+            .ok()
+            .or_else(|| std::env::var("USER").ok())
+            .filter(|u| !u.is_empty() && u != "root");
+
+        // The service should use the invoking user's Grove home (not root's),
+        // so it shares config/sites with the GUI. Honor an explicit GROVE_HOME;
+        // otherwise derive it from SUDO_USER when running under sudo.
+        let service_home: PathBuf = if std::env::var_os("GROVE_HOME").is_some() {
+            paths.base().to_path_buf()
+        } else if let Some(user) = run_user.as_deref() {
+            if cfg!(target_os = "macos") {
+                PathBuf::from("/Users")
+                    .join(user)
+                    .join("Library/Application Support/Grove")
+            } else {
+                PathBuf::from("/home").join(user).join(".config/grove")
+            }
+        } else {
+            paths.base().to_path_buf()
+        };
+
+        let unit = grove_os::service::install(&exe, &service_home, run_user.as_deref())
+            .context("installing service")?;
+        output::print_message(
+            &format!(
+                "service installed: {} (runs at boot, binds the configured ports)",
+                unit.display()
+            ),
+            json,
+        );
         Ok(())
     }
 
