@@ -138,6 +138,8 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             name,
         },
         Command::Unlink { name } => Request::Unlink { name },
+        Command::Forget { name } => Request::ForgetSite { name },
+        Command::Restore { name } => Request::UnforgetSite { name },
         Command::New {
             name,
             kind,
@@ -436,7 +438,20 @@ mod lifecycle {
         if !json {
             eprintln!("  Sharing {local_host} — connecting to tunnel…");
         }
-        grove_tunnel::share(cfg, |public_host, public_url| {
+
+        // Live request log (ngrok-style) on the terminal.
+        let recorder: Option<grove_tunnel::Recorder> = if json {
+            None
+        } else {
+            Some(std::sync::Arc::new(|r: grove_tunnel::RequestRecord| {
+                println!(
+                    "  {:<6} {:<40} {} ({}ms)",
+                    r.method, r.path, r.status, r.duration_ms
+                );
+            }))
+        };
+
+        grove_tunnel::share(cfg, recorder, |public_host, public_url| {
             if json {
                 println!(
                     "{}",

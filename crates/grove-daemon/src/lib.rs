@@ -8,6 +8,7 @@ pub mod commands;
 pub mod ipc;
 pub mod logs;
 pub mod state;
+pub mod tunnels;
 
 pub use state::DaemonState;
 

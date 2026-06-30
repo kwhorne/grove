@@ -13,8 +13,10 @@
 
 pub mod client;
 pub mod protocol;
+pub mod record;
 pub mod server;
 mod util;
 
 pub use client::{run as share, ShareConfig};
+pub use record::{now_ms, Recorder, RequestRecord};
 pub use server::{run as serve, ServerConfig};

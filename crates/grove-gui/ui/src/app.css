@@ -346,6 +346,14 @@ tbody tr:hover td {
 .btn.icon {
   padding: 5px 8px;
 }
+.btn.icon.sharing {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+}
+.btn.icon.danger:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
 .btn-row {
   display: flex;
   gap: 6px;

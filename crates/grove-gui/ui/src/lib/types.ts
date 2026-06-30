@@ -48,6 +48,23 @@ export interface DaemonStatus {
   services: ServiceState[];
 }
 
+export interface TunnelStatus {
+  site: string;
+  public_url: string;
+  public_host: string;
+  started_at_ms: number;
+  request_count: number;
+}
+
+export interface TunnelRequestEntry {
+  site: string;
+  at_unix_ms: number;
+  method: string;
+  path: string;
+  status: number;
+  duration_ms: number;
+}
+
 export type DiagnosticStatus = "pass" | "warn" | "fail";
 
 export interface DiagnosticEntry {

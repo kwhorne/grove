@@ -68,6 +68,13 @@ impl SiteRegistry {
             }
         }
 
+        // 3. Hide any sites the user has removed from the list (files kept).
+        if !config.ignored.is_empty() {
+            let ignored: std::collections::HashSet<&str> =
+                config.ignored.iter().map(String::as_str).collect();
+            sites.retain(|name, _| !ignored.contains(name.as_str()));
+        }
+
         Self { sites, tld }
     }
 
@@ -141,4 +148,36 @@ pub fn name_from_path(path: &Path) -> Option<String> {
     path.file_name()
         .and_then(|n| n.to_str())
         .map(|s| s.to_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, ParkedDir};
+
+    #[test]
+    fn ignored_sites_are_hidden_but_files_kept() {
+        let tmp = std::env::temp_dir().join(format!("grove-reg-test-{}", std::process::id()));
+        let alpha = tmp.join("alpha");
+        let beta = tmp.join("beta");
+        std::fs::create_dir_all(&alpha).unwrap();
+        std::fs::create_dir_all(&beta).unwrap();
+
+        let mut config = Config::default();
+        config.parked.push(ParkedDir { path: tmp.clone() });
+
+        let reg = SiteRegistry::build(&config);
+        assert!(reg.get("alpha").is_some());
+        assert!(reg.get("beta").is_some());
+
+        config.ignored.push("beta".into());
+        let reg = SiteRegistry::build(&config);
+        assert!(reg.get("alpha").is_some(), "alpha stays visible");
+        assert!(reg.get("beta").is_none(), "beta is hidden");
+
+        // Files are untouched on disk.
+        assert!(beta.is_dir(), "forgetting must not delete files");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

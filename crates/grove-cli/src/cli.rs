@@ -72,6 +72,12 @@ pub enum Command {
     },
     /// Remove a linked site.
     Unlink { name: String },
+
+    /// Remove a site from the list without deleting its files (hide it).
+    Forget { name: String },
+
+    /// Restore a previously removed (forgotten) site.
+    Restore { name: String },
     /// Create a new site (a fresh Laravel or static project) and link it.
     New {
         /// Project name (becomes <name>.test).

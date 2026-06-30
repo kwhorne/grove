@@ -93,6 +93,7 @@ async fn request_flows_through_tunnel() {
                 local_addr: local,
                 basic_auth: None,
             },
+            None,
             move |host, url| {
                 if let Some(tx) = tx.take() {
                     let _ = tx.send((host.to_string(), url.to_string()));

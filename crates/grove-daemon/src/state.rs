@@ -10,6 +10,8 @@ use grove_core::{paths::GrovePaths, Config, SiteRegistry};
 use grove_proxy::SharedState;
 use grove_services::{MailStore, ServiceManager};
 
+use crate::tunnels::TunnelManager;
+
 pub struct DaemonState {
     pub paths: GrovePaths,
     pub config: Mutex<Config>,
@@ -18,6 +20,8 @@ pub struct DaemonState {
     pub mail: MailStore,
     /// Bundled service supervisor (PostgreSQL, …).
     pub services: Arc<ServiceManager>,
+    /// Active public tunnels (`grove share`).
+    pub tunnels: Arc<TunnelManager>,
     /// Notified when a graceful shutdown is requested (via IPC or signal).
     pub shutdown: Arc<Notify>,
 }
@@ -36,6 +40,7 @@ impl DaemonState {
             shared,
             mail,
             services,
+            tunnels: Arc::new(TunnelManager::new()),
             shutdown: Arc::new(Notify::new()),
         }
     }

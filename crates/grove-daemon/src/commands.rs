@@ -12,8 +12,56 @@ use grove_ipc::protocol::{
 };
 
 use crate::state::DaemonState;
+use grove_tunnel::ShareConfig;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Open a public tunnel for a site using the configured tunnel server.
+async fn tunnel_start(
+    state: &Arc<DaemonState>,
+    site: String,
+    subdomain: Option<String>,
+    basic_auth: Option<String>,
+) -> anyhow::Result<Response> {
+    use std::net::SocketAddr;
+    let (server, token, local_host, local_addr) = {
+        let config = state.config.lock().await;
+        let tld = config.general.tld.clone();
+        let Some(server) = config.tunnel.server.clone() else {
+            return Ok(Response::err(
+                "no tunnel server configured — set [tunnel].server in config.toml",
+            ));
+        };
+        let Some(token) = config.tunnel.token.clone() else {
+            return Ok(Response::err(
+                "no tunnel token configured — set [tunnel].token in config.toml",
+            ));
+        };
+        let name = site
+            .trim()
+            .trim_end_matches(&format!(".{tld}"))
+            .to_lowercase();
+        if name.is_empty() {
+            return Ok(Response::err("missing site name"));
+        }
+        let local_host = format!("{name}.{tld}");
+        let local_addr: SocketAddr = format!("127.0.0.1:{}", config.general.http_port).parse()?;
+        (server, token, local_host, local_addr)
+    };
+
+    let cfg = ShareConfig {
+        server,
+        token,
+        subdomain,
+        local_host: local_host.clone(),
+        local_addr,
+        basic_auth,
+    };
+    match state.tunnels.start(local_host, cfg).await {
+        Ok(status) => Ok(Response::ok(ResponseData::Tunnels(vec![status]))),
+        Err(e) => Ok(Response::err(e.to_string())),
+    }
+}
 
 /// Execute one request against daemon state, returning the response to send.
 pub async fn dispatch(state: &Arc<DaemonState>, req: Request) -> Response {
@@ -129,6 +177,32 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             state.persist_and_reload().await?;
             Ok(Response::ok(ResponseData::Message(format!(
                 "unlinked {name}"
+            ))))
+        }
+
+        Request::ForgetSite { name } => {
+            {
+                let mut config = state.config.lock().await;
+                // Drop any explicit [[sites]] entry too, then hide by name.
+                config.remove_site(&name);
+                if !config.ignored.iter().any(|n| n == &name) {
+                    config.ignored.push(name.clone());
+                }
+            }
+            state.persist_and_reload().await?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "removed {name} from the list (files kept)"
+            ))))
+        }
+
+        Request::UnforgetSite { name } => {
+            {
+                let mut config = state.config.lock().await;
+                config.ignored.retain(|n| n != &name);
+            }
+            state.persist_and_reload().await?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "restored {name}"
             ))))
         }
 
@@ -491,6 +565,23 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             ))))
         }
 
+        Request::TunnelStart {
+            site,
+            subdomain,
+            basic_auth,
+        } => tunnel_start(state, site, subdomain, basic_auth).await,
+        Request::TunnelStop { site } => match state.tunnels.stop(&site).await {
+            Ok(()) => Ok(Response::ok(ResponseData::Message(format!(
+                "stopped sharing {site}"
+            )))),
+            Err(e) => Ok(Response::err(e.to_string())),
+        },
+        Request::TunnelList => Ok(Response::ok(ResponseData::Tunnels(
+            state.tunnels.list().await,
+        ))),
+        Request::TunnelRequests { site } => Ok(Response::ok(ResponseData::TunnelRequests(
+            state.tunnels.requests(site.as_deref()).await,
+        ))),
         Request::Doctor => Ok(Response::ok(ResponseData::Doctor(doctor(state).await))),
 
         Request::Shutdown => {

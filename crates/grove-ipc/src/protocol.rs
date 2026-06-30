@@ -24,6 +24,10 @@ pub enum Request {
     Link { path: String, name: Option<String> },
     /// Remove a linked site.
     Unlink { name: String },
+    /// Remove a site from the list without deleting its files (hide it).
+    ForgetSite { name: String },
+    /// Restore a previously forgotten site.
+    UnforgetSite { name: String },
     /// Create a new site. `kind` is "laravel" | "static". The project is created
     /// at `parent`/`name` and linked.
     CreateSite {
@@ -81,6 +85,18 @@ pub enum Request {
     NodeInstall { version: String },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
+    /// Start sharing a site publicly through the configured tunnel server.
+    TunnelStart {
+        site: String,
+        subdomain: Option<String>,
+        basic_auth: Option<String>,
+    },
+    /// Stop sharing a site.
+    TunnelStop { site: String },
+    /// List active tunnels.
+    TunnelList,
+    /// Recent requests seen by the tunnel inspector (all sites, or one).
+    TunnelRequests { site: Option<String> },
     /// Diagnostics (`grove doctor`).
     Doctor,
     /// List captured emails (newest first).
@@ -145,6 +161,31 @@ pub enum ResponseData {
     LogEntries(Vec<LogEntry>),
     Nodes(Vec<NodeVersion>),
     PhpVersions(Vec<NodeVersion>),
+    Tunnels(Vec<TunnelStatus>),
+    TunnelRequests(Vec<TunnelRequestEntry>),
+}
+
+/// An active public tunnel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelStatus {
+    pub site: String,
+    pub public_url: String,
+    pub public_host: String,
+    /// When the tunnel opened (unix milliseconds).
+    pub started_at_ms: u64,
+    /// Requests served so far.
+    pub request_count: u64,
+}
+
+/// One request observed by the tunnel inspector.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TunnelRequestEntry {
+    pub site: String,
+    pub at_unix_ms: u64,
+    pub method: String,
+    pub path: String,
+    pub status: u16,
+    pub duration_ms: u64,
 }
 
 /// A Node.js major version: offered for install and, if present, its installed

@@ -37,6 +37,11 @@ pub struct Config {
     #[serde(default, rename = "sites")]
     pub sites: Vec<SiteConfig>,
 
+    /// Site names hidden from the list (removed from Grove without deleting
+    /// their files). Re-appear if explicitly unforgotten.
+    #[serde(default)]
+    pub ignored: Vec<String>,
+
     /// Local service configuration (mail-catcher, …).
     #[serde(default)]
     pub services: Services,

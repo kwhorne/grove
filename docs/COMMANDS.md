@@ -30,6 +30,8 @@ grove <command> [args] [--json]
 | `grove unpark [<dir>]` | Stop parking a directory. |
 | `grove link [name] [--path <dir>]` | Link a single directory as a site. |
 | `grove unlink <name>` | Remove a linked site. |
+| `grove forget <name>` | Remove a site from the list without deleting its files. |
+| `grove restore <name>` | Restore a previously forgotten site. |
 | `grove list` (alias `links`) | List every served site. |
 | `grove secure <name>` / `unsecure <name>` | Toggle HTTPS for a site. |
 | `grove isolate <name> <version>` / `unisolate <name>` | Pin / clear a site's PHP version. |

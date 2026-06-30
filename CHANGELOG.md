@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Tunnel management in the GUI** — a new **Tunnels** panel and a per-row
+  **Share** button in the Sites table. The daemon now owns tunnel lifecycles, so
+  the GUI/CLI can start, stop and list public tunnels.
+- **Request inspector** — a live table of recent tunnelled requests (time, site,
+  method, path, status, duration), ideal for debugging webhooks. `grove share`
+  also prints requests live in the terminal.
+- **Remove a site from the list** — `grove forget <name>` (and a trash button in
+  the GUI) hides a site **without deleting its files**; `grove restore <name>`
+  brings it back. Backed by a new `ignored` list in `config.toml`.
+
+### Removed
+
+- `docs/SIGNING.md` (internal signing notes) is no longer part of the docs.
+
 ## [0.2.0] — 2026-06-30
 
 ### Added

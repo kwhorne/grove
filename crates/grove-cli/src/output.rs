@@ -151,6 +151,19 @@ pub fn print_response(resp: &Response, json: bool) {
                 println!("{mark} {:<14} {}", e.check, e.detail);
             }
         }
+        Some(ResponseData::Tunnels(tunnels)) => {
+            for t in tunnels {
+                println!("✓ {} → {}", t.site, t.public_url);
+            }
+        }
+        Some(ResponseData::TunnelRequests(reqs)) => {
+            for r in reqs {
+                println!(
+                    "  {:<6} {:<40} {} ({}ms)",
+                    r.method, r.path, r.status, r.duration_ms
+                );
+            }
+        }
     }
 }
 

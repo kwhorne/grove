@@ -12,7 +12,7 @@ use grove_core::site::ResolvedSite;
 use grove_ipc::client;
 use grove_ipc::protocol::{
     DaemonStatus, DiagnosticEntry, LogEntry, LogSource, NodeVersion, Request, ResponseData,
-    SettingsPatch, SettingsView,
+    SettingsPatch, SettingsView, TunnelRequestEntry, TunnelStatus,
 };
 use grove_runtime::PhpRegistry;
 use grove_services::{CapturedEmail, EmailSummary, ServiceStatus};
@@ -177,6 +177,50 @@ async fn node_list() -> CmdResult<Vec<NodeVersion>> {
 #[tauri::command]
 async fn node_install(version: String) -> CmdResult<String> {
     message(Request::NodeInstall { version }).await
+}
+
+#[tauri::command]
+async fn tunnel_start(
+    site: String,
+    subdomain: Option<String>,
+    basic_auth: Option<String>,
+) -> CmdResult<Vec<TunnelStatus>> {
+    match call(Request::TunnelStart {
+        site,
+        subdomain,
+        basic_auth,
+    })
+    .await?
+    {
+        ResponseData::Tunnels(t) => Ok(t),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn tunnel_stop(site: String) -> CmdResult<String> {
+    message(Request::TunnelStop { site }).await
+}
+
+#[tauri::command]
+async fn forget_site(name: String) -> CmdResult<String> {
+    message(Request::ForgetSite { name }).await
+}
+
+#[tauri::command]
+async fn tunnel_list() -> CmdResult<Vec<TunnelStatus>> {
+    match call(Request::TunnelList).await? {
+        ResponseData::Tunnels(t) => Ok(t),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn tunnel_requests(site: Option<String>) -> CmdResult<Vec<TunnelRequestEntry>> {
+    match call(Request::TunnelRequests { site }).await? {
+        ResponseData::TunnelRequests(r) => Ok(r),
+        _ => Err("unexpected response".into()),
+    }
 }
 
 #[derive(Serialize)]
@@ -476,6 +520,11 @@ fn main() {
             log_entries,
             node_list,
             node_install,
+            tunnel_start,
+            tunnel_stop,
+            forget_site,
+            tunnel_list,
+            tunnel_requests,
             php_versions,
             php_install,
             php_list,

@@ -15,6 +15,8 @@ import type {
   ServiceStatus,
   SettingsPatch,
   SettingsView,
+  TunnelRequestEntry,
+  TunnelStatus,
 } from "./types";
 
 export const api = {
@@ -76,6 +78,18 @@ export const api = {
 
   phpVersions: (): Promise<NodeVersion[]> => invoke("php_versions"),
   phpInstall: (version: string): Promise<string> => invoke("php_install", { version }),
+
+  tunnelStart: (
+    site: string,
+    subdomain: string | null,
+    basicAuth: string | null,
+  ): Promise<TunnelStatus[]> =>
+    invoke("tunnel_start", { site, subdomain, basicAuth }),
+  tunnelStop: (site: string): Promise<string> => invoke("tunnel_stop", { site }),
+  forgetSite: (name: string): Promise<string> => invoke("forget_site", { name }),
+  tunnelList: (): Promise<TunnelStatus[]> => invoke("tunnel_list"),
+  tunnelRequests: (site: string | null): Promise<TunnelRequestEntry[]> =>
+    invoke("tunnel_requests", { site }),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),

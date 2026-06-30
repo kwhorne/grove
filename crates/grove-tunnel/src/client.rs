@@ -16,6 +16,7 @@ use tokio::net::TcpStream;
 use tokio_yamux::{Config as YamuxConfig, Session};
 
 use crate::protocol::{read_msg, write_msg, Hello, Reply};
+use crate::record::{now_ms, Recorder, RequestRecord};
 use crate::util::{text, Body};
 
 /// What to share and where.
@@ -38,7 +39,7 @@ pub struct ShareConfig {
 /// Connect, register the tunnel, then serve until the connection drops.
 ///
 /// `on_ready` is called once with the assigned public URL.
-pub async fn run<F>(cfg: ShareConfig, on_ready: F) -> anyhow::Result<()>
+pub async fn run<F>(cfg: ShareConfig, recorder: Option<Recorder>, on_ready: F) -> anyhow::Result<()>
 where
     F: FnOnce(&str, &str),
 {
@@ -57,8 +58,10 @@ where
                 Ok(stream) => {
                     let la = local_addr;
                     let lh = local_host.clone();
+                    let rec = recorder.clone();
                     tokio::spawn(async move {
-                        let svc = service_fn(move |req| proxy_local(req, la, lh.clone()));
+                        let svc =
+                            service_fn(move |req| proxy_local(req, la, lh.clone(), rec.clone()));
                         if let Err(e) = http1::Builder::new()
                             .serve_connection(TokioIo::new(stream), svc)
                             .await
@@ -113,7 +116,28 @@ async fn proxy_local(
     mut req: Request<Incoming>,
     addr: SocketAddr,
     local_host: String,
+    recorder: Option<Recorder>,
 ) -> Result<Response<Body>, hyper::Error> {
+    let started = std::time::Instant::now();
+    let at_unix_ms = now_ms();
+    let method = req.method().as_str().to_string();
+    let path = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
+    let emit = move |status: u16| {
+        if let Some(rec) = &recorder {
+            rec(RequestRecord {
+                at_unix_ms,
+                method: method.clone(),
+                path: path.clone(),
+                status,
+                duration_ms: started.elapsed().as_millis() as u64,
+            });
+        }
+    };
+
     // Ensure the Host is the local one even if the server didn't rewrite it.
     if let Ok(hv) = hyper::header::HeaderValue::from_str(&local_host) {
         req.headers_mut().insert(HOST, hv);
@@ -121,19 +145,31 @@ async fn proxy_local(
 
     let tcp = match TcpStream::connect(addr).await {
         Ok(t) => t,
-        Err(_) => return Ok(text(StatusCode::BAD_GATEWAY, "Local site unreachable.\n")),
+        Err(_) => {
+            emit(0);
+            return Ok(text(StatusCode::BAD_GATEWAY, "Local site unreachable.\n"));
+        }
     };
     let (mut sender, conn) =
         match hyper::client::conn::http1::handshake::<_, Incoming>(TokioIo::new(tcp)).await {
             Ok(x) => x,
-            Err(_) => return Ok(text(StatusCode::BAD_GATEWAY, "Local handshake failed.\n")),
+            Err(_) => {
+                emit(0);
+                return Ok(text(StatusCode::BAD_GATEWAY, "Local handshake failed.\n"));
+            }
         };
     tokio::spawn(async move {
         let _ = conn.await;
     });
 
     match sender.send_request(req).await {
-        Ok(resp) => Ok(resp.map(|b| b.boxed())),
-        Err(_) => Ok(text(StatusCode::BAD_GATEWAY, "Local site error.\n")),
+        Ok(resp) => {
+            emit(resp.status().as_u16());
+            Ok(resp.map(|b| b.boxed()))
+        }
+        Err(_) => {
+            emit(0);
+            Ok(text(StatusCode::BAD_GATEWAY, "Local site error.\n"))
+        }
     }
 }

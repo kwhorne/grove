@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, onDestroy } from "svelte";
   import { api } from "../lib/api";
   import type { ResolvedSite } from "../lib/types";
 
@@ -25,12 +26,61 @@
     }
   }
 
+  // Map of host → public URL for sites currently being shared.
+  let shared = $state<Record<string, string>>({});
+  let shareBusy = $state<Record<string, boolean>>({});
+  let timer: ReturnType<typeof setInterval> | undefined;
+
+  async function refreshTunnels() {
+    try {
+      const list = await api.tunnelList();
+      const next: Record<string, string> = {};
+      for (const t of list) next[t.site] = t.public_url;
+      shared = next;
+    } catch {
+      /* daemon down */
+    }
+  }
+  onMount(() => {
+    refreshTunnels();
+    timer = setInterval(refreshTunnels, 2500);
+  });
+  onDestroy(() => timer && clearInterval(timer));
+
+  async function toggleShare(s: ResolvedSite) {
+    shareBusy = { ...shareBusy, [s.hostname]: true };
+    try {
+      if (shared[s.hostname]) {
+        notify(await api.tunnelStop(s.hostname));
+      } else {
+        const res = await api.tunnelStart(s.name, null, null);
+        const u = res[0]?.public_url ?? "";
+        try {
+          await navigator.clipboard.writeText(u);
+        } catch {
+          /* ignore */
+        }
+        notify(`Sharing ${s.hostname} → ${u} (copied)`);
+      }
+      await refreshTunnels();
+    } catch (e) {
+      notify(String(e));
+    }
+    shareBusy = { ...shareBusy, [s.hostname]: false };
+  }
+
   const toggleSecure = (s: ResolvedSite) => run(api.secure(s.name, !s.secure));
   const setPhp = (s: ResolvedSite, v: string) => run(api.isolate(s.name, v));
   const setNode = (s: ResolvedSite, v: string) => run(api.setNode(s.name, v === "" ? null : v));
   const open = (s: ResolvedSite) => api.openUrl(url(s));
   const reveal = (s: ResolvedSite) => api.openPath(s.path);
-  const unlink = (s: ResolvedSite) => run(api.unlink(s.name));
+  async function forget(s: ResolvedSite) {
+    const ok = confirm(
+      `Remove ${s.hostname} from the list?\n\nThe project files in ${s.path} are kept — this only hides it from Grove.`,
+    );
+    if (!ok) return;
+    await run(api.forgetSite(s.name));
+  }
 
   function url(s: ResolvedSite): string {
     return `${s.secure ? "https" : "http"}://${s.hostname}`;
@@ -104,10 +154,13 @@
           <td>
             <div class="btn-row">
               <button class="btn icon" title="Open in browser" onclick={() => open(s)}>↗</button>
+              <button
+                class="btn icon {shared[s.hostname] ? 'sharing' : ''}"
+                title={shared[s.hostname] ? `Public: ${shared[s.hostname]} — click to stop` : "Share publicly"}
+                disabled={shareBusy[s.hostname]}
+                onclick={() => toggleShare(s)}>🌍</button>
               <button class="btn icon" title="Reveal folder" onclick={() => reveal(s)}>📁</button>
-              {#if s.kind === "linked"}
-                <button class="btn icon" title="Unlink" onclick={() => unlink(s)}>✕</button>
-              {/if}
+              <button class="btn icon danger" title="Remove from list (keeps files)" onclick={() => forget(s)}>🗑</button>
             </div>
           </td>
         </tr>
