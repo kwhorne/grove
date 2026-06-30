@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-30
+
 ### Added
 
 - **Tunnel management in the GUI** — a new **Tunnels** panel and a per-row
@@ -178,6 +180,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.2.1]: https://github.com/kwhorne/grove/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kwhorne/grove/releases/tag/v0.2.0
 [0.1.5]: https://github.com/kwhorne/grove/releases/tag/v0.1.5
 [0.1.4]: https://github.com/kwhorne/grove/releases/tag/v0.1.4
