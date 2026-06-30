@@ -1,0 +1,4 @@
+# Map automated/bot commits to the maintainer so they don't show up as separate
+# contributors. See https://git-scm.com/docs/gitmailmap
+Knut W. Horne <kh@gets.no> <49699333+dependabot[bot]@users.noreply.github.com>
+Knut W. Horne <kh@gets.no> dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
