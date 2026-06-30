@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-06-29
+
+### Added
+
+- The desktop app now **bundles the `grove` CLI** as a sidecar, so it can locate
+  and start the daemon (with fallbacks to common install paths).
+- macOS builds are **code-signed and notarized** when Apple credentials are
+  configured — no more “app is damaged” on download.
+
+### Fixed
+
+- GUI “spawning daemon: No such file or directory” when the CLI wasn't on PATH.
+
 ## [0.1.1] — 2026-06-29
 
 ### Added
@@ -88,5 +101,6 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.1.2]: https://github.com/kwhorne/grove/releases/tag/v0.1.2
 [0.1.1]: https://github.com/kwhorne/grove/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kwhorne/grove/releases/tag/v0.1.0
