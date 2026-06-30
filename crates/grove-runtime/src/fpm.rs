@@ -104,11 +104,15 @@ impl FpmManager {
         let conf = self.write_pool_config(version, &socket, &log)?;
 
         tracing::info!(version, binary = %build.fpm_binary.display(), "spawning PHP-FPM pool");
-        let child = std::process::Command::new(&build.fpm_binary)
-            .arg("--nodaemonize")
-            .arg("--fpm-config")
-            .arg(&conf)
-            .spawn()?;
+        let mut cmd = std::process::Command::new(&build.fpm_binary);
+        cmd.arg("--nodaemonize").arg("--fpm-config").arg(&conf);
+        // When the daemon runs as root (privileged ports), php-fpm refuses to
+        // start unless explicitly allowed; workers then drop to the real user
+        // via the pool's `user`/`group` directives (see write_pool_config).
+        if running_as_root() {
+            cmd.arg("--allow-to-run-as-root");
+        }
+        let child = cmd.spawn()?;
 
         // Give FPM a moment to create its listen socket.
         for _ in 0..50 {
@@ -143,6 +147,12 @@ impl FpmManager {
             .paths
             .run_dir()
             .join(format!("php-fpm-{}.pid", version.replace('.', "_")));
+        // If we're root, run the workers as the real (non-root) user so the
+        // app's PHP doesn't execute as root and files stay user-owned.
+        let user_directives = match (running_as_root(), target_user()) {
+            (true, Some(user)) => format!("user = {user}\nlisten.owner = {user}\n"),
+            _ => String::new(),
+        };
         let body = format!(
             r#"[global]
 pid = {pid}
@@ -153,7 +163,7 @@ log_limit = 8192
 [grove]
 listen = {socket}
 listen.mode = 0660
-pm = ondemand
+{user_directives}pm = ondemand
 pm.max_children = 16
 pm.process_idle_timeout = 10s
 pm.max_requests = 500
@@ -163,10 +173,41 @@ clear_env = no
             pid = pid.display(),
             log = log.display(),
             socket = socket.display(),
+            user_directives = user_directives,
         );
         std::fs::write(&conf_path, body)?;
         Ok(conf_path)
     }
+}
+
+/// Whether the current process runs with effective uid 0 (root).
+fn running_as_root() -> bool {
+    #[cfg(unix)]
+    {
+        extern "C" {
+            #[link_name = "geteuid"]
+            fn geteuid() -> u32;
+        }
+        // SAFETY: geteuid is always safe.
+        unsafe { geteuid() == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// The real user to run PHP workers as when the daemon is root. Prefers an
+/// explicit `GROVE_RUN_USER` (set by the service installer), else `SUDO_USER`.
+fn target_user() -> Option<String> {
+    for var in ["GROVE_RUN_USER", "SUDO_USER"] {
+        if let Ok(u) = std::env::var(var) {
+            if !u.is_empty() && u != "root" {
+                return Some(u);
+            }
+        }
+    }
+    None
 }
 
 impl FpmLocator for FpmManager {
