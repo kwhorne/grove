@@ -85,7 +85,13 @@ jobs:
           projectPath: crates/grove-gui
           tagName: ${{ github.ref_name }}
           releaseName: "Grove ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download. The macOS app auto-updates. Changelog: https://github.com/kwhorne/grove/blob/main/CHANGELOG.md"
+          releaseBody: |
+            See the assets below to download. The macOS app auto-updates.
+
+            **macOS:** the app is unsigned, so on first launch you may see "Grove is damaged". After moving Grove.app to /Applications, run:
+            `xattr -dr com.apple.quarantine /Applications/Grove.app`
+
+            Changelog: https://github.com/kwhorne/grove/blob/main/CHANGELOG.md
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
