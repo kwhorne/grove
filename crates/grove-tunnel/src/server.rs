@@ -63,15 +63,17 @@ pub async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
     {
         let registry = registry.clone();
         let domain = cfg.domain.clone();
+        let scheme = cfg.scheme.clone();
         tokio::spawn(async move {
             loop {
                 match http.accept().await {
                     Ok((stream, _peer)) => {
                         let registry = registry.clone();
                         let domain = domain.clone();
+                        let scheme = scheme.clone();
                         tokio::spawn(async move {
                             let svc = service_fn(move |req| {
-                                handle_public(req, registry.clone(), domain.clone())
+                                handle_public(req, registry.clone(), domain.clone(), scheme.clone())
                             });
                             if let Err(e) = http1::Builder::new()
                                 .serve_connection(TokioIo::new(stream), svc)
@@ -232,6 +234,7 @@ async fn handle_public(
     mut req: Request<Incoming>,
     registry: Registry,
     domain: String,
+    scheme: String,
 ) -> Result<Response<Body>, hyper::Error> {
     // Caddy on-demand-TLS authorization endpoint: only allow certificates for
     // hostnames under our own domain.
@@ -280,9 +283,13 @@ async fn handle_public(
         }
     }
 
-    // Rewrite Host so the local site recognises the request.
+    // Keep the public Host so the app generates correct (public) URLs; carry the
+    // local site name for routing and advertise the public scheme.
     if let Ok(hv) = HeaderValue::from_str(&tunnel.local_host) {
-        req.headers_mut().insert(HOST, hv);
+        req.headers_mut().insert("x-grove-site", hv);
+    }
+    if let Ok(hv) = HeaderValue::from_str(&scheme) {
+        req.headers_mut().insert("x-forwarded-proto", hv);
     }
 
     match relay(req, tunnel).await {

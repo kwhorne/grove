@@ -41,15 +41,34 @@ pub async fn handle(
         .map(|s| s.to_string())
         .unwrap_or_default();
 
+    // A tunnel keeps the public Host (so the app builds correct asset URLs) and
+    // carries the local site name in X-Grove-Site purely for routing.
+    let route_host = req
+        .headers()
+        .get("x-grove-site")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| host.clone());
+
+    // Honour X-Forwarded-Proto (set by the tunnel) so generated URLs use https.
+    let https = https
+        || req
+            .headers()
+            .get("x-forwarded-proto")
+            .and_then(|h| h.to_str().ok())
+            .map(|v| v.eq_ignore_ascii_case("https"))
+            .unwrap_or(false);
+
     let site = {
         let registry = state.registry.read().await;
-        registry.by_hostname(&host).cloned()
+        registry.by_hostname(&route_host).cloned()
     };
 
     let Some(site) = site else {
         return Ok(text_response(
             StatusCode::NOT_FOUND,
-            &format!("Grove: no site registered for host {host:?}"),
+            &format!("Grove: no site registered for host {route_host:?}"),
         ));
     };
 

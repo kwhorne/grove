@@ -6,7 +6,6 @@ use std::net::SocketAddr;
 use futures::StreamExt;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
-use hyper::header::HOST;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
@@ -138,9 +137,10 @@ async fn proxy_local(
         }
     };
 
-    // Ensure the Host is the local one even if the server didn't rewrite it.
+    // Route to the local site without rewriting Host (so the app keeps seeing
+    // the public hostname and builds correct asset URLs).
     if let Ok(hv) = hyper::header::HeaderValue::from_str(&local_host) {
-        req.headers_mut().insert(HOST, hv);
+        req.headers_mut().insert("x-grove-site", hv);
     }
 
     let tcp = match TcpStream::connect(addr).await {

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-06-30
+
+### Fixed
+
+- **Tunnelled sites now render assets correctly (Vite, CSS, JS).** The tunnel no
+  longer rewrites the `Host` header to the local site name — it preserves the
+  public host so the app builds correct public asset URLs, and routes locally
+  via a new `X-Grove-Site` header instead. It also sets `X-Forwarded-Proto`, and
+  Grove's proxy maps it to FastCGI `HTTPS=on`, so apps generate `https://` URLs
+  (no mixed-content blocking) without needing TrustProxies configured.
+
+  > Update **both** the macOS app *and* the `grove-tunnel` server on your host to
+  > 0.2.4 — the server is what preserves the public host.
+
 ## [0.2.3] — 2026-06-30
 
 ### Added
@@ -205,6 +219,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.2.4]: https://github.com/kwhorne/grove/releases/tag/v0.2.4
 [0.2.3]: https://github.com/kwhorne/grove/releases/tag/v0.2.3
 [0.2.2]: https://github.com/kwhorne/grove/releases/tag/v0.2.2
 [0.2.1]: https://github.com/kwhorne/grove/releases/tag/v0.2.1

@@ -34,8 +34,20 @@ async fn spawn_local() -> SocketAddr {
                         .and_then(|h| h.to_str().ok())
                         .unwrap_or("?")
                         .to_string();
+                    let site = req
+                        .headers()
+                        .get("x-grove-site")
+                        .and_then(|h| h.to_str().ok())
+                        .unwrap_or("?")
+                        .to_string();
+                    let proto = req
+                        .headers()
+                        .get("x-forwarded-proto")
+                        .and_then(|h| h.to_str().ok())
+                        .unwrap_or("?")
+                        .to_string();
                     Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(format!(
-                        "local-ok host={host}"
+                        "local-ok host={host} site={site} proto={proto}"
                     )))))
                 });
                 let _ = hyper::server::conn::http1::Builder::new()
@@ -117,10 +129,20 @@ async fn request_flows_through_tunnel() {
     let resp = raw_get(http, "demo.tun.local").await;
     assert!(resp.contains("200 OK"), "expected 200, got:\n{resp}");
     assert!(resp.contains("local-ok"), "missing local body:\n{resp}");
-    // The server must rewrite Host to the local site name.
+    // The public Host is preserved (so apps build correct URLs)…
     assert!(
-        resp.contains("host=local.test"),
-        "Host not rewritten:\n{resp}"
+        resp.contains("host=demo.tun.local"),
+        "public Host not preserved:\n{resp}"
+    );
+    // …the local site is carried in X-Grove-Site for routing…
+    assert!(
+        resp.contains("site=local.test"),
+        "X-Grove-Site missing:\n{resp}"
+    );
+    // …and the public scheme is advertised.
+    assert!(
+        resp.contains("proto=http"),
+        "X-Forwarded-Proto missing:\n{resp}"
     );
 
     // Unknown subdomain → 404.
