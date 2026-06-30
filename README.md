@@ -67,6 +67,10 @@ but it never requires Valet to be installed.
 
 ## Quick start
 
+> 📘 **New here? Read the [full installation guide](docs/INSTALL.md)** — a
+> step-by-step manual with example terminal output, a first site, HTTPS,
+> services and troubleshooting.
+
 ```bash
 # 1. First-run setup: config, root CA, a static PHP build, resolver + trust
 sudo grove init
@@ -229,7 +233,7 @@ service once: `sudo grove install`. The GUI is a dashboard over that daemon.
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
+- [Installation guide](docs/INSTALL.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
 - [Changelog](CHANGELOG.md)
 
 ## Contributing

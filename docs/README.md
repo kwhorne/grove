@@ -1,5 +1,6 @@
 # Grove documentation
 
+- [**Installation guide**](INSTALL.md) — step-by-step setup with example output.
 - [Architecture](ARCHITECTURE.md) — crates, request flow, on-disk state.
 - [Configuration](CONFIGURATION.md) — the `config.toml` reference.
 - [Commands](COMMANDS.md) — full CLI reference.
