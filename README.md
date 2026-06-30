@@ -216,16 +216,9 @@ grove daemon
 
 ## Installing the macOS app
 
-The `.dmg` is currently **unsigned** (no Apple Developer ID yet), so on first
-launch macOS may say *“Grove is damaged and can't be opened.”* That's Gatekeeper
-reacting to the download quarantine flag — the app is fine. After moving
-`Grove.app` to `/Applications`, clear the flag once:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Grove.app
-```
-
-Then open it normally. (Proper code-signing + notarization is planned.)
+From **0.1.2** the macOS app is **code-signed with a Developer ID and notarized
+by Apple**, so it opens normally — download the `.dmg`, drag Grove to
+`/Applications`, and launch it. No Gatekeeper warning, no workarounds.
 
 ## Documentation
 

@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The desktop app now **bundles the `grove` CLI** as a sidecar, so it can locate
   and start the daemon (with fallbacks to common install paths).
-- macOS builds are **code-signed and notarized** when Apple credentials are
+- macOS builds are **code-signed and notarized**, so the app opens without the
   configured — no more “app is damaged” on download.
 
 ### Fixed
