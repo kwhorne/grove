@@ -318,6 +318,7 @@ fn open_path(path: String) -> CmdResult<()> {
 }
 
 fn locate_grove_binary() -> PathBuf {
+    // 1. Bundled sidecar lives next to the GUI binary (Contents/MacOS/grove).
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let sibling = dir.join("grove");
@@ -326,6 +327,20 @@ fn locate_grove_binary() -> PathBuf {
             }
         }
     }
+    // 2. Common install locations (GUI apps don't inherit the shell PATH).
+    let mut candidates = vec![
+        PathBuf::from("/usr/local/bin/grove"),
+        PathBuf::from("/opt/homebrew/bin/grove"),
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        candidates.push(PathBuf::from(home).join(".cargo/bin/grove"));
+    }
+    for c in candidates {
+        if c.exists() {
+            return c;
+        }
+    }
+    // 3. Last resort: rely on PATH.
     PathBuf::from("grove")
 }
 

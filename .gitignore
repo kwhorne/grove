@@ -7,3 +7,4 @@
 crates/grove-gui/ui/node_modules
 crates/grove-gui/ui/dist
 crates/grove-gui/gen
+crates/grove-gui/binaries

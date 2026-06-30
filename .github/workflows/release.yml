@@ -73,6 +73,14 @@ jobs:
           tar -C "target/${{ matrix.target }}/release" -czf \
             "dist/grove-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" grove
 
+      - name: Stage CLI as a Tauri sidecar
+        shell: bash
+        run: |
+          mkdir -p crates/grove-gui/binaries
+          ext=""; [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          cp "target/${{ matrix.target }}/release/grove${ext}" \
+             "crates/grove-gui/binaries/grove-${{ matrix.target }}${ext}"
+
       # Builds + signs the GUI, generates latest.json, creates/updates the
       # GitHub Release and uploads the bundles + updater artifacts.
       - name: Build & release GUI (Tauri)
