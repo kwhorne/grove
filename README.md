@@ -51,6 +51,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - ⬢ **Bundled Node.js** — download node · npm · npx, with per-site Node versions; no nvm or Homebrew.
 - 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself, so there is no database/cache or Homebrew to install separately.
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer.
+- 🌍 **Public tunnels** — `grove share` exposes a local site to the internet (demos, webhooks) via a self-hostable, native Expose/ngrok alternative.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
 - 🌱 **Create / import sites** — scaffold a new Laravel or static project, or link existing ones.
 - 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon, plus a macOS menu-bar icon.
@@ -105,6 +106,7 @@ no Homebrew, no Composer, no Valet.
 | PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
 | Node | `node list`, `node install <version>`, `node use <site> <version>`, `node unuse <site>` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |
+| Tunnels | `share <site>` (public URL via `grove-tunnel` server) |
 | Mail | `mail`, `mail show <id>`, `mail clear` |
 | Logs | `logs` (list sources), `logs <site>` (view entries) |
 | Operations | `status`, `doctor`, `env [site]`, `import` (Valet) |
@@ -233,7 +235,7 @@ service once: `sudo grove install`. The GUI is a dashboard over that daemon.
 
 ## Documentation
 
-- [Installation guide](docs/INSTALL.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
+- [Installation guide](docs/INSTALL.md) · [Tunnels](docs/TUNNEL.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
 - [Changelog](CHANGELOG.md)
 
 ## Contributing

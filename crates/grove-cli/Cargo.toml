@@ -17,6 +17,7 @@ grove-daemon = { path = "../grove-daemon" }
 grove-tls = { path = "../grove-tls" }
 grove-os = { path = "../grove-os" }
 grove-runtime = { path = "../grove-runtime" }
+grove-tunnel = { path = "../grove-tunnel" }
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true

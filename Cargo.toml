@@ -6,6 +6,7 @@ members = [
     "crates/grove-tls",
     "crates/grove-dns",
     "crates/grove-proxy",
+    "crates/grove-tunnel",
     "crates/grove-runtime",
     "crates/grove-services",
     "crates/grove-os",
@@ -15,7 +16,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.5"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 authors = ["Knut / Wirelabs AS"]
@@ -62,6 +63,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pemfile = "2"
 rcgen = { version = "0.13", default-features = false, features = ["pem", "ring", "x509-parser"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+
+# Tunnel multiplexing (pure Rust, no C toolchain)
+tokio-yamux = "0.3"
 
 # Misc
 shellexpand = "3"

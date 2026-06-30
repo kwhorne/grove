@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-30
+
+### Added
+
+- **Public tunnels (`grove share`)** — a native, self-hostable alternative to
+  Expose/ngrok, built in with zero external dependencies:
+  - `grove share <site>` exposes a local `*.test` site at a public URL for
+    demos, real-device testing and **webhooks**.
+  - New `grove-tunnel` server binary you deploy on a host with a wildcard
+    domain. Requests are multiplexed over a single yamux connection and proxied
+    with `hyper` end-to-end (streaming bodies, rewritten `Host`).
+  - Options: `--subdomain`, `--server`, `--token`, `--basic-auth`.
+  - `[tunnel]` config section (`server`, `token`) so the flags can be omitted.
+  - See [docs/TUNNEL.md](docs/TUNNEL.md).
+
 ## [0.1.5] — 2026-06-30
 
 ### Fixed
@@ -147,6 +162,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.2.0]: https://github.com/kwhorne/grove/releases/tag/v0.2.0
 [0.1.5]: https://github.com/kwhorne/grove/releases/tag/v0.1.5
 [0.1.4]: https://github.com/kwhorne/grove/releases/tag/v0.1.4
 [0.1.3]: https://github.com/kwhorne/grove/releases/tag/v0.1.3

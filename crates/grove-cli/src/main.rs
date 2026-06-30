@@ -84,6 +84,18 @@ async fn main() -> anyhow::Result<()> {
         Command::Uninstall => lifecycle::uninstall(&paths, args.json),
         Command::Import => lifecycle::import_valet(&paths, args.json),
         Command::Init { php, no_php } => lifecycle::init(&paths, php, no_php, args.json),
+        Command::Share {
+            site,
+            server,
+            token,
+            subdomain,
+            basic_auth,
+        } => {
+            lifecycle::share(
+                &paths, site, server, token, subdomain, basic_auth, args.json,
+            )
+            .await
+        }
 
         // Everything else is an IPC round-trip to the daemon.
         other => {
@@ -192,6 +204,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Uninstall
         | Command::Import
         | Command::Init { .. }
+        | Command::Share { .. }
         | Command::Env { .. }
         | Command::Logs { .. }
         | Command::Gui => {
@@ -371,6 +384,81 @@ mod lifecycle {
             ),
             json,
         );
+        Ok(())
+    }
+
+    /// Share a local site publicly through a Grove Tunnel server.
+    pub async fn share(
+        paths: &GrovePaths,
+        site: String,
+        server: Option<String>,
+        token: Option<String>,
+        subdomain: Option<String>,
+        basic_auth: Option<String>,
+        json: bool,
+    ) -> anyhow::Result<()> {
+        use std::net::SocketAddr;
+        let config = Config::load(paths).unwrap_or_default();
+        let tld = &config.general.tld;
+
+        // Resolve the site to a `<name>.<tld>` host Grove already serves.
+        let name = site
+            .trim()
+            .trim_end_matches(&format!(".{tld}"))
+            .to_lowercase();
+        if name.is_empty() {
+            anyhow::bail!("missing site name");
+        }
+        let local_host = format!("{name}.{tld}");
+        let local_addr: SocketAddr = format!("127.0.0.1:{}", config.general.http_port).parse()?;
+
+        let server = server.or(config.tunnel.server.clone()).context(
+            "no tunnel server set — pass --server host:port or set [tunnel].server in config.toml",
+        )?;
+        let token = token
+            .or(config.tunnel.token.clone())
+            .context("no tunnel token set — pass --token or set [tunnel].token in config.toml")?;
+
+        // Make sure the local daemon is actually serving the site.
+        if !client::is_running(&paths.ipc_socket()).await {
+            anyhow::bail!("Grove daemon is not running — start it (or install the service) first");
+        }
+
+        let cfg = grove_tunnel::ShareConfig {
+            server,
+            token,
+            subdomain,
+            local_host: local_host.clone(),
+            local_addr,
+            basic_auth,
+        };
+
+        if !json {
+            eprintln!("  Sharing {local_host} — connecting to tunnel…");
+        }
+        grove_tunnel::share(cfg, |public_host, public_url| {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "local": local_host,
+                        "public_host": public_host,
+                        "public_url": public_url,
+                    })
+                );
+            } else {
+                println!();
+                println!("  🌿  Tunnel online");
+                println!("     Public   {public_url}");
+                println!("     Local    http://{local_host}");
+                println!();
+                println!("  Press Ctrl-C to stop sharing.");
+            }
+        })
+        .await?;
+
+        output::print_message("tunnel closed", json);
         Ok(())
     }
 

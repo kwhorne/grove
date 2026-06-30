@@ -63,15 +63,15 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm run build
 
-      - name: Build CLI (grove)
-        run: cargo build --release -p grove-cli --target ${{ matrix.target }}
+      - name: Build CLI (grove) + tunnel server (grove-tunnel)
+        run: cargo build --release -p grove-cli -p grove-tunnel --target ${{ matrix.target }}
 
       - name: Package CLI
         shell: bash
         run: |
           mkdir -p dist
           tar -C "target/${{ matrix.target }}/release" -czf \
-            "dist/grove-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" grove
+            "dist/grove-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" grove grove-tunnel
 
       - name: Stage CLI as a Tauri sidecar
         shell: bash

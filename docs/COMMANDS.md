@@ -34,6 +34,7 @@ grove <command> [args] [--json]
 | `grove secure <name>` / `unsecure <name>` | Toggle HTTPS for a site. |
 | `grove isolate <name> <version>` / `unisolate <name>` | Pin / clear a site's PHP version. |
 | `grove proxy <name> <url>` | Route `<name>.<tld>` to a running dev server. |
+| `grove share <name> [--subdomain s] [--server host:port] [--token t] [--basic-auth user:pass]` | Share a site publicly through a tunnel server (see [TUNNEL.md](TUNNEL.md)). |
 | `grove import` | Import parked dirs + linked sites from an existing Laravel Valet config. |
 
 ## PHP

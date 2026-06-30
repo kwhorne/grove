@@ -40,6 +40,21 @@ pub struct Config {
     /// Local service configuration (mail-catcher, …).
     #[serde(default)]
     pub services: Services,
+
+    /// Public tunnel (`grove share`) defaults.
+    #[serde(default)]
+    pub tunnel: Tunnel,
+}
+
+/// Defaults for `grove share` so the flags can be omitted.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Tunnel {
+    /// Tunnel server control address, e.g. `tunnel.example.com:7000`.
+    #[serde(default)]
+    pub server: Option<String>,
+    /// Shared secret matching the server's token.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

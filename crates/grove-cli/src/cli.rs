@@ -112,6 +112,24 @@ pub enum Command {
         /// Upstream URL, e.g. http://127.0.0.1:5173
         url: String,
     },
+    /// Share a local site publicly through a Grove Tunnel server (Expose/ngrok-style).
+    Share {
+        /// Site name (e.g. `elyra-web`) or `<name>.test` host.
+        site: String,
+        /// Tunnel server control address `host:port` (overrides config).
+        #[arg(long)]
+        server: Option<String>,
+        /// Shared secret token (overrides config).
+        #[arg(long)]
+        token: Option<String>,
+        /// Requested subdomain (the server may override if it's taken).
+        #[arg(long)]
+        subdomain: Option<String>,
+        /// Protect the public URL with HTTP Basic auth, as `user:pass`.
+        #[arg(long)]
+        basic_auth: Option<String>,
+    },
+
     /// Run diagnostics.
     Doctor,
     /// Print a .env snippet wiring an app to Grove's bundled services.
