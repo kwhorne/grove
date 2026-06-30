@@ -32,11 +32,7 @@ async fn tunnel_start(
                 "no tunnel server configured — set [tunnel].server in config.toml",
             ));
         };
-        let Some(token) = config.tunnel.token.clone() else {
-            return Ok(Response::err(
-                "no tunnel token configured — set [tunnel].token in config.toml",
-            ));
-        };
+        let token = config.tunnel.token.clone().unwrap_or_default();
         let name = site
             .trim()
             .trim_end_matches(&format!(".{tld}"))

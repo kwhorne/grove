@@ -1,0 +1,18 @@
+# Caddy in front of grove-tunnel for automatic public HTTPS.
+#
+# Per-subdomain certificates are minted on demand via Let's Encrypt (HTTP-01),
+# so no DNS-provider API token is needed. grove-tunnel's /__grove_ask endpoint
+# authorizes only hostnames under our own domain, preventing cert abuse.
+
+{
+	on_demand_tls {
+		ask http://127.0.0.1:8000/__grove_ask
+	}
+}
+
+*.grove.elyracode.com {
+	tls {
+		on_demand
+	}
+	reverse_proxy 127.0.0.1:8000
+}

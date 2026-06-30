@@ -32,7 +32,7 @@ pub struct ServerConfig {
     pub http_addr: SocketAddr,
     /// Wildcard apex, e.g. `tunnel.example.com`.
     pub domain: String,
-    /// Shared secret clients must present.
+    /// Shared secret clients must present. Empty = open server (no auth).
     pub token: String,
     /// Scheme advertised in public URLs (`http` or, behind a TLS terminator,
     /// `https`).
@@ -62,13 +62,17 @@ pub async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
     // Public HTTP acceptor.
     {
         let registry = registry.clone();
+        let domain = cfg.domain.clone();
         tokio::spawn(async move {
             loop {
                 match http.accept().await {
                     Ok((stream, _peer)) => {
                         let registry = registry.clone();
+                        let domain = domain.clone();
                         tokio::spawn(async move {
-                            let svc = service_fn(move |req| handle_public(req, registry.clone()));
+                            let svc = service_fn(move |req| {
+                                handle_public(req, registry.clone(), domain.clone())
+                            });
                             if let Err(e) = http1::Builder::new()
                                 .serve_connection(TokioIo::new(stream), svc)
                                 .await
@@ -133,7 +137,7 @@ async fn handle_control(
     };
 
     let hello: Hello = read_msg(&mut ctrl).await?;
-    if hello.token != cfg.token {
+    if !cfg.token.is_empty() && hello.token != cfg.token {
         let _ = write_msg(
             &mut ctrl,
             &Reply::Error {
@@ -227,7 +231,30 @@ fn random_subdomain() -> String {
 async fn handle_public(
     mut req: Request<Incoming>,
     registry: Registry,
+    domain: String,
 ) -> Result<Response<Body>, hyper::Error> {
+    // Caddy on-demand-TLS authorization endpoint: only allow certificates for
+    // hostnames under our own domain.
+    if req.uri().path() == "/__grove_ask" {
+        let ok = req
+            .uri()
+            .query()
+            .and_then(|q| {
+                q.split('&')
+                    .find_map(|kv| kv.strip_prefix("domain=").map(|v| v.to_string()))
+            })
+            .map(|d| d == domain || d.ends_with(&format!(".{domain}")))
+            .unwrap_or(false);
+        return Ok(text(
+            if ok {
+                StatusCode::OK
+            } else {
+                StatusCode::FORBIDDEN
+            },
+            if ok { "ok\n" } else { "no\n" },
+        ));
+    }
+
     let host = req
         .headers()
         .get(HOST)

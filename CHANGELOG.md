@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-06-30
+
+### Added
+
+- **Zero-config tunnels.** Grove now defaults to the public tunnel server
+  `grove.elyracode.com`, so `grove share <site>` works out of the box and gives
+  a `https://<random>.grove.elyracode.com` URL — no `[tunnel]` config needed.
+- **Open-server mode.** `grove-tunnel` can run without a token (omit `--token`)
+  for a public community server; clients no longer need a token.
+- **On-demand HTTPS authorization.** `grove-tunnel` exposes `/__grove_ask` so a
+  fronting Caddy can mint per-subdomain Let's Encrypt certificates safely
+  (only for hostnames under the server's own domain) — no DNS API required.
+- **Deployment kit** in [`deploy/tunnel/`](deploy/tunnel/README.md): Caddyfile,
+  systemd unit and a step-by-step guide for running your own server.
+
 ## [0.2.1] — 2026-06-30
 
 ### Added
@@ -180,6 +195,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.2.2]: https://github.com/kwhorne/grove/releases/tag/v0.2.2
 [0.2.1]: https://github.com/kwhorne/grove/releases/tag/v0.2.1
 [0.2.0]: https://github.com/kwhorne/grove/releases/tag/v0.2.0
 [0.1.5]: https://github.com/kwhorne/grove/releases/tag/v0.1.5

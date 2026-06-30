@@ -1,0 +1,22 @@
+[Unit]
+Description=Grove Tunnel server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Open community server (no token). To require a token, add: --token <secret>
+ExecStart=/usr/local/bin/grove-tunnel \
+  --domain grove.elyracode.com \
+  --control 0.0.0.0:7000 \
+  --http 127.0.0.1:8000 \
+  --scheme https
+Restart=always
+RestartSec=2
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

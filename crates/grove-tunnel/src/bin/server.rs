@@ -19,8 +19,8 @@ struct Args {
     #[arg(long, env = "GROVE_TUNNEL_DOMAIN")]
     domain: String,
 
-    /// Shared secret clients must present.
-    #[arg(long, env = "GROVE_TUNNEL_TOKEN")]
+    /// Shared secret clients must present. Omit for an open server (no auth).
+    #[arg(long, env = "GROVE_TUNNEL_TOKEN", default_value = "")]
     token: String,
 
     /// Address clients connect to (control channel).

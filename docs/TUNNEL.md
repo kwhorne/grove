@@ -20,9 +20,18 @@ Requests are multiplexed over a single connection, HTTP is spoken end-to-end
 with `hyper`, and the `Host` header is rewritten to the local site name — so
 bodies stream without buffering and **webhooks work out of the box**.
 
+> **Just want to share?** Grove ships pointed at the public server
+> `grove.elyracode.com`, so `grove share <site>` works with **no configuration**
+> and gives you a `https://<random>.grove.elyracode.com` URL. The rest of this
+> page is for running your **own** server.
+
 ---
 
-## 1. Run a tunnel server
+## 1. Run your own tunnel server
+
+A ready-made deployment (Caddy for automatic HTTPS + a systemd unit) lives in
+[`deploy/tunnel/`](../deploy/tunnel/README.md). The summary below covers the
+moving parts.
 
 The public half is the `grove-tunnel` binary. You run it once on any host with a
 public IP and a wildcard DNS record.
@@ -76,15 +85,15 @@ Then run the server with `--scheme https` so it reports `https://…` URLs.
 
 ---
 
-## 2. Point Grove at the server
+## 2. Point Grove at your server
 
-On your machine, save the server + token once so you don't repeat the flags. Add
-to `~/Library/Application Support/Grove/config.toml`:
+The default server is `grove.elyracode.com:7000`. To use your own, set it in
+`~/Library/Application Support/Grove/config.toml`:
 
 ```toml
 [tunnel]
 server = "tunnel.example.com:7000"
-token  = "a-long-shared-secret"
+# token  = "a-long-shared-secret"   # only if your server requires one
 ```
 
 ---

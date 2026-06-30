@@ -52,14 +52,27 @@ pub struct Config {
 }
 
 /// Defaults for `grove share` so the flags can be omitted.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tunnel {
-    /// Tunnel server control address, e.g. `tunnel.example.com:7000`.
-    #[serde(default)]
+    /// Tunnel server control address. Defaults to the public Grove server.
+    #[serde(default = "default_tunnel_server")]
     pub server: Option<String>,
-    /// Shared secret matching the server's token.
+    /// Shared secret matching the server's token (none for the open server).
     #[serde(default)]
     pub token: Option<String>,
+}
+
+fn default_tunnel_server() -> Option<String> {
+    Some("grove.elyracode.com:7000".to_string())
+}
+
+impl Default for Tunnel {
+    fn default() -> Self {
+        Self {
+            server: default_tunnel_server(),
+            token: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

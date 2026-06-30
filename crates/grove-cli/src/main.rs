@@ -417,9 +417,7 @@ mod lifecycle {
         let server = server.or(config.tunnel.server.clone()).context(
             "no tunnel server set — pass --server host:port or set [tunnel].server in config.toml",
         )?;
-        let token = token
-            .or(config.tunnel.token.clone())
-            .context("no tunnel token set — pass --token or set [tunnel].token in config.toml")?;
+        let token = token.or(config.tunnel.token.clone()).unwrap_or_default();
 
         // Make sure the local daemon is actually serving the site.
         if !client::is_running(&paths.ipc_socket()).await {
