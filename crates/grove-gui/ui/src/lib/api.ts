@@ -87,6 +87,12 @@ export const api = {
     invoke("tunnel_start", { site, subdomain, basicAuth }),
   tunnelStop: (site: string): Promise<string> => invoke("tunnel_stop", { site }),
   forgetSite: (name: string): Promise<string> => invoke("forget_site", { name }),
+  mysqlMigrate: (
+    host: string,
+    port: number,
+    user: string,
+    password: string,
+  ): Promise<string> => invoke("mysql_migrate", { host, port, user, password }),
   tunnelList: (): Promise<TunnelStatus[]> => invoke("tunnel_list"),
   tunnelRequests: (site: string | null): Promise<TunnelRequestEntry[]> =>
     invoke("tunnel_requests", { site }),

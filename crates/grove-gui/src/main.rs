@@ -208,6 +208,22 @@ async fn forget_site(name: String) -> CmdResult<String> {
 }
 
 #[tauri::command]
+async fn mysql_migrate(
+    host: String,
+    port: u16,
+    user: String,
+    password: String,
+) -> CmdResult<String> {
+    message(Request::MysqlMigrate {
+        host,
+        port,
+        user,
+        password,
+    })
+    .await
+}
+
+#[tauri::command]
 async fn tunnel_list() -> CmdResult<Vec<TunnelStatus>> {
     match call(Request::TunnelList).await? {
         ResponseData::Tunnels(t) => Ok(t),
@@ -523,6 +539,7 @@ fn main() {
             tunnel_start,
             tunnel_stop,
             forget_site,
+            mysql_migrate,
             tunnel_list,
             tunnel_requests,
             php_versions,

@@ -274,6 +274,130 @@ impl ServiceManager {
         self.start(key)
     }
 
+    /// Migrate all user databases from another MySQL server (e.g. Laravel Herd)
+    /// into Grove's MySQL, via a logical dump + restore using Grove's own client
+    /// tools. Returns a human-readable summary.
+    pub fn migrate_mysql(
+        &self,
+        host: &str,
+        port: u16,
+        user: &str,
+        password: &str,
+        progress: impl Fn(&str),
+    ) -> Result<String> {
+        let spec = catalog::spec("mysql").ok_or_else(|| ServiceError::Unknown("mysql".into()))?;
+        if !self.is_installed(spec) {
+            return Err(ServiceError::NotInstalled(
+                "Grove's MySQL — install it under Services first".into(),
+            ));
+        }
+        let bin = self
+            .bin_dir(spec)
+            .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
+        let mysql = bin.join("mysql");
+        let mysqldump = bin.join("mysqldump");
+
+        let target_port = self.effective_port(spec);
+        let is_local = matches!(host, "127.0.0.1" | "localhost" | "::1");
+        if is_local && port == target_port {
+            return Err(ServiceError::Init(format!(
+                "source and Grove's MySQL both use port {port}. Change Grove's MySQL \
+                 port under Services (e.g. 3307), start it, then migrate."
+            )));
+        }
+
+        // Make sure Grove's MySQL is up to import into.
+        if !self.is_running("mysql") {
+            progress("starting Grove's MySQL…");
+            self.start("mysql")?;
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+
+        // Password is passed via MYSQL_PWD to keep it off the process args.
+        let pwd_env = |cmd: &mut std::process::Command| {
+            if !password.is_empty() {
+                cmd.env("MYSQL_PWD", password);
+            }
+        };
+
+        // 1. List the source's user databases (skip system schemas).
+        progress(&format!("reading databases from {host}:{port}…"));
+        let mut list_cmd = std::process::Command::new(&mysql);
+        list_cmd
+            .args(["-h", host, "-P", &port.to_string(), "-u", user, "-N", "-B"])
+            .args(["-e", "SHOW DATABASES"]);
+        pwd_env(&mut list_cmd);
+        let out = list_cmd.output()?;
+        if !out.status.success() {
+            return Err(ServiceError::Init(format!(
+                "cannot connect to source MySQL at {host}:{port}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        let system = ["information_schema", "performance_schema", "mysql", "sys"];
+        let dbs: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|d| !d.is_empty() && !system.contains(&d.as_str()))
+            .collect();
+        if dbs.is_empty() {
+            return Ok("No user databases found on the source — nothing to migrate.".into());
+        }
+
+        // 2. Dump them to a temp file.
+        progress(&format!("dumping {} database(s)…", dbs.len()));
+        let dump_path = std::env::temp_dir().join(format!("grove-mysql-migrate-{}.sql", port));
+        let dump_file = std::fs::File::create(&dump_path)?;
+        let mut dump_cmd = std::process::Command::new(&mysqldump);
+        dump_cmd
+            .args(["-h", host, "-P", &port.to_string(), "-u", user])
+            .args([
+                "--single-transaction",
+                "--routines",
+                "--triggers",
+                "--events",
+                "--no-tablespaces",
+                "--column-statistics=0",
+                "--databases",
+            ])
+            .args(&dbs)
+            .stdout(dump_file);
+        pwd_env(&mut dump_cmd);
+        let dump_status = dump_cmd.status()?;
+        if !dump_status.success() {
+            let _ = std::fs::remove_file(&dump_path);
+            return Err(ServiceError::Init("mysqldump failed on the source".into()));
+        }
+
+        // 3. Import into Grove's MySQL (root, no password, on the local port).
+        progress("importing into Grove…");
+        let infile = std::fs::File::open(&dump_path)?;
+        let import = std::process::Command::new(&mysql)
+            .args([
+                "-h",
+                "127.0.0.1",
+                "-P",
+                &target_port.to_string(),
+                "-u",
+                "root",
+            ])
+            .stdin(infile)
+            .output()?;
+        let _ = std::fs::remove_file(&dump_path);
+        if !import.status.success() {
+            return Err(ServiceError::Init(format!(
+                "import into Grove's MySQL failed: {}",
+                String::from_utf8_lossy(&import.stderr).trim()
+            )));
+        }
+
+        Ok(format!(
+            "Migrated {} database(s) into Grove's MySQL: {}",
+            dbs.len(),
+            dbs.join(", ")
+        ))
+    }
+
     /// Initialise a MySQL data directory with a passwordless root (local dev).
     fn init_mysql(&self, spec: &ServiceSpec, progress: &impl Fn(&str)) -> Result<()> {
         let data = self.data_dir(spec);

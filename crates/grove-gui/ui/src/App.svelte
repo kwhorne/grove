@@ -16,12 +16,13 @@
   import Doctor from "./components/Doctor.svelte";
   import Mail from "./components/Mail.svelte";
   import Tunnels from "./components/Tunnels.svelte";
+  import Tools from "./components/Tools.svelte";
   import Logs from "./components/Logs.svelte";
   import AboutModal from "./components/AboutModal.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import NewSiteModal from "./components/NewSiteModal.svelte";
 
-  type Tab = "sites" | "services" | "mail" | "php" | "node" | "tunnels" | "logs" | "doctor";
+  type Tab = "sites" | "services" | "mail" | "php" | "node" | "tunnels" | "tools" | "logs" | "doctor";
 
   let tab = $state<Tab>("sites");
   let running = $state(false);
@@ -156,6 +157,7 @@
     { id: "php", icon: "🐘", label: "PHP" },
     { id: "node", icon: "⬢", label: "Node" },
     { id: "tunnels", icon: "🌍", label: "Tunnels" },
+    { id: "tools", icon: "🛠", label: "Tools" },
     { id: "logs", icon: "≡", label: "Logs" },
     { id: "doctor", icon: "✚", label: "Doctor" },
   ];
@@ -294,6 +296,10 @@
         <h2>Tunnels</h2>
         <p class="subtitle">Share local sites publicly and inspect incoming requests</p>
         <Tunnels {sites} {notify} />
+      {:else if tab === "tools"}
+        <h2>Tools</h2>
+        <p class="subtitle">Migrations and one-off utilities</p>
+        <Tools {notify} />
       {:else if tab === "logs"}
         <h2>Logs</h2>
         <p class="subtitle">Application and service logs</p>

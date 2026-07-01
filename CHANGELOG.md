@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-07-01
+
+### Added
+
+- **Tools panel** in the GUI, starting with **“Migrate MySQL from Herd”**: copy
+  all databases from another MySQL server (e.g. Laravel Herd) into Grove's MySQL
+  via a safe logical dump &amp; restore using Grove's own client tools. The source
+  databases are left untouched.
+
 ## [0.2.5] — 2026-07-01
 
 ### Fixed
@@ -231,6 +240,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.2.6]: https://github.com/kwhorne/grove/releases/tag/v0.2.6
 [0.2.5]: https://github.com/kwhorne/grove/releases/tag/v0.2.5
 [0.2.4]: https://github.com/kwhorne/grove/releases/tag/v0.2.4
 [0.2.3]: https://github.com/kwhorne/grove/releases/tag/v0.2.3

@@ -578,6 +578,23 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
         Request::TunnelRequests { site } => Ok(Response::ok(ResponseData::TunnelRequests(
             state.tunnels.requests(site.as_deref()).await,
         ))),
+        Request::MysqlMigrate {
+            host,
+            port,
+            user,
+            password,
+        } => {
+            let services = state.services.clone();
+            let res = tokio::task::spawn_blocking(move || {
+                services.migrate_mysql(&host, port, &user, &password, |_| {})
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+            match res {
+                Ok(msg) => Ok(Response::ok(ResponseData::Message(msg))),
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
         Request::Doctor => Ok(Response::ok(ResponseData::Doctor(doctor(state).await))),
 
         Request::Shutdown => {

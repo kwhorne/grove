@@ -97,6 +97,14 @@ pub enum Request {
     TunnelList,
     /// Recent requests seen by the tunnel inspector (all sites, or one).
     TunnelRequests { site: Option<String> },
+    /// Migrate all user databases from another MySQL server (e.g. Herd) into
+    /// Grove's MySQL.
+    MysqlMigrate {
+        host: String,
+        port: u16,
+        user: String,
+        password: String,
+    },
     /// Diagnostics (`grove doctor`).
     Doctor,
     /// List captured emails (newest first).
