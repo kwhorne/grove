@@ -217,14 +217,13 @@ impl ServiceManager {
         match spec.kind {
             ServiceKind::Postgres => (
                 Some("grove".into()),
-                Some(self.paths.run_dir().to_string_lossy().into_owned()),
+                Some(self.data_dir(spec).to_string_lossy().into_owned()),
                 format!("postgresql://grove@127.0.0.1:{port}/postgres"),
             ),
             ServiceKind::Mysql => (
                 Some("root".into()),
                 Some(
-                    self.paths
-                        .run_dir()
+                    self.data_dir(spec)
                         .join("mysql.sock")
                         .to_string_lossy()
                         .into_owned(),
@@ -289,11 +288,18 @@ impl ServiceManager {
             .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
         progress("initialising MySQL data directory…");
         std::fs::create_dir_all(&data)?;
-        let out = std::process::Command::new(bin.join("mysqld"))
-            .arg("--initialize-insecure")
+        // The daemon may be root, but mysqld refuses to run as root — initialise
+        // (and later run) as the invoking user, owning the data dir to match.
+        let ids = drop_ids();
+        if let Some((uid, gid)) = ids {
+            chown_recursive(&data, uid, gid);
+        }
+        let mut cmd = std::process::Command::new(bin.join("mysqld"));
+        cmd.arg("--initialize-insecure")
             .arg(format!("--datadir={}", data.display()))
-            .arg(format!("--basedir={}", base.display()))
-            .output()?;
+            .arg(format!("--basedir={}", base.display()));
+        apply_drop(&mut cmd, ids);
+        let out = cmd.output()?;
         if !out.status.success() {
             return Err(ServiceError::Init(
                 String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -344,11 +350,17 @@ impl ServiceManager {
             .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
         progress("initialising database cluster (initdb)…");
         std::fs::create_dir_all(&data)?;
-        let out = std::process::Command::new(bin.join("initdb"))
-            .arg("-D")
+        // Postgres refuses to run as root; init (and run) as the invoking user.
+        let ids = drop_ids();
+        if let Some((uid, gid)) = ids {
+            chown_recursive(&data, uid, gid);
+        }
+        let mut cmd = std::process::Command::new(bin.join("initdb"));
+        cmd.arg("-D")
             .arg(&data)
-            .args(["-U", "grove", "--auth=trust", "--encoding=UTF8"])
-            .output()?;
+            .args(["-U", "grove", "--auth=trust", "--encoding=UTF8"]);
+        apply_drop(&mut cmd, ids);
+        let out = cmd.output()?;
         if !out.status.success() {
             return Err(ServiceError::Init(
                 String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -373,16 +385,31 @@ impl ServiceManager {
         let logf = std::fs::File::create(&log)?;
         let port = self.effective_port(spec);
 
+        // Databases refuse to run as root; when the daemon is root, drop to the
+        // invoking user and make sure the data dir is owned by them. Redis is
+        // happy as root, so it is left untouched.
+        let ids = drop_ids();
+        if ids.is_some() && matches!(spec.kind, ServiceKind::Postgres | ServiceKind::Mysql) {
+            if let Some((uid, gid)) = ids {
+                chown_recursive(&self.data_dir(spec), uid, gid);
+            }
+        }
+
         let child = match spec.kind {
-            ServiceKind::Postgres => std::process::Command::new(bin.join("postgres"))
-                .arg("-D")
-                .arg(self.data_dir(spec))
-                .args(["-p", &port.to_string()])
-                .arg("-k")
-                .arg(self.paths.run_dir())
-                .stdout(logf.try_clone()?)
-                .stderr(logf)
-                .spawn()?,
+            ServiceKind::Postgres => {
+                let data = self.data_dir(spec);
+                let mut cmd = std::process::Command::new(bin.join("postgres"));
+                cmd.arg("-D")
+                    .arg(&data)
+                    .args(["-p", &port.to_string()])
+                    // Put the unix socket in the user-owned data dir.
+                    .arg("-k")
+                    .arg(&data)
+                    .stdout(logf.try_clone()?)
+                    .stderr(logf);
+                apply_drop(&mut cmd, ids);
+                cmd.spawn()?
+            }
             ServiceKind::Redis => {
                 let data = self.data_dir(spec);
                 std::fs::create_dir_all(&data)?;
@@ -399,18 +426,19 @@ impl ServiceManager {
                 let base = self
                     .base_dir(spec)
                     .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
-                std::process::Command::new(bin.join("mysqld"))
-                    .arg(format!("--datadir={}", self.data_dir(spec).display()))
+                let mut cmd = std::process::Command::new(bin.join("mysqld"));
+                cmd.arg(format!("--datadir={}", self.data_dir(spec).display()))
                     .arg(format!("--basedir={}", base.display()))
                     .args(["--port", &port.to_string()])
                     .arg(format!(
                         "--socket={}",
-                        self.paths.run_dir().join("mysql.sock").display()
+                        self.data_dir(spec).join("mysql.sock").display()
                     ))
                     .arg("--mysqlx=OFF")
                     .stdout(logf.try_clone()?)
-                    .stderr(logf)
-                    .spawn()?
+                    .stderr(logf);
+                apply_drop(&mut cmd, ids);
+                cmd.spawn()?
             }
         };
         tracing::info!(service = key, port, "started service");
@@ -439,6 +467,100 @@ impl Drop for ServiceManager {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+// ---- privilege dropping ---------------------------------------------------
+// The daemon may run as root (macOS LaunchDaemon) so it can bind 53/80/443, but
+// MySQL and PostgreSQL refuse to run as root. When we're root, run them as the
+// invoking user (like PHP-FPM) and own their data dirs accordingly.
+
+fn running_as_root() -> bool {
+    #[cfg(unix)]
+    {
+        extern "C" {
+            #[link_name = "geteuid"]
+            fn geteuid() -> u32;
+        }
+        // SAFETY: geteuid is always safe.
+        unsafe { geteuid() == 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// The real user to run DB servers as. Prefers `GROVE_RUN_USER` (set by the
+/// service installer), else `SUDO_USER`.
+fn target_user() -> Option<String> {
+    for var in ["GROVE_RUN_USER", "SUDO_USER"] {
+        if let Ok(u) = std::env::var(var) {
+            if !u.is_empty() && u != "root" {
+                return Some(u);
+            }
+        }
+    }
+    None
+}
+
+/// `(uid, gid)` of the run user when the daemon is root and a run user exists;
+/// otherwise `None` (run in-process, no privilege change).
+fn drop_ids() -> Option<(u32, u32)> {
+    if !running_as_root() {
+        return None;
+    }
+    let user = target_user()?;
+    let uid = id_of(&["-u", &user])?;
+    let gid = id_of(&["-g", &user])?;
+    Some((uid, gid))
+}
+
+fn id_of(args: &[&str]) -> Option<u32> {
+    let out = std::process::Command::new("id").args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Recursively chown a path so a dropped process can use a dir the root daemon
+/// created (best-effort).
+fn chown_recursive(path: &std::path::Path, uid: u32, gid: u32) {
+    let _ = std::process::Command::new("chown")
+        .arg("-R")
+        .arg(format!("{uid}:{gid}"))
+        .arg(path)
+        .status();
+}
+
+/// Configure a command to drop to `(uid, gid)` before exec, if provided.
+fn apply_drop(cmd: &mut std::process::Command, ids: Option<(u32, u32)>) {
+    #[cfg(unix)]
+    if let Some((uid, gid)) = ids {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: only libc setgid/setuid are called; no allocation in the child.
+        unsafe {
+            cmd.pre_exec(move || {
+                extern "C" {
+                    fn setgid(gid: u32) -> i32;
+                    fn setuid(uid: u32) -> i32;
+                    fn setgroups(size: usize, list: *const u32) -> i32;
+                }
+                setgroups(1, &gid as *const u32);
+                if setgid(gid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if setuid(uid) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (cmd, ids);
     }
 }
 

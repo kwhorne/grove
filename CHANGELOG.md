@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-07-01
+
+### Fixed
+
+- **MySQL and PostgreSQL now start when Grove runs as a root service.** Both
+  refuse to run as root (`mysqld`/`postgres`), which broke “Start” under the
+  macOS LaunchDaemon (the service flickered green → idle). Grove now runs bundled
+  databases as the invoking user — like PHP-FPM — dropping privileges before
+  exec, owning their data directories to match (`chown`), and placing their unix
+  sockets inside the user-owned data dir. Existing installs are repaired
+  automatically on the next start.
+
 ## [0.2.4] — 2026-06-30
 
 ### Fixed
@@ -219,6 +231,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.2.5]: https://github.com/kwhorne/grove/releases/tag/v0.2.5
 [0.2.4]: https://github.com/kwhorne/grove/releases/tag/v0.2.4
 [0.2.3]: https://github.com/kwhorne/grove/releases/tag/v0.2.3
 [0.2.2]: https://github.com/kwhorne/grove/releases/tag/v0.2.2
