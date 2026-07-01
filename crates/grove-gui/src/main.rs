@@ -341,6 +341,26 @@ async fn stop_daemon() -> CmdResult<String> {
     message(Request::Shutdown).await
 }
 
+/// Restart the background daemon (picks up an updated app binary). No password
+/// prompt: the root LaunchDaemon re-execs itself.
+#[tauri::command]
+async fn restart_daemon() -> CmdResult<String> {
+    let p = paths()?;
+    let socket = p.ipc_socket();
+    let _ = client::send(&socket, &Request::RestartDaemon).await;
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    for _ in 0..60 {
+        if client::is_running(&socket).await {
+            return Ok("daemon restarted".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    Err(
+        "daemon did not come back — is the background service installed? (sudo grove install)"
+            .into(),
+    )
+}
+
 /// Locate the `grove` CLI binary (next to the GUI, then PATH) and spawn the
 /// daemon detached.
 #[tauri::command]
@@ -540,6 +560,7 @@ fn main() {
             tunnel_stop,
             forget_site,
             mysql_migrate,
+            restart_daemon,
             tunnel_list,
             tunnel_requests,
             php_versions,

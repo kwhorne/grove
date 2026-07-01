@@ -115,6 +115,8 @@ pub enum Request {
     MailClear,
     /// Ask the daemon to shut down gracefully.
     Shutdown,
+    /// Restart the daemon (re-execs the on-disk binary; picks up app updates).
+    RestartDaemon,
 }
 
 /// Uniform response envelope. `ok=false` carries a human-readable `error`.

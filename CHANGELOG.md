@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-07-01
+
+### Added
+
+- **“Restart daemon”** in the Tools panel — restarts Grove's background service
+  with one click (no password), so the running daemon picks up a freshly updated
+  app. The root LaunchDaemon re-execs itself via `launchctl kickstart`.
+
 ## [0.2.6] — 2026-07-01
 
 ### Added
@@ -240,6 +248,7 @@ bundled services — with zero external dependencies.
 - macOS is the verified platform for 0.1.0. Linux/Windows resolver and trust
   integration are stubbed and tracked for a later release.
 
+[0.2.7]: https://github.com/kwhorne/grove/releases/tag/v0.2.7
 [0.2.6]: https://github.com/kwhorne/grove/releases/tag/v0.2.6
 [0.2.5]: https://github.com/kwhorne/grove/releases/tag/v0.2.5
 [0.2.4]: https://github.com/kwhorne/grove/releases/tag/v0.2.4

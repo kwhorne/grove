@@ -23,6 +23,7 @@ export const api = {
   daemonRunning: (): Promise<boolean> => invoke("daemon_running"),
   startDaemon: (): Promise<void> => invoke("start_daemon"),
   stopDaemon: (): Promise<void> => invoke("stop_daemon"),
+  restartDaemon: (): Promise<string> => invoke("restart_daemon"),
 
   status: (): Promise<DaemonStatus> => invoke("get_status"),
   listSites: (): Promise<ResolvedSite[]> => invoke("list_sites"),

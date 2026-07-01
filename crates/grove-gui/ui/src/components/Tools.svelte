@@ -13,6 +13,17 @@
   let result = $state<string | null>(null);
   let error = $state<string | null>(null);
 
+  let restarting = $state(false);
+  async function restartDaemon() {
+    restarting = true;
+    try {
+      notify(await api.restartDaemon());
+    } catch (e) {
+      notify(String(e));
+    }
+    restarting = false;
+  }
+
   async function migrate() {
     busy = true;
     result = null;
@@ -79,11 +90,32 @@
       <div class="banner err">{error}</div>
     {/if}
   </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h3>Restart daemon</h3>
+        <p class="muted">
+          Restarts Grove's background service. Use this after updating the app so
+          the running daemon picks up the new version. No password needed.
+        </p>
+      </div>
+      <span class="badge">↻ Service</span>
+    </div>
+    <div class="actions">
+      <button class="btn" disabled={restarting} onclick={restartDaemon}>
+        {restarting ? "Restarting…" : "Restart daemon"}
+      </button>
+    </div>
+  </div>
 </div>
 
 <style>
   .tools {
     max-width: 720px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
   }
   .card {
     background: var(--panel);

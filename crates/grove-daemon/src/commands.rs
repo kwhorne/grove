@@ -601,6 +601,38 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             state.request_shutdown();
             Ok(Response::ok(ResponseData::Message("shutting down".into())))
         }
+
+        Request::RestartDaemon => {
+            // When installed as a root LaunchDaemon, kickstart re-execs the
+            // on-disk binary (picking up an app update) with no password prompt,
+            // since we're already root. Delay slightly so this response flushes
+            // to the client first. Fall back to a plain shutdown otherwise.
+            #[cfg(target_os = "macos")]
+            {
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(400));
+                    let ok = std::process::Command::new("launchctl")
+                        .args(["kickstart", "-k", "system/com.elyra.grove"])
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    if !ok {
+                        // Not a system LaunchDaemon (e.g. dev) — just exit.
+                        std::process::exit(0);
+                    }
+                });
+                Ok(Response::ok(ResponseData::Message(
+                    "restarting daemon…".into(),
+                )))
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                state.request_shutdown();
+                Ok(Response::ok(ResponseData::Message(
+                    "restarting daemon…".into(),
+                )))
+            }
+        }
     }
 }
 
