@@ -17,6 +17,7 @@ import type {
   SettingsView,
   TunnelRequestEntry,
   TunnelStatus,
+  DbConnSpec,
 } from "./types";
 
 export const api = {
@@ -94,6 +95,8 @@ export const api = {
     user: string,
     password: string,
   ): Promise<string> => invoke("mysql_migrate", { host, port, user, password }),
+  dbConvert: (source: DbConnSpec, target: DbConnSpec): Promise<string> =>
+    invoke("db_convert", { source, target }),
   tunnelList: (): Promise<TunnelStatus[]> => invoke("tunnel_list"),
   tunnelRequests: (site: string | null): Promise<TunnelRequestEntry[]> =>
     invoke("tunnel_requests", { site }),

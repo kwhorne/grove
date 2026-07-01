@@ -3,12 +3,13 @@
 use serde::{Deserialize, Serialize};
 
 use grove_core::site::ResolvedSite;
-use grove_services::{CapturedEmail, EmailSummary, ServiceStatus};
+use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
 /// frontends stay in parity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum Request {
     /// Liveness probe + version handshake.
     Ping,
@@ -104,6 +105,11 @@ pub enum Request {
         port: u16,
         user: String,
         password: String,
+    },
+    /// Convert a whole database between MySQL/PostgreSQL/SQLite.
+    DbConvert {
+        source: DbConnSpec,
+        target: DbConnSpec,
     },
     /// Diagnostics (`grove doctor`).
     Doctor,

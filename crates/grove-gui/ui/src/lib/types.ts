@@ -65,6 +65,16 @@ export interface TunnelRequestEntry {
   duration_ms: number;
 }
 
+export interface DbConnSpec {
+  kind: string; // "mysql" | "postgres" | "sqlite"
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string;
+  path: string;
+}
+
 export type DiagnosticStatus = "pass" | "warn" | "fail";
 
 export interface DiagnosticEntry {

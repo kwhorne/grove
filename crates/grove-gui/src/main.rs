@@ -15,7 +15,7 @@ use grove_ipc::protocol::{
     SettingsPatch, SettingsView, TunnelRequestEntry, TunnelStatus,
 };
 use grove_runtime::PhpRegistry;
-use grove_services::{CapturedEmail, EmailSummary, ServiceStatus};
+use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus};
 use serde::Serialize;
 
 type CmdResult<T> = Result<T, String>;
@@ -205,6 +205,11 @@ async fn tunnel_stop(site: String) -> CmdResult<String> {
 #[tauri::command]
 async fn forget_site(name: String) -> CmdResult<String> {
     message(Request::ForgetSite { name }).await
+}
+
+#[tauri::command]
+async fn db_convert(source: DbConnSpec, target: DbConnSpec) -> CmdResult<String> {
+    message(Request::DbConvert { source, target }).await
 }
 
 #[tauri::command]
@@ -560,6 +565,7 @@ fn main() {
             tunnel_stop,
             forget_site,
             mysql_migrate,
+            db_convert,
             restart_daemon,
             tunnel_list,
             tunnel_requests,

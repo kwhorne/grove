@@ -1,7 +1,46 @@
 <script lang="ts">
   import { api } from "../lib/api";
+  import type { DbConnSpec } from "../lib/types";
 
   let { notify }: { notify: (m: string) => void } = $props();
+
+  // ---- Convert database (MySQL / PostgreSQL / SQLite) ----
+  function blank(kind: string): DbConnSpec {
+    return {
+      kind,
+      host: "127.0.0.1",
+      port: kind === "postgres" ? 5432 : 3306,
+      user: kind === "postgres" ? "grove" : "root",
+      password: "",
+      database: "",
+      path: "",
+    };
+  }
+  let src = $state<DbConnSpec>(blank("mysql"));
+  let dst = $state<DbConnSpec>(blank("sqlite"));
+  let converting = $state(false);
+  let convResult = $state<string | null>(null);
+  let convError = $state<string | null>(null);
+
+  function retune(spec: DbConnSpec) {
+    const d = blank(spec.kind);
+    spec.host = d.host;
+    spec.port = d.port;
+    spec.user = d.user;
+  }
+
+  async function convert() {
+    converting = true;
+    convResult = null;
+    convError = null;
+    try {
+      convResult = await api.dbConvert($state.snapshot(src), $state.snapshot(dst));
+      notify("Database conversion complete");
+    } catch (e) {
+      convError = String(e);
+    }
+    converting = false;
+  }
 
   // Herd's MySQL defaults: 127.0.0.1:3306, root, no password.
   let host = $state("127.0.0.1");
@@ -94,6 +133,89 @@
   <div class="card">
     <div class="card-head">
       <div>
+        <h3>Convert database</h3>
+        <p class="muted">
+          Copy a whole database between MySQL, PostgreSQL and SQLite (tables,
+          columns, primary keys and data). Great for turning a MySQL database
+          into a portable SQLite file, and back.
+        </p>
+      </div>
+      <span class="badge">⇄ Convert</span>
+    </div>
+
+    <div class="convert-grid">
+      <div class="endpoint">
+        <div class="ep-title">Source</div>
+        <label>
+          <span>Type</span>
+          <select class="inp" bind:value={src.kind} onchange={() => retune(src)}>
+            <option value="mysql">MySQL</option>
+            <option value="postgres">PostgreSQL</option>
+            <option value="sqlite">SQLite</option>
+          </select>
+        </label>
+        {#if src.kind === "sqlite"}
+          <label><span>File path</span>
+            <input class="inp" bind:value={src.path} placeholder="/Users/you/database.sqlite" /></label>
+        {:else}
+          <div class="row2">
+            <label><span>Host</span><input class="inp" bind:value={src.host} /></label>
+            <label><span>Port</span><input class="inp" type="number" bind:value={src.port} /></label>
+          </div>
+          <div class="row2">
+            <label><span>User</span><input class="inp" bind:value={src.user} /></label>
+            <label><span>Password</span><input class="inp" type="password" bind:value={src.password} /></label>
+          </div>
+          <label><span>Database</span><input class="inp" bind:value={src.database} placeholder="my_app" /></label>
+        {/if}
+      </div>
+
+      <div class="arrow">→</div>
+
+      <div class="endpoint">
+        <div class="ep-title">Target</div>
+        <label>
+          <span>Type</span>
+          <select class="inp" bind:value={dst.kind} onchange={() => retune(dst)}>
+            <option value="sqlite">SQLite</option>
+            <option value="mysql">MySQL</option>
+            <option value="postgres">PostgreSQL</option>
+          </select>
+        </label>
+        {#if dst.kind === "sqlite"}
+          <label><span>File path (created if missing)</span>
+            <input class="inp" bind:value={dst.path} placeholder="/Users/you/database.sqlite" /></label>
+        {:else}
+          <div class="row2">
+            <label><span>Host</span><input class="inp" bind:value={dst.host} /></label>
+            <label><span>Port</span><input class="inp" type="number" bind:value={dst.port} /></label>
+          </div>
+          <div class="row2">
+            <label><span>User</span><input class="inp" bind:value={dst.user} /></label>
+            <label><span>Password</span><input class="inp" type="password" bind:value={dst.password} /></label>
+          </div>
+          <label><span>Database (must exist)</span><input class="inp" bind:value={dst.database} placeholder="my_app" /></label>
+        {/if}
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" disabled={converting} onclick={convert}>
+        {converting ? "Converting…" : "Convert"}
+      </button>
+    </div>
+    <p class="hint muted">
+      Recreates tables, columns, primary keys and copies all rows. Views, stored
+      routines, triggers and foreign keys are not copied. The target database (for
+      MySQL/PostgreSQL) must already exist.
+    </p>
+    {#if convResult}<div class="banner ok">{convResult}</div>{/if}
+    {#if convError}<div class="banner err">{convError}</div>{/if}
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div>
         <h3>Restart daemon</h3>
         <p class="muted">
           Restarts Grove's background service. Use this after updating the app so
@@ -151,6 +273,37 @@
     grid-template-columns: 2fr 1fr;
     gap: 12px;
     margin: 18px 0 8px;
+  }
+  .convert-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 14px;
+    margin: 16px 0 4px;
+  }
+  .endpoint {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+  }
+  .ep-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .row2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .arrow {
+    font-size: 22px;
+    color: var(--brand);
   }
   label {
     display: flex;

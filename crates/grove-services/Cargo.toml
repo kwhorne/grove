@@ -18,3 +18,12 @@ time.workspace = true
 ureq = { version = "2", default-features = false, features = ["tls"] }
 flate2 = "1"
 tar = "0.4"
+# Cross-dialect database conversion (MySQL/PostgreSQL/SQLite).
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
+    "mysql",
+    "postgres",
+    "sqlite",
+    "any",
+] }

@@ -595,6 +595,12 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 Err(e) => Ok(Response::err(e.to_string())),
             }
         }
+        Request::DbConvert { source, target } => {
+            match grove_services::convert_database(&source, &target, |_| {}).await {
+                Ok(msg) => Ok(Response::ok(ResponseData::Message(msg))),
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
         Request::Doctor => Ok(Response::ok(ResponseData::Doctor(doctor(state).await))),
 
         Request::Shutdown => {
