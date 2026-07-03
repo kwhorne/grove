@@ -101,8 +101,6 @@ export const api = {
   debugStatus: (): Promise<XdebugStatus> => invoke("debug_status"),
   debugSet: (enable: boolean): Promise<XdebugStatus> =>
     invoke("debug_set", { enable }),
-  debugInstall: (version: string, from: string | null): Promise<string> =>
-    invoke("debug_install", { version, from }),
   tunnelList: (): Promise<TunnelStatus[]> => invoke("tunnel_list"),
   tunnelRequests: (site: string | null): Promise<TunnelRequestEntry[]> =>
     invoke("tunnel_requests", { site }),

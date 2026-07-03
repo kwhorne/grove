@@ -30,16 +30,7 @@
     xdBusy = false;
   }
 
-  async function installDebug(version: string) {
-    xdBusy = true;
-    try {
-      notify(await api.debugInstall(version, null));
-      await loadXdebug();
-    } catch (e) {
-      notify(String(e));
-    }
-    xdBusy = false;
-  }
+
 
   // ---- Convert database (MySQL / PostgreSQL / SQLite) ----
   function blank(kind: string): DbConnSpec {
@@ -141,11 +132,6 @@
           <div class="brow">
             <span class="mono ver">php@{b.version}</span>
             <span class="avail {b.ready ? 'ok' : 'no'}">{b.availability}</span>
-            {#if !b.ready}
-              <button class="btn" disabled={xdBusy} onclick={() => installDebug(b.version)}>
-                Install debug build
-              </button>
-            {/if}
           </div>
         {/each}
       </div>
@@ -154,8 +140,10 @@
     {/if}
 
     <p class="hint muted">
-      For CLI (artisan, tests): <code>eval "$(grove debug env)"</code>. In your
-      editor, start a DBGp/DAP listener on port {xdebug?.port ?? 9003}.
+      Step-debugging needs a PHP that has Xdebug — register one with
+      <code>grove php register</code> (Grove's fully-static builds can't load it).
+      For CLI (artisan, tests): <code>eval "$(grove debug env)"</code>, and point
+      your editor's DBGp/DAP listener at port {xdebug?.port ?? 9003}.
     </p>
   </div>
 

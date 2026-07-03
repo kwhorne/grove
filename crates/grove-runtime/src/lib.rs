@@ -13,7 +13,7 @@ pub mod scaffold;
 pub mod xdebug;
 
 pub use fpm::{FpmManager, FpmPool};
-pub use install::{install as install_php, install_xdebug, InstallError};
+pub use install::{install as install_php, InstallError};
 pub use node::{install as install_node, NodeBuild, NodeRegistry};
 pub use registry::{PhpBuild, PhpRegistry};
 pub use xdebug::{XdebugPlan, DEFAULT_XDEBUG_PORT};

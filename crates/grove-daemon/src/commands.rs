@@ -29,8 +29,7 @@ async fn xdebug_status(state: &Arc<DaemonState>) -> grove_ipc::protocol::XdebugS
         .iter()
         .map(|b| {
             let plan = xdebug::resolve(&state.paths, b);
-            let ready = xdebug::debug_fpm_binary(&state.paths, &b.version).is_some()
-                || !matches!(plan, XdebugPlan::Unavailable);
+            let ready = !matches!(plan, XdebugPlan::Unavailable);
             XdebugBuild {
                 version: b.version.clone(),
                 availability: xdebug::availability_label(&state.paths, b),
@@ -491,25 +490,6 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             Ok(Response::ok(ResponseData::Xdebug(
                 xdebug_status(state).await,
             )))
-        }
-
-        Request::DebugInstall { version, from } => {
-            let paths = state.paths.clone();
-            let path = tokio::task::spawn_blocking(move || {
-                grove_runtime::install_xdebug(&paths, &version, from.as_deref(), |_| {})
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("install task panicked: {e}"))?
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            // If debugging is already on, respawn pools so they pick up the
-            // freshly installed debug binary.
-            if state.fpm.xdebug_enabled() {
-                state.fpm.reload_pools();
-            }
-            Ok(Response::ok(ResponseData::Message(format!(
-                "installed debug php-fpm at {}",
-                path.display()
-            ))))
         }
 
         Request::MailList => Ok(Response::ok(ResponseData::Mail(state.mail.summaries()))),

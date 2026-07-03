@@ -234,15 +234,6 @@ pub enum DebugAction {
     /// Print shell env exports for debugging a CLI process (artisan, tests).
     /// Use with: eval "$(grove debug env)"
     Env,
-    /// Install a debug-enabled php-fpm (Xdebug compiled in) for a PHP version.
-    Install {
-        /// PHP version (e.g. 8.4).
-        version: String,
-        /// Local path or URL to a .tar.gz (containing php-fpm) or a raw binary.
-        /// Omit to use Grove's mirror.
-        #[arg(long)]
-        from: Option<String>,
-    },
 }
 
 #[derive(Subcommand, Debug)]

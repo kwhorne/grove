@@ -89,12 +89,6 @@ pub enum Request {
     /// Toggle Xdebug step-debugging for FPM pools. `enable = None` reports the
     /// current state without changing it.
     Debug { enable: Option<bool> },
-    /// Install a debug-enabled php-fpm (Xdebug compiled in) for a PHP version.
-    /// `from` may be a local path or URL; omitted uses Grove's mirror.
-    DebugInstall {
-        version: String,
-        from: Option<String>,
-    },
     /// Start sharing a site publicly through the configured tunnel server.
     TunnelStart {
         site: String,

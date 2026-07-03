@@ -233,11 +233,6 @@ async fn debug_set(enable: bool) -> CmdResult<XdebugStatus> {
 }
 
 #[tauri::command]
-async fn debug_install(version: String, from: Option<String>) -> CmdResult<String> {
-    message(Request::DebugInstall { version, from }).await
-}
-
-#[tauri::command]
 async fn mysql_migrate(
     host: String,
     port: u16,
@@ -593,7 +588,6 @@ fn main() {
             db_convert,
             debug_status,
             debug_set,
-            debug_install,
             restart_daemon,
             tunnel_list,
             tunnel_requests,

@@ -54,37 +54,9 @@ pub fn bundled_path(paths: &GrovePaths, version: &str) -> PathBuf {
         .join(extension_file())
 }
 
-/// Platform file name for a debug-enabled php-fpm variant.
-fn debug_fpm_file() -> &'static str {
-    if cfg!(windows) {
-        "php-fpm-debug.exe"
-    } else {
-        "php-fpm-debug"
-    }
-}
-
-/// Path to a debug-enabled `php-fpm` variant (Xdebug compiled in) for `version`,
-/// if one has been installed. Static PHP binaries generally cannot `dlopen` an
-/// external `xdebug.so`, so shipping a parallel debug binary is the reliable
-/// route: `<runtimes>/<version>/php-fpm-debug`.
-pub fn debug_fpm_binary(paths: &GrovePaths, version: &str) -> Option<PathBuf> {
-    let p = paths.runtimes_dir().join(version).join(debug_fpm_file());
-    p.exists().then_some(p)
-}
-
-/// The file name a debug-fpm variant is stored under (for the installer).
-pub fn debug_fpm_filename() -> &'static str {
-    debug_fpm_file()
-}
-
-/// One-line availability label for `grove debug status`, considering both a
-/// compiled-in debug binary and a loadable extension.
+/// One-line availability label for `grove debug status` / the GUI.
 pub fn availability_label(paths: &GrovePaths, build: &PhpBuild) -> String {
-    if debug_fpm_binary(paths, &build.version).is_some() {
-        "ready (Grove debug build)".to_string()
-    } else {
-        describe(&resolve(paths, build)).to_string()
-    }
+    describe(&resolve(paths, build)).to_string()
 }
 
 /// Decide how (or whether) Xdebug can be loaded for `build`.
@@ -172,9 +144,9 @@ pub fn cli_env_exports(port: u16) -> String {
 /// Human-readable summary of a plan for status output.
 pub fn describe(plan: &XdebugPlan) -> &'static str {
     match plan {
-        XdebugPlan::AlreadyLoaded => "loaded (built in)",
-        XdebugPlan::LoadFrom(_) => "loaded (Grove)",
-        XdebugPlan::Unavailable => "unavailable",
+        XdebugPlan::AlreadyLoaded => "ready (built into this PHP)",
+        XdebugPlan::LoadFrom(_) => "ready (loadable xdebug.so)",
+        XdebugPlan::Unavailable => "unavailable — needs a PHP with Xdebug (grove php register)",
     }
 }
 

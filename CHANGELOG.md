@@ -14,28 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Xdebug panel in the GUI** (Tools → *Xdebug step-debugging*): a live on/off
   toggle, the DBGp port, and per-PHP-build availability with a one-click
   *Install debug build* for versions that lack Xdebug.
-- **Xdebug step-debugging** (`grove debug on|off|status|env`). Grove loads
-  Xdebug into its FPM pools on demand via per-pool `-d` INI overrides — the
-  global `php.ini` is never touched, and pools respawn instantly when toggled.
-  Xdebug runs in `start_with_request=trigger` mode, so it stays dormant (near-
-  zero overhead) until a request opts in with the `XDEBUG_TRIGGER` cookie/param;
-  `grove debug env` prints the matching env for debugging CLI processes
-  (`eval "$(grove debug env)"`). This is the runtime half of native step-
-  debugging: an editor's DAP client spawns the `php-debug` adapter (over Grove's
-  bundled Node), which Xdebug connects out to on DBGp port 9003. Grove resolves
-  the extension from a built-in PHP, a Grove-managed drop at
-  `<runtimes>/xdebug/<version>/xdebug.so`, or the build's own `extension_dir`.
-- **`grove debug install <version> [--from <path|url>]`** installs a debug-
-  enabled `php-fpm` (Xdebug compiled in) to `<runtimes>/<version>/php-fpm-debug`;
-  FPM automatically swaps to it while debugging. Because static-php-cli ships no
-  redistributable Xdebug and fully-static binaries can't `dlopen` an external
-  `.so`, a parallel debug binary is the reliable route. `--from` accepts a local
-  build today; the default mirror (`GROVE_XDEBUG_MIRROR`) is populated by CI.
-- **CI: `Build Xdebug PHP`** (`.github/workflows/xdebug.yml`) builds debug-enabled
-  `php-fpm` (Xdebug compiled in) via static-php-cli for PHP 8.3/8.4/8.5 across
-  macOS and Linux (arm64 + x86_64) and publishes them to a rolling
-  `xdebug-builds` release with the names `grove debug install` expects. Point
-  `GROVE_XDEBUG_MIRROR` at that release (or have the CDN mirror it).
+- **Xdebug step-debugging** (`grove debug on|off|status|env`, and the GUI
+  toggle). Grove loads Xdebug into its FPM pools on demand via per-pool `-d` INI
+  overrides — the global `php.ini` is never touched, and pools respawn instantly
+  when toggled. Xdebug runs in `start_with_request=trigger` mode, so it stays
+  dormant (near-zero overhead) until a request opts in with the `XDEBUG_TRIGGER`
+  cookie/param; `grove debug env` prints the matching env for debugging CLI
+  processes (`eval "$(grove debug env)"`). Grove speaks the runtime half: your
+  editor's DAP client listens on DBGp port 9003 and Xdebug connects out to it.
+
+  Step-debugging requires a PHP that **has** Xdebug — a `grove php register`-ed
+  dynamic PHP with Xdebug built in, or a loadable `xdebug.so` in its
+  `extension_dir`. Grove's own fully-static builds can't load Xdebug (static PHP
+  can't `dlopen`, and static-php-cli can't compile it in), so those report as
+  unavailable in `grove debug status` / the GUI panel.
 
 [0.2.9]: https://github.com/kwhorne/grove/releases/tag/v0.2.9
 

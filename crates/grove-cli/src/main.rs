@@ -197,7 +197,6 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
                 enable: Some(false),
             },
             DebugAction::Status => Request::Debug { enable: None },
-            DebugAction::Install { version, from } => Request::DebugInstall { version, from },
             DebugAction::Env => unreachable!("handled before to_request"),
         },
         Command::Service { action } => match action {
