@@ -167,6 +167,73 @@ pub fn install_cli(
     Ok(php_path)
 }
 
+/// Default mirror for Grove's debug-enabled (Xdebug compiled-in) php-fpm builds.
+/// static-php-cli ships no redistributable Xdebug, so these are published by
+/// Grove. Overridable via `GROVE_XDEBUG_MIRROR` for testing / self-hosting.
+const XDEBUG_BASE_URL: &str = "https://github.com/kwhorne/grove/releases/download/xdebug-builds/";
+
+/// Install a debug-enabled `php-fpm` (Xdebug compiled in) for `version` into
+/// `<runtimes>/<minor>/php-fpm-debug`. `from` may be a local path or URL to a
+/// `.tar.gz` (containing `php-fpm`) or a raw binary; when omitted, Grove's
+/// mirror is used. Returns the installed binary path.
+pub fn install_xdebug(
+    paths: &GrovePaths,
+    version_req: &str,
+    from: Option<&str>,
+    progress: impl Fn(&str),
+) -> Result<PathBuf> {
+    let (os, arch) = platform_slug()?;
+    let plat = format!("{os}-{arch}");
+    let key = minor_key(version_req);
+
+    let dest_dir = paths.runtimes_dir().join(&key);
+    std::fs::create_dir_all(&dest_dir)?;
+    let dest = dest_dir.join(crate::xdebug::debug_fpm_filename());
+
+    let (source, is_url) = match from {
+        Some(s) => (s.to_string(), is_url(s)),
+        None => {
+            let base = std::env::var("GROVE_XDEBUG_MIRROR")
+                .unwrap_or_else(|_| XDEBUG_BASE_URL.to_string());
+            (format!("{base}php-{key}-fpm-xdebug-{plat}.tar.gz"), true)
+        }
+    };
+    let is_tar = source.ends_with(".gz") || source.ends_with(".tgz") || source.ends_with(".tar");
+
+    progress(&format!("fetching debug php-fpm from {source}…"));
+    let bytes = if is_url {
+        http_get(&source)?
+    } else {
+        std::fs::read(&source)?
+    };
+
+    if is_tar {
+        progress("extracting…");
+        extract_fpm(&bytes, &dest)?;
+    } else {
+        std::fs::write(&dest, &bytes)?;
+    }
+    make_executable(&dest)?;
+    progress(&format!(
+        "installed debug php-fpm for {key} at {}",
+        dest.display()
+    ));
+    Ok(dest)
+}
+
+fn is_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://")
+}
+
+/// Reduce a version request to its `major.minor` key (Xdebug ABI is per minor).
+fn minor_key(version_req: &str) -> String {
+    let mut it = version_req.split('.');
+    match (it.next(), it.next()) {
+        (Some(a), Some(b)) => format!("{a}.{b}"),
+        _ => version_req.to_string(),
+    }
+}
+
 /// Scrape the listing and pick the best matching version.
 fn resolve_version(version_req: &str, suffix: &str) -> Result<SemVer> {
     // Exact 3-part version: use as-is (still validate it exists in the listing).
@@ -284,6 +351,20 @@ mod tests {
         assert_eq!(SemVer::parse("8.4"), None);
         assert!(SemVer(8, 4, 9) < SemVer(8, 4, 22));
         assert_eq!(SemVer(8, 4, 22).minor_key(), "8.4");
+    }
+
+    #[test]
+    fn minor_key_reduces_to_major_minor() {
+        assert_eq!(minor_key("8.4.22"), "8.4");
+        assert_eq!(minor_key("8.4"), "8.4");
+        assert_eq!(minor_key("8"), "8");
+    }
+
+    #[test]
+    fn is_url_detects_scheme() {
+        assert!(is_url("https://x/y.tar.gz"));
+        assert!(is_url("http://x"));
+        assert!(!is_url("/local/path.tar.gz"));
     }
 
     #[test]

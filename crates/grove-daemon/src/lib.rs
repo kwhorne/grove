@@ -38,6 +38,9 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         let _ = php_registry.save(&paths);
     }
     let fpm = Arc::new(FpmManager::new(paths.clone(), php_registry));
+    // Restore the persisted Xdebug setting so pools spawn correctly after a
+    // daemon restart.
+    fpm.set_xdebug(general.xdebug, general.xdebug_port);
 
     // Build the site registry and shared proxy state.
     let registry = grove_core::SiteRegistry::build(&config);
@@ -62,6 +65,7 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         shared.clone(),
         mail.clone(),
         services,
+        fpm.clone(),
     ));
 
     // Write the pidfile so `grove stop/restart` can find us, and arrange for it

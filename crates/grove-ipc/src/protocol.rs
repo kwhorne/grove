@@ -86,6 +86,15 @@ pub enum Request {
     NodeInstall { version: String },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
+    /// Toggle Xdebug step-debugging for FPM pools. `enable = None` reports the
+    /// current state without changing it.
+    Debug { enable: Option<bool> },
+    /// Install a debug-enabled php-fpm (Xdebug compiled in) for a PHP version.
+    /// `from` may be a local path or URL; omitted uses Grove's mirror.
+    DebugInstall {
+        version: String,
+        from: Option<String>,
+    },
     /// Start sharing a site publicly through the configured tunnel server.
     TunnelStart {
         site: String,
@@ -179,6 +188,24 @@ pub enum ResponseData {
     PhpVersions(Vec<NodeVersion>),
     Tunnels(Vec<TunnelStatus>),
     TunnelRequests(Vec<TunnelRequestEntry>),
+    Xdebug(XdebugStatus),
+}
+
+/// Xdebug state + per-build availability, for `grove debug status` and the GUI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XdebugStatus {
+    pub enabled: bool,
+    pub port: u16,
+    pub builds: Vec<XdebugBuild>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XdebugBuild {
+    pub version: String,
+    /// Human-readable availability, e.g. "ready (Grove debug build)".
+    pub availability: String,
+    /// Whether Xdebug can actually be loaded for this build.
+    pub ready: bool,
 }
 
 /// An active public tunnel.

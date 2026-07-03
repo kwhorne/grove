@@ -65,6 +65,18 @@ export interface TunnelRequestEntry {
   duration_ms: number;
 }
 
+export interface XdebugBuild {
+  version: string;
+  availability: string;
+  ready: boolean;
+}
+
+export interface XdebugStatus {
+  enabled: boolean;
+  port: number;
+  builds: XdebugBuild[];
+}
+
 export interface DbConnSpec {
   kind: string; // "mysql" | "postgres" | "sqlite"
   host: string;

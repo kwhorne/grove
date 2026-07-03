@@ -8,6 +8,7 @@ use tokio::sync::{Mutex, Notify};
 
 use grove_core::{paths::GrovePaths, Config, SiteRegistry};
 use grove_proxy::SharedState;
+use grove_runtime::FpmManager;
 use grove_services::{MailStore, ServiceManager};
 
 use crate::tunnels::TunnelManager;
@@ -20,6 +21,9 @@ pub struct DaemonState {
     pub mail: MailStore,
     /// Bundled service supervisor (PostgreSQL, …).
     pub services: Arc<ServiceManager>,
+    /// Lazy PHP-FPM pool supervisor (needed to reload pools on config changes
+    /// such as toggling Xdebug).
+    pub fpm: Arc<FpmManager>,
     /// Active public tunnels (`grove share`).
     pub tunnels: Arc<TunnelManager>,
     /// Notified when a graceful shutdown is requested (via IPC or signal).
@@ -33,6 +37,7 @@ impl DaemonState {
         shared: SharedState,
         mail: MailStore,
         services: Arc<ServiceManager>,
+        fpm: Arc<FpmManager>,
     ) -> Self {
         Self {
             paths,
@@ -40,6 +45,7 @@ impl DaemonState {
             shared,
             mail,
             services,
+            fpm,
             tunnels: Arc::new(TunnelManager::new()),
             shutdown: Arc::new(Notify::new()),
         }

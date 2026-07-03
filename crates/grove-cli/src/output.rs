@@ -164,6 +164,16 @@ pub fn print_response(resp: &Response, json: bool) {
                 );
             }
         }
+        Some(ResponseData::Xdebug(x)) => {
+            println!(
+                "Xdebug {} (DBGp port {})",
+                if x.enabled { "enabled" } else { "disabled" },
+                x.port
+            );
+            for b in &x.builds {
+                println!("  php@{:<5} {}", b.version, b.availability);
+            }
+        }
     }
 }
 

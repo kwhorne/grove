@@ -48,6 +48,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🌐 **Automatic `*.test` routing** via an embedded DNS resolver — no manual hosts editing.
 - 🔒 **Local HTTPS** with a private root CA and on-demand per-site leaf certificates.
 - 🐘 **Bundled PHP** — install multiple self-contained versions (`grove php install 8.5|8.4|8.3`), with per-site `isolate` and lazy FPM pools.
+- 🐞 **Step-debugging** — `grove debug on` loads Xdebug into the FPM pools (trigger mode, zero idle overhead) so a DAP-capable editor can set breakpoints; `grove debug env` wires up CLI debugging (artisan, tests).
 - ⬢ **Bundled Node.js** — download node · npm · npx, with per-site Node versions; no nvm or Homebrew.
 - 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself, so there is no database/cache or Homebrew to install separately.
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer.

@@ -1,0 +1,98 @@
+name: Build Xdebug PHP
+
+# static-php-cli ships no redistributable Xdebug, and fully-static PHP can't
+# `dlopen` an external xdebug.so — so Grove publishes its own debug-enabled
+# php-fpm builds (Xdebug compiled in). `grove debug install <ver>` downloads
+# these; the file names match `install_xdebug` in grove-runtime:
+#   php-<major.minor>-fpm-xdebug-<os>-<arch>.tar.gz  (containing `php-fpm`)
+#
+# Run manually (workflow_dispatch) or when the `xdebug-builds` tag is pushed.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["xdebug-builds"]
+
+permissions:
+  contents: write
+
+env:
+  # Laravel-oriented extension set (mirrors Grove's common builds) + xdebug.
+  EXTENSIONS: >-
+    bcmath,calendar,ctype,curl,dom,fileinfo,filter,gd,iconv,intl,mbstring,
+    mysqlnd,mysqli,opcache,openssl,pcntl,pdo,pdo_mysql,pdo_pgsql,pdo_sqlite,
+    pgsql,phar,posix,readline,redis,session,simplexml,sockets,sodium,sqlite3,
+    tokenizer,xml,xmlreader,xmlwriter,zip,zlib,xdebug
+
+jobs:
+  build:
+    name: php@${{ matrix.php }} (${{ matrix.os_slug }}-${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.3", "8.4", "8.5"]
+        include:
+          - runner: macos-14
+            os_slug: macos
+            arch: aarch64
+          - runner: macos-13
+            os_slug: macos
+            arch: x86_64
+          - runner: ubuntu-latest
+            os_slug: linux
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            os_slug: linux
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Fetch the static-php-cli (spc) binary
+        run: |
+          set -euo pipefail
+          SPC_URL="https://dl.static-php.dev/static-php-cli/spc-bin/nightly/spc-${{ matrix.os_slug }}-${{ matrix.arch }}"
+          curl -fsSL -o spc "$SPC_URL"
+          chmod +x spc
+          ./spc --version
+
+      - name: Doctor (install build toolchain)
+        run: ./spc doctor --auto-fix
+
+      - name: Download sources (PHP ${{ matrix.php }} + extensions)
+        run: |
+          EXTS="$(echo "${EXTENSIONS}" | tr -d ' \n')"
+          ./spc download --with-php=${{ matrix.php }} --for-extensions="$EXTS" --prefer-pre-built
+
+      - name: Build php-fpm with Xdebug
+        run: |
+          EXTS="$(echo "${EXTENSIONS}" | tr -d ' \n')"
+          ./spc build "$EXTS" --build-fpm
+
+      - name: Verify Xdebug is present
+        run: |
+          ./buildroot/bin/php-fpm -v
+          # php-fpm can't list modules; the CLI in the same buildroot can.
+          if [ -x ./buildroot/bin/php ]; then
+            ./buildroot/bin/php -m | grep -i xdebug
+          fi
+
+      - name: Package
+        run: |
+          NAME="php-${{ matrix.php }}-fpm-xdebug-${{ matrix.os_slug }}-${{ matrix.arch }}.tar.gz"
+          tar -C buildroot/bin -czf "$NAME" php-fpm
+          echo "ASSET=$NAME" >> "$GITHUB_ENV"
+          ls -lh "$NAME"
+
+      - name: Publish to the rolling `xdebug-builds` release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: xdebug-builds
+          name: Xdebug PHP builds
+          body: |
+            Debug-enabled `php-fpm` binaries (Xdebug compiled in) for
+            `grove debug install`. Rolling release, updated by CI.
+          files: ${{ env.ASSET }}
+          fail_on_unmatched_files: true
+
+  # After a run, point Grove at these assets (until the CDN mirror is wired):
+  #   GROVE_XDEBUG_MIRROR=https://github.com/kwhorne/grove/releases/download/xdebug-builds/
+  # or have dl.grove.elyracode.com/xdebug/ pull from this release.

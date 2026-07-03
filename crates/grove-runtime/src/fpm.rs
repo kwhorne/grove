@@ -14,6 +14,23 @@ use grove_proxy::fastcgi::FpmAddr;
 use grove_proxy::FpmLocator;
 
 use crate::registry::PhpRegistry;
+use crate::xdebug::{self, XdebugPlan, DEFAULT_XDEBUG_PORT};
+
+/// Runtime Xdebug configuration for freshly spawned FPM pools.
+#[derive(Debug, Clone, Copy)]
+struct XdebugState {
+    enabled: bool,
+    port: u16,
+}
+
+impl Default for XdebugState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: DEFAULT_XDEBUG_PORT,
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FpmError {
@@ -45,6 +62,7 @@ pub struct FpmManager {
     paths: GrovePaths,
     registry: Mutex<PhpRegistry>,
     pools: Mutex<HashMap<String, FpmPool>>,
+    xdebug: Mutex<XdebugState>,
 }
 
 impl FpmManager {
@@ -53,7 +71,36 @@ impl FpmManager {
             paths,
             registry: Mutex::new(registry),
             pools: Mutex::new(HashMap::new()),
+            xdebug: Mutex::new(XdebugState::default()),
         }
+    }
+
+    /// Enable/disable Xdebug for pools spawned from now on, and set the DBGp
+    /// port the extension connects out to. Call [`FpmManager::reload_pools`]
+    /// afterwards to apply it to already-running pools.
+    pub fn set_xdebug(&self, enabled: bool, port: u16) {
+        let mut x = self.xdebug.lock().unwrap();
+        x.enabled = enabled;
+        x.port = if port == 0 { DEFAULT_XDEBUG_PORT } else { port };
+    }
+
+    /// Whether Xdebug is currently enabled for new pools.
+    pub fn xdebug_enabled(&self) -> bool {
+        self.xdebug.lock().unwrap().enabled
+    }
+
+    /// Resolve how Xdebug would be loaded for `version` (for status output).
+    pub fn xdebug_plan(&self, version: &str) -> XdebugPlan {
+        match self.build_for(version) {
+            Some(build) => xdebug::resolve(&self.paths, &build),
+            None => XdebugPlan::Unavailable,
+        }
+    }
+
+    /// Drop all live pools so the next request respawns them with the current
+    /// Xdebug setting. Dropping a [`FpmPool`] kills its FPM process.
+    pub fn reload_pools(&self) {
+        self.pools.lock().unwrap().clear();
     }
 
     /// Look up a build, reloading the on-disk registry once if it is missing
@@ -104,8 +151,45 @@ impl FpmManager {
         let conf = self.write_pool_config(version, &socket, &log)?;
 
         tracing::info!(version, binary = %build.fpm_binary.display(), "spawning PHP-FPM pool");
-        let mut cmd = std::process::Command::new(&build.fpm_binary);
+        // Pick the fpm binary + Xdebug INI overrides for this pool. When debug
+        // mode is on we prefer a debug-enabled binary (Xdebug compiled in), and
+        // otherwise fall back to loading an external extension via `-d
+        // zend_extension=` (Zend extensions must be defined at startup, so
+        // pool-config `php_admin_value` won't do). Trigger mode keeps Xdebug
+        // dormant until a request opts in, so idle overhead stays negligible.
+        let xdebug = *self.xdebug.lock().unwrap();
+        let (fpm_binary, xdebug_entries) = if xdebug.enabled {
+            if let Some(dbg) = xdebug::debug_fpm_binary(&self.paths, version) {
+                tracing::info!(version, "using Grove debug php-fpm (Xdebug compiled in)");
+                (
+                    dbg,
+                    xdebug::debug_ini_entries(&XdebugPlan::AlreadyLoaded, xdebug.port),
+                )
+            } else {
+                let plan = xdebug::resolve(&self.paths, &build);
+                let entries = xdebug::debug_ini_entries(&plan, xdebug.port);
+                if entries.is_empty() {
+                    tracing::warn!(
+                        version,
+                        "Xdebug enabled but unavailable for this build; run \
+                         `grove debug install {version}` or register a PHP with Xdebug"
+                    );
+                } else {
+                    tracing::info!(
+                        version,
+                        plan = xdebug::describe(&plan),
+                        "loading Xdebug into pool"
+                    );
+                }
+                (build.fpm_binary.clone(), entries)
+            }
+        } else {
+            (build.fpm_binary.clone(), Vec::new())
+        };
+
+        let mut cmd = std::process::Command::new(&fpm_binary);
         cmd.arg("--nodaemonize").arg("--fpm-config").arg(&conf);
+        xdebug::apply_dargs(&mut cmd, &xdebug_entries);
         // When the daemon runs as root (privileged ports), php-fpm refuses to
         // start unless explicitly allowed; workers then drop to the real user
         // via the pool's `user`/`group` directives (see write_pool_config).

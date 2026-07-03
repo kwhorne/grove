@@ -16,6 +16,35 @@ use grove_tunnel::ShareConfig;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Build the current Xdebug state + per-build availability.
+async fn xdebug_status(state: &Arc<DaemonState>) -> grove_ipc::protocol::XdebugStatus {
+    use grove_ipc::protocol::{XdebugBuild, XdebugStatus};
+    use grove_runtime::xdebug::{self, XdebugPlan};
+    let (enabled, port) = {
+        let c = state.config.lock().await;
+        (c.general.xdebug, c.general.xdebug_port)
+    };
+    let reg = grove_runtime::PhpRegistry::load(&state.paths);
+    let builds = reg
+        .iter()
+        .map(|b| {
+            let plan = xdebug::resolve(&state.paths, b);
+            let ready = xdebug::debug_fpm_binary(&state.paths, &b.version).is_some()
+                || !matches!(plan, XdebugPlan::Unavailable);
+            XdebugBuild {
+                version: b.version.clone(),
+                availability: xdebug::availability_label(&state.paths, b),
+                ready,
+            }
+        })
+        .collect();
+    XdebugStatus {
+        enabled,
+        port,
+        builds,
+    }
+}
+
 /// Open a public tunnel for a site using the configured tunnel server.
 async fn tunnel_start(
     state: &Arc<DaemonState>,
@@ -444,6 +473,42 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let n = state.reload().await?;
             Ok(Response::ok(ResponseData::Message(format!(
                 "reloaded — {n} sites"
+            ))))
+        }
+
+        Request::Debug { enable } => {
+            let port = { state.config.lock().await.general.xdebug_port };
+            if let Some(on) = enable {
+                {
+                    let mut config = state.config.lock().await;
+                    config.general.xdebug = on;
+                }
+                state.persist_and_reload().await?;
+                state.fpm.set_xdebug(on, port);
+                // Respawn pools so the change takes effect immediately.
+                state.fpm.reload_pools();
+            }
+            Ok(Response::ok(ResponseData::Xdebug(
+                xdebug_status(state).await,
+            )))
+        }
+
+        Request::DebugInstall { version, from } => {
+            let paths = state.paths.clone();
+            let path = tokio::task::spawn_blocking(move || {
+                grove_runtime::install_xdebug(&paths, &version, from.as_deref(), |_| {})
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("install task panicked: {e}"))?
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            // If debugging is already on, respawn pools so they pick up the
+            // freshly installed debug binary.
+            if state.fpm.xdebug_enabled() {
+                state.fpm.reload_pools();
+            }
+            Ok(Response::ok(ResponseData::Message(format!(
+                "installed debug php-fpm at {}",
+                path.display()
             ))))
         }
 

@@ -177,6 +177,12 @@ pub enum Command {
         #[command(subcommand)]
         action: NodeAction,
     },
+
+    /// Xdebug step-debugging control.
+    Debug {
+        #[command(subcommand)]
+        action: DebugAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -215,6 +221,28 @@ pub enum NodeAction {
     Use { site: String, version: String },
     /// Clear a site's pinned Node version.
     Unuse { site: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DebugAction {
+    /// Load Xdebug into FPM pools (step-debugging on).
+    On,
+    /// Unload Xdebug from FPM pools (step-debugging off).
+    Off,
+    /// Show whether Xdebug is enabled and available per PHP build.
+    Status,
+    /// Print shell env exports for debugging a CLI process (artisan, tests).
+    /// Use with: eval "$(grove debug env)"
+    Env,
+    /// Install a debug-enabled php-fpm (Xdebug compiled in) for a PHP version.
+    Install {
+        /// PHP version (e.g. 8.4).
+        version: String,
+        /// Local path or URL to a .tar.gz (containing php-fpm) or a raw binary.
+        /// Omit to use Grove's mirror.
+        #[arg(long)]
+        from: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

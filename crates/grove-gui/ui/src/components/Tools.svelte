@@ -1,8 +1,45 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { api } from "../lib/api";
-  import type { DbConnSpec } from "../lib/types";
+  import type { DbConnSpec, XdebugStatus } from "../lib/types";
 
   let { notify }: { notify: (m: string) => void } = $props();
+
+  // ---- Xdebug ----
+  let xdebug = $state<XdebugStatus | null>(null);
+  let xdBusy = $state(false);
+
+  async function loadXdebug() {
+    try {
+      xdebug = await api.debugStatus();
+    } catch {
+      /* daemon down */
+    }
+  }
+  onMount(loadXdebug);
+
+  async function toggleXdebug() {
+    if (!xdebug) return;
+    xdBusy = true;
+    try {
+      xdebug = await api.debugSet(!xdebug.enabled);
+      notify(xdebug.enabled ? "Xdebug enabled" : "Xdebug disabled");
+    } catch (e) {
+      notify(String(e));
+    }
+    xdBusy = false;
+  }
+
+  async function installDebug(version: string) {
+    xdBusy = true;
+    try {
+      notify(await api.debugInstall(version, null));
+      await loadXdebug();
+    } catch (e) {
+      notify(String(e));
+    }
+    xdBusy = false;
+  }
 
   // ---- Convert database (MySQL / PostgreSQL / SQLite) ----
   function blank(kind: string): DbConnSpec {
@@ -78,6 +115,50 @@
 </script>
 
 <div class="tools">
+  <div class="card">
+    <div class="card-head">
+      <div>
+        <h3>Xdebug step-debugging</h3>
+        <p class="muted">
+          Load Xdebug into PHP-FPM on demand. A request opts in with the
+          <code>XDEBUG_TRIGGER</code> cookie/param; your editor listens on DBGp
+          port {xdebug?.port ?? 9003}. Idle requests pay almost no overhead.
+        </p>
+      </div>
+      <button
+        class="toggle {xdebug?.enabled ? 'on' : ''}"
+        disabled={xdBusy || !xdebug}
+        onclick={toggleXdebug}
+        title="Toggle Xdebug"
+        aria-label="Toggle Xdebug">
+        <span class="knob"></span>
+      </button>
+    </div>
+
+    {#if xdebug && xdebug.builds.length > 0}
+      <div class="builds">
+        {#each xdebug.builds as b (b.version)}
+          <div class="brow">
+            <span class="mono ver">php@{b.version}</span>
+            <span class="avail {b.ready ? 'ok' : 'no'}">{b.availability}</span>
+            {#if !b.ready}
+              <button class="btn" disabled={xdBusy} onclick={() => installDebug(b.version)}>
+                Install debug build
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {:else if xdebug}
+      <p class="hint muted">No PHP builds installed yet.</p>
+    {/if}
+
+    <p class="hint muted">
+      For CLI (artisan, tests): <code>eval "$(grove debug env)"</code>. In your
+      editor, start a DBGp/DAP listener on port {xdebug?.port ?? 9003}.
+    </p>
+  </div>
+
   <div class="card">
     <div class="card-head">
       <div>
@@ -304,6 +385,73 @@
   .arrow {
     font-size: 22px;
     color: var(--brand);
+  }
+  .toggle {
+    flex: none;
+    width: 46px;
+    height: 26px;
+    border-radius: 13px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .toggle.on {
+    background: var(--green);
+    border-color: var(--green);
+  }
+  .toggle .knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    transition: left 0.15s;
+  }
+  .toggle.on .knob {
+    left: 22px;
+  }
+  .toggle:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .builds {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 16px 0 4px;
+  }
+  .brow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .ver {
+    font-weight: 600;
+    min-width: 70px;
+  }
+  .avail {
+    flex: 1;
+    font-size: 12px;
+  }
+  .avail.ok {
+    color: var(--green);
+  }
+  .avail.no {
+    color: var(--text-dim);
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 4px;
   }
   label {
     display: flex;

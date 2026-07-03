@@ -12,7 +12,7 @@ use grove_core::site::ResolvedSite;
 use grove_ipc::client;
 use grove_ipc::protocol::{
     DaemonStatus, DiagnosticEntry, LogEntry, LogSource, NodeVersion, Request, ResponseData,
-    SettingsPatch, SettingsView, TunnelRequestEntry, TunnelStatus,
+    SettingsPatch, SettingsView, TunnelRequestEntry, TunnelStatus, XdebugStatus,
 };
 use grove_runtime::PhpRegistry;
 use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus};
@@ -210,6 +210,31 @@ async fn forget_site(name: String) -> CmdResult<String> {
 #[tauri::command]
 async fn db_convert(source: DbConnSpec, target: DbConnSpec) -> CmdResult<String> {
     message(Request::DbConvert { source, target }).await
+}
+
+#[tauri::command]
+async fn debug_status() -> CmdResult<XdebugStatus> {
+    match call(Request::Debug { enable: None }).await? {
+        ResponseData::Xdebug(x) => Ok(x),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn debug_set(enable: bool) -> CmdResult<XdebugStatus> {
+    match call(Request::Debug {
+        enable: Some(enable),
+    })
+    .await?
+    {
+        ResponseData::Xdebug(x) => Ok(x),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn debug_install(version: String, from: Option<String>) -> CmdResult<String> {
+    message(Request::DebugInstall { version, from }).await
 }
 
 #[tauri::command]
@@ -566,6 +591,9 @@ fn main() {
             forget_site,
             mysql_migrate,
             db_convert,
+            debug_status,
+            debug_set,
+            debug_install,
             restart_daemon,
             tunnel_list,
             tunnel_requests,

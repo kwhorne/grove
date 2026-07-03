@@ -120,6 +120,18 @@ pub struct General {
     /// DNS listen port (defaults to 53).
     #[serde(default = "default_dns_port")]
     pub dns_port: u16,
+
+    /// Load Xdebug into FPM pools for step-debugging (`grove debug on`).
+    #[serde(default)]
+    pub xdebug: bool,
+
+    /// DBGp port the debugger/adapter listens on and Xdebug connects to.
+    #[serde(default = "default_xdebug_port")]
+    pub xdebug_port: u16,
+}
+
+fn default_xdebug_port() -> u16 {
+    9003
 }
 
 fn default_http_port() -> u16 {
@@ -141,6 +153,8 @@ impl Default for General {
             http_port: default_http_port(),
             https_port: default_https_port(),
             dns_port: default_dns_port(),
+            xdebug: false,
+            xdebug_port: default_xdebug_port(),
         }
     }
 }

@@ -11,7 +11,7 @@ use grove_core::paths::GrovePaths;
 use grove_ipc::client;
 use grove_ipc::protocol::{Request, ResponseData};
 
-use cli::{CaAction, Cli, Command, MailAction, NodeAction, PhpAction, ServiceAction};
+use cli::{CaAction, Cli, Command, DebugAction, MailAction, NodeAction, PhpAction, ServiceAction};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -29,6 +29,9 @@ async fn main() -> anyhow::Result<()> {
 
         Command::Ca { action } => local::ca(&paths, action, args.json),
         Command::Php { action } => local::php(&paths, action, args.json),
+        Command::Debug {
+            action: DebugAction::Env,
+        } => local::debug_env(&paths, args.json),
 
         Command::Env { site } => {
             let socket = paths.ipc_socket();
@@ -187,6 +190,15 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
                 name: site,
                 version: None,
             },
+        },
+        Command::Debug { action } => match action {
+            DebugAction::On => Request::Debug { enable: Some(true) },
+            DebugAction::Off => Request::Debug {
+                enable: Some(false),
+            },
+            DebugAction::Status => Request::Debug { enable: None },
+            DebugAction::Install { version, from } => Request::DebugInstall { version, from },
+            DebugAction::Env => unreachable!("handled before to_request"),
         },
         Command::Service { action } => match action {
             ServiceAction::List => Request::ServiceList,
@@ -697,6 +709,23 @@ mod local {
                 platform.untrust_ca(&paths.ca_cert())?;
                 output::print_message("Grove root CA removed from trust store", json);
             }
+        }
+        Ok(())
+    }
+
+    /// Print shell env exports that make a CLI PHP process connect to the
+    /// debugger. Runs locally (no daemon needed): reads the port from config.
+    pub fn debug_env(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
+        let config = grove_core::Config::load(paths).context("loading config")?;
+        let port = config.general.xdebug_port;
+        let exports = grove_runtime::xdebug::cli_env_exports(port);
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({ "ok": true, "port": port, "exports": exports })
+            );
+        } else {
+            print!("{exports}");
         }
         Ok(())
     }
