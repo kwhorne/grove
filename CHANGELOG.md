@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-07-06
+
+### Fixed
+
+- **Dev processes are no longer orphaned when the daemon restarts.** On graceful
+  shutdown (including `launchctl kickstart`) Grove now kills the per-site Vite /
+  queue children, so restarting the daemon doesn't leave stray `vite` servers
+  squatting ports (which caused `public/hot` to point at a stale server).
+
 ## [0.5.1] — 2026-07-06
 
 ### Added
@@ -109,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.5.2]: https://github.com/kwhorne/grove/releases/tag/v0.5.2
 [0.5.1]: https://github.com/kwhorne/grove/releases/tag/v0.5.1
 [0.5.0]: https://github.com/kwhorne/grove/releases/tag/v0.5.0
 [0.4.2]: https://github.com/kwhorne/grove/releases/tag/v0.4.2

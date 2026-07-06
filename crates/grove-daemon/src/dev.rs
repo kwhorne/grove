@@ -134,6 +134,18 @@ impl DevManager {
         }
     }
 
+    /// Kill every site's dev processes (called on daemon shutdown so children
+    /// aren't orphaned when the daemon restarts).
+    pub async fn stop_all(&self) {
+        let mut map = self.inner.lock().await;
+        for (_, mut session) in map.drain() {
+            for p in &mut session.procs {
+                let _ = p.child.kill();
+                let _ = p.child.wait();
+            }
+        }
+    }
+
     /// Names of sites with dev processes running (reaps any that have exited).
     pub async fn list(&self) -> Vec<String> {
         let mut map = self.inner.lock().await;

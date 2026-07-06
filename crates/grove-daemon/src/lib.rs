@@ -151,8 +151,11 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     }
 
     // IPC listener (foreground task). Returns when shutdown is requested.
+    let dev = daemon.dev.clone();
     ipc::serve(paths.ipc_socket(), daemon).await?;
 
+    // Don't orphan per-site dev processes (Vite/queue) when we exit/restart.
+    dev.stop_all().await;
     for t in tasks {
         t.abort();
     }
