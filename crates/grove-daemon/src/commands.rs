@@ -247,13 +247,12 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let target_for_task = target.clone();
             let name_for_task = name.clone();
             tokio::task::spawn_blocking(move || {
-                // Laravel kinds map to `laravel new` starter kits.
-                let kit = match kind.as_str() {
+                // Laravel kinds map to `laravel new` starter kits; "static" is a
+                // plain site; anything else is a community kit (`--using`).
+                let kit: Option<Option<&str>> = match kind.as_str() {
+                    "static" => None,
                     "laravel" => Some(None),
-                    "livewire" => Some(Some("livewire")),
-                    "react" => Some(Some("react")),
-                    "vue" => Some(Some("vue")),
-                    _ => None,
+                    other => Some(Some(other)),
                 };
                 match kit {
                     Some(kit) => grove_runtime::scaffold::new_laravel(

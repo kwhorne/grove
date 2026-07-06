@@ -9,9 +9,10 @@
   } = $props();
 
   type Kind = "laravel" | "static" | "link";
-  type Stack = "laravel" | "livewire" | "react" | "vue";
+  type Stack = "laravel" | "livewire" | "react" | "vue" | "custom";
   let kind = $state<Kind>("laravel");
   let stack = $state<Stack>("laravel");
+  let customKit = $state("");
   let name = $state("");
   let parent = $state("~/Code");
   let php = $state("");
@@ -55,7 +56,15 @@
     }
     busy = true;
     try {
-      const backendKind = kind === "laravel" ? stack : kind;
+      let backendKind = kind;
+      if (kind === "laravel") {
+        backendKind = stack === "custom" ? (customKit.trim() as Kind) : (stack as Kind);
+        if (stack === "custom" && !customKit.trim()) {
+          notify("Enter a community starter-kit repo (vendor/package)");
+          busy = false;
+          return;
+        }
+      }
       notify(await api.createSite(name.trim(), parent, backendKind, kind === "laravel" ? php || null : null, initGit));
       reset();
       onclose();
@@ -81,6 +90,7 @@
     { id: "livewire", label: "Livewire", desc: "Livewire + Blade" },
     { id: "react", label: "React", desc: "Inertia + React" },
     { id: "vue", label: "Vue", desc: "Inertia + Vue" },
+    { id: "custom", label: "Custom", desc: "Community kit (Svelte, …) via --using" },
   ];
 </script>
 
@@ -132,6 +142,12 @@
               {/each}
             </div>
           </div>
+          {#if stack === "custom"}
+            <div class="field">
+              <label for="ns-kit">Community starter kit</label>
+              <input id="ns-kit" class="inp mono" placeholder="vendor/package (e.g. a Svelte kit)" bind:value={customKit} />
+            </div>
+          {/if}
           <div class="field">
             <label for="ns-php">PHP version</label>
             <select id="ns-php" class="inp" bind:value={php}>
@@ -203,8 +219,8 @@
   }
   .stacks {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 8px;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
   }
   .stack {
     background: var(--bg-3);

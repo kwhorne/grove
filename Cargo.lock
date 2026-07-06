@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "grove-cli"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1548,7 +1548,7 @@ dependencies = [
 
 [[package]]
 name = "grove-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "directories",
  "once_cell",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "grove-daemon"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "grove-core",
@@ -1581,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "grove-dns"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "async-trait",
  "grove-core",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "grove-gui"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "grove-core",
  "grove-ipc",
@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "grove-ipc"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "grove-core",
  "grove-services",
@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "grove-os"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "grove-core",
  "thiserror 1.0.69",
@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "grove-proxy"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1655,7 +1655,7 @@ dependencies = [
 
 [[package]]
 name = "grove-runtime"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "flate2",
  "grove-core",
@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "grove-services"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "flate2",
  "grove-core",
@@ -1688,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "grove-tls"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "grove-core",
  "rcgen",
@@ -1701,7 +1701,7 @@ dependencies = [
 
 [[package]]
 name = "grove-tunnel"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "bytes",

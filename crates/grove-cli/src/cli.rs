@@ -82,8 +82,9 @@ pub enum Command {
     New {
         /// Project name (becomes <name>.test).
         name: String,
-        /// Kind: laravel | livewire | react | vue (Laravel starter kits via
-        /// `laravel new`) | static.
+        /// Kind: laravel | livewire | react | vue (Laravel starter kits) |
+        /// static | a community kit repo (vendor/package) via `laravel new
+        /// --using`.
         #[arg(long, default_value = "laravel")]
         kind: String,
         /// Parent directory (defaults to ~/Code).

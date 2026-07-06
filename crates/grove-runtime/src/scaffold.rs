@@ -169,7 +169,10 @@ pub fn new_laravel(
     path.push(':');
     path.push_str(&base_path);
 
-    let kit_label = kit.unwrap_or("none");
+    let kit_label = match kit {
+        None | Some("laravel") | Some("") => "none",
+        Some(k) => k,
+    };
     progress(&format!(
         "creating Laravel app ({kit_label}) via `laravel new`…"
     ));
@@ -193,6 +196,11 @@ pub fn new_laravel(
         }
         Some("vue") => {
             cmd.arg("--vue");
+        }
+        // Any other value is treated as a community starter kit (a Composer
+        // package or GitHub `org/repo`) via `laravel new --using=`.
+        Some(other) if !other.is_empty() && other != "laravel" => {
+            cmd.arg(format!("--using={other}"));
         }
         _ => {}
     }

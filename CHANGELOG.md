@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-07-03
+
+### Added
+
+- **Community starter kits** when creating a site: pick **Custom** in the New
+  Site dialog (or `grove new <name> --kind vendor/package`) to scaffold any
+  community kit — e.g. a **Svelte** kit — via `laravel new --using=<repo>`.
+
 ## [0.3.0] — 2026-07-03
 
 ### Changed
@@ -41,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.3.1]: https://github.com/kwhorne/grove/releases/tag/v0.3.1
 [0.3.0]: https://github.com/kwhorne/grove/releases/tag/v0.3.0
 [0.2.9]: https://github.com/kwhorne/grove/releases/tag/v0.2.9
 
