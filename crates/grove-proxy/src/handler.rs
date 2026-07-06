@@ -212,7 +212,29 @@ async fn serve_proxy(
     let uri: hyper::Uri = format!("{}{}", upstream.trim_end_matches('/'), path_q).parse()?;
 
     let (mut parts, body) = req.into_parts();
+    // Preserve the public host for apps that honour X-Forwarded-Host, but set
+    // Host to the upstream authority so name-based vhosts (nginx / OrbStack
+    // `server_name`) match instead of falling to a default server block.
+    let orig_host = parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string);
     parts.uri = uri;
+    if let Some(auth) = parts.uri.authority().map(|a| a.as_str().to_string()) {
+        if let Ok(hv) = hyper::header::HeaderValue::from_str(&auth) {
+            parts.headers.insert(hyper::header::HOST, hv);
+        }
+    }
+    if let Some(oh) = orig_host {
+        if let Ok(hv) = hyper::header::HeaderValue::from_str(&oh) {
+            parts.headers.insert("x-forwarded-host", hv);
+        }
+    }
+    parts.headers.insert(
+        "x-forwarded-proto",
+        hyper::header::HeaderValue::from_static("https"),
+    );
     let body_bytes = body.collect().await?.to_bytes();
     let forwarded = Request::from_parts(parts, Full::new(body_bytes));
 

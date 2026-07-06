@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-07-06
+
+### Fixed
+
+- **Proxy sites now hit the right virtual host.** The reverse proxy set `Host`
+  to the upstream authority (and forwards the public host as `X-Forwarded-Host`
+  + `X-Forwarded-Proto`), so name-based vhosts — e.g. an nginx container with
+  `server_name inside2.local`, or an OrbStack domain — match instead of falling
+  through to a default server block. Previously a Docker site could show the
+  bare nginx welcome page instead of the app.
+
 ## [0.4.1] — 2026-07-06
 
 ### Added
@@ -74,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.4.2]: https://github.com/kwhorne/grove/releases/tag/v0.4.2
 [0.4.1]: https://github.com/kwhorne/grove/releases/tag/v0.4.1
 [0.4.0]: https://github.com/kwhorne/grove/releases/tag/v0.4.0
 [0.3.1]: https://github.com/kwhorne/grove/releases/tag/v0.3.1
