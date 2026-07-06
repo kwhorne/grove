@@ -257,8 +257,12 @@ grove unsecure blog
 
 ### Create a brand-new project
 
+Grove scaffolds with the official `laravel new` installer, so you can pick a
+starter kit — `laravel` (plain), `livewire`, `react`, `vue`, or a community kit
+`vendor/package`:
+
 ```bash
-grove new myapp --laravel
+grove new myapp --kind vue
 ```
 
 ```text

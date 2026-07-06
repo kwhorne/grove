@@ -36,7 +36,8 @@ local Unix-socket JSON-RPC.
 | `grove-dns` | Embedded authoritative resolver for `*.<tld>` (hickory). |
 | `grove-proxy` | HTTP/HTTPS listeners, per-driver dispatch, SNI cert resolution, and a minimal FastCGI client. |
 | `grove-runtime` | PHP version management + lazy FPM pools; Node version management; project scaffolding. |
-| `grove-services` | Bundled service manager (PostgreSQL/MySQL/Redis) + the SMTP mail-catcher. |
+| `grove-services` | Bundled service manager (PostgreSQL/MySQL/Redis) + the SMTP mail-catcher + cross-dialect database conversion. |
+| `grove-tunnel` | Native public tunnels: `grove share` client + the self-hostable `grove-tunnel` server (yamux + hyper). |
 | `grove-os` | Platform integration: resolver setup, trust store, OS service install, elevation checks. |
 | `grove-daemon` | The long-running process: boots listeners, supervises runtimes/services, serves IPC. |
 | `grove-cli` | clap frontend (binary `grove`). |
@@ -52,6 +53,18 @@ local Unix-socket JSON-RPC.
 4. The site's driver decides handling: PHP → FastCGI to a lazily-started
    FPM pool for the site's PHP version; static → serve files; proxy → forward
    to the upstream dev server.
+
+## Beyond native sites
+
+- **Docker / OrbStack** — `grove-daemon` polls the Docker socket and merges
+  running containers into the site registry as `proxy` sites (label- or
+  compose-based). They get the same trusted HTTPS + dashboard, and can be
+  started/stopped over IPC. See [DOCKER.md](DOCKER.md).
+- **Public tunnels** — `grove share` (in `grove-tunnel`) proxies a local
+  `*.test` site — native *or* container-backed — to a public tunnel server over
+  a yamux-multiplexed connection. See [TUNNEL.md](TUNNEL.md).
+- **Xdebug** — when enabled, FPM pools are respawned with `-d` Xdebug INI
+  overrides (trigger mode). See [DEBUGGING.md](DEBUGGING.md).
 
 ## Zero external dependencies
 

@@ -238,7 +238,7 @@ service once: `sudo grove install`. The GUI is a dashboard over that daemon.
 
 ## Documentation
 
-- [Installation guide](docs/INSTALL.md) · [Tunnels](docs/TUNNEL.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
+- [Installation guide](docs/INSTALL.md) · [Docker](docs/DOCKER.md) · [Tunnels](docs/TUNNEL.md) · [Debugging](docs/DEBUGGING.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
 - [Changelog](CHANGELOG.md)
 
 ## Contributing

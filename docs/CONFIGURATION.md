@@ -17,10 +17,20 @@ auto_start = true       # launch the daemon at login
 http_port = 80
 https_port = 443
 dns_port = 53
+docker = true           # auto-discover Docker/OrbStack containers
+xdebug = false          # load Xdebug into FPM pools (trigger mode)
+xdebug_port = 9003      # DBGp port the debugger listens on
 
 [services]
 mail_enabled = true     # run the built-in SMTP mail-catcher
 mail_port = 1025
+
+[tunnel]
+server = "grove.elyracode.com:7000"  # default; used by `grove share`
+# token = "secret"                    # only if your server requires one
+
+# Sites removed from the list with `grove forget` (files kept)
+ignored = []
 
 # Every immediate subdirectory of a parked path becomes <name>.test
 [[parked]]
@@ -54,6 +64,9 @@ proxy_to = "http://127.0.0.1:5173"
 | `http_port` | `80` | Use a high port (e.g. `8080`) to run without elevation. |
 | `https_port` | `443` | — |
 | `dns_port` | `53` | — |
+| `docker` | `true` | Auto-discover Docker/OrbStack containers as `<name>.test`. |
+| `xdebug` | `false` | Load Xdebug into FPM pools (see [DEBUGGING.md](DEBUGGING.md)). |
+| `xdebug_port` | `9003` | DBGp port the debugger/adapter listens on. |
 
 ### `[services]`
 
@@ -61,6 +74,18 @@ proxy_to = "http://127.0.0.1:5173"
 | --- | --- | --- |
 | `mail_enabled` | `true` | Run the SMTP mail-catcher. |
 | `mail_port` | `1025` | SMTP port apps connect to. |
+
+### `[tunnel]`
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `server` | `grove.elyracode.com:7000` | Tunnel server `grove share` connects to. |
+| `token` | — | Shared secret, only if your server requires one. |
+
+### `ignored`
+
+A list of site names hidden with `grove forget` (their files are kept). Restore
+with `grove restore <name>`.
 
 ### `[[parked]]`
 
