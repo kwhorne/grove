@@ -17,6 +17,8 @@ export interface ResolvedSite {
   proxy_to?: string;
   front_controller?: string;
   docker?: boolean;
+  docker_id?: string;
+  docker_running?: boolean;
 }
 
 export interface ServiceState {

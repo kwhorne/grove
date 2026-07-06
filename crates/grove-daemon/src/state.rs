@@ -11,7 +11,7 @@ use grove_proxy::SharedState;
 use grove_runtime::FpmManager;
 use grove_services::{MailStore, ServiceManager};
 
-use crate::docker::DockerSite;
+use crate::docker::DockerContainer;
 use crate::tunnels::TunnelManager;
 
 pub struct DaemonState {
@@ -28,7 +28,7 @@ pub struct DaemonState {
     /// Active public tunnels (`grove share`).
     pub tunnels: Arc<TunnelManager>,
     /// Docker/OrbStack containers discovered as `<name>.test` sites.
-    pub docker_sites: Mutex<Vec<DockerSite>>,
+    pub docker_sites: Mutex<Vec<DockerContainer>>,
     /// Notified when a graceful shutdown is requested (via IPC or signal).
     pub shutdown: Arc<Notify>,
 }
@@ -65,7 +65,7 @@ impl DaemonState {
         let mut registry = SiteRegistry::build(config);
         if config.general.docker {
             for d in self.docker_sites.lock().await.iter() {
-                registry.insert_docker(&d.name, &d.upstream);
+                registry.insert_docker(&d.name, d.upstream.as_deref(), Some(&d.id), d.running);
             }
         }
         registry

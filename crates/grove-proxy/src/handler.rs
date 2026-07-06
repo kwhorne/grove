@@ -72,6 +72,16 @@ pub async fn handle(
         ));
     };
 
+    if site.docker && !site.docker_running {
+        return Ok(text_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            &format!(
+                "Grove: the container for {} is stopped — start it from the Sites list.",
+                site.hostname
+            ),
+        ));
+    }
+
     tracing::debug!(host, site = %site.name, driver = %site.driver, %peer, "dispatch");
 
     let result = match site.driver {

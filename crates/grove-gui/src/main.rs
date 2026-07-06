@@ -208,6 +208,11 @@ async fn forget_site(name: String) -> CmdResult<String> {
 }
 
 #[tauri::command]
+async fn docker_control(id: String, action: String) -> CmdResult<String> {
+    message(Request::DockerControl { id, action }).await
+}
+
+#[tauri::command]
 async fn db_convert(source: DbConnSpec, target: DbConnSpec) -> CmdResult<String> {
     message(Request::DbConvert { source, target }).await
 }
@@ -584,6 +589,7 @@ fn main() {
             tunnel_start,
             tunnel_stop,
             forget_site,
+            docker_control,
             mysql_migrate,
             db_convert,
             debug_status,

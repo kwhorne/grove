@@ -650,6 +650,20 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 Err(e) => Ok(Response::err(e.to_string())),
             }
         }
+        Request::DockerControl { id, action } => {
+            match crate::docker::control(&id, &action).await {
+                Ok(()) => {
+                    // Refresh discovery so the site's state updates promptly.
+                    let found = crate::docker::discover().await;
+                    *state.docker_sites.lock().await = found;
+                    let _ = state.reload().await;
+                    Ok(Response::ok(ResponseData::Message(format!(
+                        "container {action}ed"
+                    ))))
+                }
+                Err(e) => Ok(Response::err(e)),
+            }
+        }
         Request::DbConvert { source, target } => {
             match grove_services::convert_database(&source, &target, |_| {}).await {
                 Ok(msg) => Ok(Response::ok(ResponseData::Message(msg))),

@@ -88,11 +88,23 @@ impl SiteRegistry {
 
     /// Merge a Docker/OrbStack-discovered proxy site. Explicit config sites and
     /// parked sites take precedence on name collision.
-    pub fn insert_docker(&mut self, name: &str, upstream: &str) {
+    pub fn insert_docker(
+        &mut self,
+        name: &str,
+        upstream: Option<&str>,
+        id: Option<&str>,
+        running: bool,
+    ) {
         if self.sites.contains_key(name) {
             return;
         }
-        let site = ResolvedSite::docker_proxy(name.to_string(), &self.tld, upstream.to_string());
+        let site = ResolvedSite::docker_proxy(
+            name.to_string(),
+            &self.tld,
+            upstream.map(str::to_string),
+            id.map(str::to_string),
+            running,
+        );
         self.sites.insert(name.to_string(), site);
     }
 

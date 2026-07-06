@@ -90,6 +90,8 @@ export const api = {
     invoke("tunnel_start", { site, subdomain, basicAuth }),
   tunnelStop: (site: string): Promise<string> => invoke("tunnel_stop", { site }),
   forgetSite: (name: string): Promise<string> => invoke("forget_site", { name }),
+  dockerControl: (id: string, action: string): Promise<string> =>
+    invoke("docker_control", { id, action }),
   mysqlMigrate: (
     host: string,
     port: number,

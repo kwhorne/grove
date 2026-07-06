@@ -81,7 +81,7 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     if general.docker {
         let daemon = daemon.clone();
         tokio::spawn(async move {
-            let mut current: Vec<docker::DockerSite> = Vec::new();
+            let mut current: Vec<docker::DockerContainer> = Vec::new();
             loop {
                 let found = docker::discover().await;
                 if found != current {

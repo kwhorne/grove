@@ -40,6 +40,12 @@ pub struct ResolvedSite {
     /// True when discovered from a Docker/OrbStack container.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub docker: bool,
+    /// Container id, for start/stop control (docker sites only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_id: Option<String>,
+    /// Whether the backing container is running (docker sites only).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub docker_running: bool,
 }
 
 impl ResolvedSite {
@@ -69,11 +75,19 @@ impl ResolvedSite {
             proxy_to,
             front_controller: plan.front_controller,
             docker: false,
+            docker_id: None,
+            docker_running: false,
         }
     }
 
     /// Build a proxy site discovered from a Docker/OrbStack container.
-    pub fn docker_proxy(name: String, tld: &str, upstream: String) -> Self {
+    pub fn docker_proxy(
+        name: String,
+        tld: &str,
+        upstream: Option<String>,
+        id: Option<String>,
+        running: bool,
+    ) -> Self {
         ResolvedSite {
             hostname: format!("{name}.{tld}"),
             name,
@@ -84,9 +98,11 @@ impl ResolvedSite {
             node: None,
             secure: true,
             kind: SiteKind::Linked,
-            proxy_to: Some(upstream),
+            proxy_to: upstream,
             front_controller: None,
             docker: true,
+            docker_id: id,
+            docker_running: running,
         }
     }
 

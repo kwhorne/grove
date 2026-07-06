@@ -85,6 +85,19 @@
     }
   }
 
+  let dockerBusy = $state<Record<string, boolean>>({});
+  async function dockerAction(s: ResolvedSite, action: string) {
+    if (!s.docker_id) return;
+    dockerBusy = { ...dockerBusy, [s.name]: true };
+    try {
+      notify(await api.dockerControl(s.docker_id, action));
+      onchange();
+    } catch (e) {
+      notify(String(e));
+    }
+    dockerBusy = { ...dockerBusy, [s.name]: false };
+  }
+
   async function forget(s: ResolvedSite) {
     const ok = confirm(
       `Remove ${s.hostname} from the list?\n\nThe project files in ${s.path} are kept — this only hides it from Grove.`,
@@ -122,7 +135,9 @@
               {s.hostname}
             </a>
             {#if s.docker}
-              <div class="mono dim">🐳 {s.proxy_to}</div>
+              <div class="mono dim">
+                🐳 {s.docker_running ? (s.proxy_to ?? "running") : "stopped"}
+              </div>
             {:else}
               <div class="mono">{s.path}</div>
             {/if}
@@ -190,7 +205,14 @@
                 title={shared[s.hostname] ? `Public: ${shared[s.hostname]} — click to stop` : "Share publicly"}
                 disabled={shareBusy[s.hostname]}
                 onclick={() => toggleShare(s)}>🌍</button>
-              {#if !s.docker}
+              {#if s.docker}
+                {#if s.docker_running}
+                  <button class="btn icon" title="Restart container" disabled={dockerBusy[s.name]} onclick={() => dockerAction(s, "restart")}>↻</button>
+                  <button class="btn icon danger" title="Stop container" disabled={dockerBusy[s.name]} onclick={() => dockerAction(s, "stop")}>⏹</button>
+                {:else}
+                  <button class="btn icon" title="Start container" disabled={dockerBusy[s.name]} onclick={() => dockerAction(s, "start")}>▶</button>
+                {/if}
+              {:else}
                 <button class="btn icon" title="Reveal folder" onclick={() => reveal(s)}>📁</button>
                 <button class="btn icon danger" title="Remove from list (keeps files)" onclick={() => forget(s)}>🗑</button>
               {/if}

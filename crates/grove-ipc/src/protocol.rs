@@ -86,6 +86,8 @@ pub enum Request {
     NodeInstall { version: String },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
+    /// Start / stop / restart a Docker container backing a site.
+    DockerControl { id: String, action: String },
     /// Toggle Xdebug step-debugging for FPM pools. `enable = None` reports the
     /// current state without changing it.
     Debug { enable: Option<bool> },
