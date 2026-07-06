@@ -11,6 +11,7 @@ use grove_proxy::SharedState;
 use grove_runtime::FpmManager;
 use grove_services::{MailStore, ServiceManager};
 
+use crate::docker::DockerSite;
 use crate::tunnels::TunnelManager;
 
 pub struct DaemonState {
@@ -26,6 +27,8 @@ pub struct DaemonState {
     pub fpm: Arc<FpmManager>,
     /// Active public tunnels (`grove share`).
     pub tunnels: Arc<TunnelManager>,
+    /// Docker/OrbStack containers discovered as `<name>.test` sites.
+    pub docker_sites: Mutex<Vec<DockerSite>>,
     /// Notified when a graceful shutdown is requested (via IPC or signal).
     pub shutdown: Arc<Notify>,
 }
@@ -47,6 +50,7 @@ impl DaemonState {
             services,
             fpm,
             tunnels: Arc::new(TunnelManager::new()),
+            docker_sites: Mutex::new(Vec::new()),
             shutdown: Arc::new(Notify::new()),
         }
     }
@@ -56,11 +60,22 @@ impl DaemonState {
         self.shutdown.notify_waiters();
     }
 
+    /// Build the live registry from config + discovered Docker sites.
+    async fn build_registry(&self, config: &Config) -> SiteRegistry {
+        let mut registry = SiteRegistry::build(config);
+        if config.general.docker {
+            for d in self.docker_sites.lock().await.iter() {
+                registry.insert_docker(&d.name, &d.upstream);
+            }
+        }
+        registry
+    }
+
     /// Persist the current config and rebuild + swap the live registry.
     pub async fn persist_and_reload(&self) -> anyhow::Result<usize> {
         let config = self.config.lock().await;
         config.save(&self.paths)?;
-        let registry = SiteRegistry::build(&config);
+        let registry = self.build_registry(&config).await;
         let count = registry.len();
         self.shared.replace(registry).await;
         Ok(count)
@@ -69,7 +84,7 @@ impl DaemonState {
     /// Rebuild the registry from current config without writing to disk.
     pub async fn reload(&self) -> anyhow::Result<usize> {
         let config = self.config.lock().await;
-        let registry = SiteRegistry::build(&config);
+        let registry = self.build_registry(&config).await;
         let count = registry.len();
         self.shared.replace(registry).await;
         Ok(count)

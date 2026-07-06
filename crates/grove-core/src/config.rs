@@ -121,6 +121,10 @@ pub struct General {
     #[serde(default = "default_dns_port")]
     pub dns_port: u16,
 
+    /// Auto-discover Docker/OrbStack containers and serve them as `<name>.test`.
+    #[serde(default = "default_true")]
+    pub docker: bool,
+
     /// Load Xdebug into FPM pools for step-debugging (`grove debug on`).
     #[serde(default)]
     pub xdebug: bool,
@@ -153,6 +157,7 @@ impl Default for General {
             http_port: default_http_port(),
             https_port: default_https_port(),
             dns_port: default_dns_port(),
+            docker: true,
             xdebug: false,
             xdebug_port: default_xdebug_port(),
         }

@@ -86,6 +86,16 @@ impl SiteRegistry {
         self.sites.get(name)
     }
 
+    /// Merge a Docker/OrbStack-discovered proxy site. Explicit config sites and
+    /// parked sites take precedence on name collision.
+    pub fn insert_docker(&mut self, name: &str, upstream: &str) {
+        if self.sites.contains_key(name) {
+            return;
+        }
+        let site = ResolvedSite::docker_proxy(name.to_string(), &self.tld, upstream.to_string());
+        self.sites.insert(name.to_string(), site);
+    }
+
     /// Look up a site by its hostname (e.g. `myapp.test`).
     pub fn by_hostname(&self, hostname: &str) -> Option<&ResolvedSite> {
         let host = hostname.split(':').next().unwrap_or(hostname);

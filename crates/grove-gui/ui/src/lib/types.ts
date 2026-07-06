@@ -16,6 +16,7 @@ export interface ResolvedSite {
   kind: SiteKind;
   proxy_to?: string;
   front_controller?: string;
+  docker?: boolean;
 }
 
 export interface ServiceState {

@@ -37,6 +37,9 @@ pub struct ResolvedSite {
     pub proxy_to: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub front_controller: Option<PathBuf>,
+    /// True when discovered from a Docker/OrbStack container.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub docker: bool,
 }
 
 impl ResolvedSite {
@@ -65,6 +68,25 @@ impl ResolvedSite {
             kind,
             proxy_to,
             front_controller: plan.front_controller,
+            docker: false,
+        }
+    }
+
+    /// Build a proxy site discovered from a Docker/OrbStack container.
+    pub fn docker_proxy(name: String, tld: &str, upstream: String) -> Self {
+        ResolvedSite {
+            hostname: format!("{name}.{tld}"),
+            name,
+            path: PathBuf::new(),
+            document_root: PathBuf::new(),
+            driver: crate::driver::Driver::Proxy,
+            php: String::new(),
+            node: None,
+            secure: true,
+            kind: SiteKind::Linked,
+            proxy_to: Some(upstream),
+            front_controller: None,
+            docker: true,
         }
     }
 

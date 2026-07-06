@@ -121,7 +121,11 @@
             <a href={url(s)} onclick={(e) => { e.preventDefault(); open(s); }}>
               {s.hostname}
             </a>
-            <div class="mono">{s.path}</div>
+            {#if s.docker}
+              <div class="mono dim">🐳 {s.proxy_to}</div>
+            {:else}
+              <div class="mono">{s.path}</div>
+            {/if}
             {#if shared[s.hostname]}
               <button
                 class="share-url mono"
@@ -131,7 +135,7 @@
               </button>
             {/if}
           </td>
-          <td><span class="badge {s.driver}">{s.driver}</span></td>
+          <td><span class="badge {s.driver}">{s.docker ? "🐳 docker" : s.driver}</span></td>
           <td>
             {#if s.driver === "proxy"}
               <span class="mono">—</span>
@@ -147,28 +151,36 @@
             {/if}
           </td>
           <td>
-            <select
-              class="php"
-              value={s.node ?? ""}
-              onchange={(e) => setNode(s, (e.currentTarget as HTMLSelectElement).value)}
-            >
-              <option value="">—</option>
-              {#if s.node && !nodeVersions.includes(s.node)}
-                <option value={s.node}>{s.node}</option>
-              {/if}
-              {#each nodeVersions as v}
-                <option value={v}>{v}</option>
-              {/each}
-            </select>
+            {#if s.driver === "proxy"}
+              <span class="mono">—</span>
+            {:else}
+              <select
+                class="php"
+                value={s.node ?? ""}
+                onchange={(e) => setNode(s, (e.currentTarget as HTMLSelectElement).value)}
+              >
+                <option value="">—</option>
+                {#if s.node && !nodeVersions.includes(s.node)}
+                  <option value={s.node}>{s.node}</option>
+                {/if}
+                {#each nodeVersions as v}
+                  <option value={v}>{v}</option>
+                {/each}
+              </select>
+            {/if}
           </td>
           <td>
-            <button
-              class="toggle {s.secure ? 'on' : ''}"
-              aria-label="toggle https"
-              onclick={() => toggleSecure(s)}
-            >
-              <span class="knob"></span>
-            </button>
+            {#if s.docker}
+              <span class="mono" title="Served over HTTPS by Grove">🔒</span>
+            {:else}
+              <button
+                class="toggle {s.secure ? 'on' : ''}"
+                aria-label="toggle https"
+                onclick={() => toggleSecure(s)}
+              >
+                <span class="knob"></span>
+              </button>
+            {/if}
           </td>
           <td>
             <div class="btn-row">
@@ -178,8 +190,10 @@
                 title={shared[s.hostname] ? `Public: ${shared[s.hostname]} — click to stop` : "Share publicly"}
                 disabled={shareBusy[s.hostname]}
                 onclick={() => toggleShare(s)}>🌍</button>
-              <button class="btn icon" title="Reveal folder" onclick={() => reveal(s)}>📁</button>
-              <button class="btn icon danger" title="Remove from list (keeps files)" onclick={() => forget(s)}>🗑</button>
+              {#if !s.docker}
+                <button class="btn icon" title="Reveal folder" onclick={() => reveal(s)}>📁</button>
+                <button class="btn icon danger" title="Remove from list (keeps files)" onclick={() => forget(s)}>🗑</button>
+              {/if}
             </div>
           </td>
         </tr>

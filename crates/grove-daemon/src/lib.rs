@@ -5,6 +5,7 @@
 //! thin clients; all stateful logic lives here.
 
 pub mod commands;
+pub mod docker;
 pub mod ipc;
 pub mod logs;
 pub mod state;
@@ -74,6 +75,28 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     // Translate OS signals into a graceful shutdown notification.
     spawn_signal_handler(daemon.shutdown.clone());
+
+    // Auto-discover Docker / OrbStack containers as `*.test` sites and keep the
+    // registry in sync as containers come and go.
+    if general.docker {
+        let daemon = daemon.clone();
+        tokio::spawn(async move {
+            let mut current: Vec<docker::DockerSite> = Vec::new();
+            loop {
+                let found = docker::discover().await;
+                if found != current {
+                    let n = found.len();
+                    *daemon.docker_sites.lock().await = found.clone();
+                    current = found;
+                    match daemon.reload().await {
+                        Ok(_) => tracing::info!(containers = n, "docker sites updated"),
+                        Err(e) => tracing::warn!(error = %e, "docker registry reload"),
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+            }
+        });
+    }
 
     // Spawn network listeners. A failure to bind a privileged port is logged but
     // does not abort the others, so e.g. DNS can still work without root.
