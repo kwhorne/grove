@@ -9,7 +9,9 @@
   } = $props();
 
   type Kind = "laravel" | "static" | "link";
+  type Stack = "laravel" | "livewire" | "react" | "vue";
   let kind = $state<Kind>("laravel");
+  let stack = $state<Stack>("laravel");
   let name = $state("");
   let parent = $state("~/Code");
   let php = $state("");
@@ -53,7 +55,8 @@
     }
     busy = true;
     try {
-      notify(await api.createSite(name.trim(), parent, kind, kind === "laravel" ? php || null : null, initGit));
+      const backendKind = kind === "laravel" ? stack : kind;
+      notify(await api.createSite(name.trim(), parent, backendKind, kind === "laravel" ? php || null : null, initGit));
       reset();
       onclose();
     } catch (e) {
@@ -68,9 +71,16 @@
   }
 
   const kinds: { id: Kind; label: string; desc: string }[] = [
-    { id: "laravel", label: "Laravel", desc: "Fresh Laravel app via Composer" },
+    { id: "laravel", label: "Laravel", desc: "Fresh app via `laravel new`" },
     { id: "static", label: "Static", desc: "Plain HTML site" },
     { id: "link", label: "Link existing", desc: "Use a folder you already have" },
+  ];
+
+  const stacks: { id: Stack; label: string; desc: string }[] = [
+    { id: "laravel", label: "None", desc: "Plain Laravel" },
+    { id: "livewire", label: "Livewire", desc: "Livewire + Blade" },
+    { id: "react", label: "React", desc: "Inertia + React" },
+    { id: "vue", label: "Vue", desc: "Inertia + Vue" },
   ];
 </script>
 
@@ -109,6 +119,19 @@
           </div>
         </div>
         {#if kind === "laravel"}
+          <div class="field">
+            <span class="flabel">Starter kit</span>
+            <div class="stacks">
+              {#each stacks as s (s.id)}
+                <button
+                  class="stack {stack === s.id ? 'on' : ''}"
+                  onclick={() => (stack = s.id)}
+                  title={s.desc}>
+                  {s.label}
+                </button>
+              {/each}
+            </div>
+          </div>
           <div class="field">
             <label for="ns-php">PHP version</label>
             <select id="ns-php" class="inp" bind:value={php}>
@@ -178,6 +201,25 @@
   .kind.on {
     border-color: var(--accent);
   }
+  .stacks {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .stack {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 6px;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .stack.on {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
   .klabel {
     font-weight: 600;
     font-size: 13px;
@@ -195,7 +237,8 @@
     align-items: center;
     justify-content: space-between;
   }
-  label {
+  label,
+  .flabel {
     display: block;
     font-size: 12px;
     color: var(--text-dim);

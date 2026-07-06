@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-03
+
+### Changed
+
+- **New sites now scaffold with the official `laravel new` installer** (latest
+  Laravel) and a **starter-kit picker** — None, **Livewire**, **React** (Inertia)
+  or **Vue** (Inertia) — replacing `composer create-project`. The GUI's “Create a
+  new site” dialog gained a Starter kit selector; on the CLI use
+  `grove new <name> --kind livewire|react|vue`. Grove installs the Laravel
+  installer and a Node runtime on demand (for the asset build) against its
+  bundled PHP/Composer/Node, and hands the finished project to your user.
+
 ## [0.2.9] — 2026-07-01
 
 ### Added
@@ -29,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.3.0]: https://github.com/kwhorne/grove/releases/tag/v0.3.0
 [0.2.9]: https://github.com/kwhorne/grove/releases/tag/v0.2.9
 
 ## [0.2.8] — 2026-07-01

@@ -246,17 +246,28 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let paths = state.paths.clone();
             let target_for_task = target.clone();
             let name_for_task = name.clone();
-            tokio::task::spawn_blocking(move || match kind.as_str() {
-                "laravel" => grove_runtime::scaffold::new_laravel(
-                    &paths,
-                    &php_version,
-                    &target_for_task,
-                    init_git,
-                    |_| {},
-                )
-                .map_err(|e| e.to_string()),
-                _ => grove_runtime::scaffold::new_static(&target_for_task, &name_for_task)
+            tokio::task::spawn_blocking(move || {
+                // Laravel kinds map to `laravel new` starter kits.
+                let kit = match kind.as_str() {
+                    "laravel" => Some(None),
+                    "livewire" => Some(Some("livewire")),
+                    "react" => Some(Some("react")),
+                    "vue" => Some(Some("vue")),
+                    _ => None,
+                };
+                match kit {
+                    Some(kit) => grove_runtime::scaffold::new_laravel(
+                        &paths,
+                        &php_version,
+                        &target_for_task,
+                        kit,
+                        init_git,
+                        |_| {},
+                    )
                     .map_err(|e| e.to_string()),
+                    None => grove_runtime::scaffold::new_static(&target_for_task, &name_for_task)
+                        .map_err(|e| e.to_string()),
+                }
             })
             .await
             .map_err(|e| anyhow::anyhow!("scaffold task panicked: {e}"))?
