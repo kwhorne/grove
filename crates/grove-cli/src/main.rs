@@ -11,7 +11,10 @@ use grove_core::paths::GrovePaths;
 use grove_ipc::client;
 use grove_ipc::protocol::{Request, ResponseData};
 
-use cli::{CaAction, Cli, Command, DebugAction, MailAction, NodeAction, PhpAction, ServiceAction};
+use cli::{
+    CaAction, Cli, Command, DebugAction, DevAction, MailAction, NodeAction, PhpAction,
+    ServiceAction,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -190,6 +193,11 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
                 name: site,
                 version: None,
             },
+        },
+        Command::Dev { action } => match action {
+            DevAction::Start { site } => Request::DevStart { site },
+            DevAction::Stop { site } => Request::DevStop { site },
+            DevAction::List => Request::DevList,
         },
         Command::Debug { action } => match action {
             DebugAction::On => Request::Debug { enable: Some(true) },

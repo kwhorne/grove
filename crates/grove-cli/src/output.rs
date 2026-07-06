@@ -164,6 +164,15 @@ pub fn print_response(resp: &Response, json: bool) {
                 );
             }
         }
+        Some(ResponseData::DevSites(sites)) => {
+            if sites.is_empty() {
+                println!("no dev processes running");
+            } else {
+                for s in sites {
+                    println!("● dev running: {s}");
+                }
+            }
+        }
         Some(ResponseData::Xdebug(x)) => {
             println!(
                 "Xdebug {} (DBGp port {})",

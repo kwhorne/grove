@@ -18,17 +18,30 @@ pub enum Request {
     /// List every resolved site.
     ListSites,
     /// Park a directory (each subdir becomes a site).
-    Park { path: String },
+    Park {
+        path: String,
+    },
     /// Stop parking a directory.
-    Unpark { path: String },
+    Unpark {
+        path: String,
+    },
     /// Link the given directory as a single named site.
-    Link { path: String, name: Option<String> },
+    Link {
+        path: String,
+        name: Option<String>,
+    },
     /// Remove a linked site.
-    Unlink { name: String },
+    Unlink {
+        name: String,
+    },
     /// Remove a site from the list without deleting its files (hide it).
-    ForgetSite { name: String },
+    ForgetSite {
+        name: String,
+    },
     /// Restore a previously forgotten site.
-    UnforgetSite { name: String },
+    UnforgetSite {
+        name: String,
+    },
     /// Create a new site. `kind` is "laravel" | "static". The project is created
     /// at `parent`/`name` and linked.
     CreateSite {
@@ -39,7 +52,10 @@ pub enum Request {
         init_git: bool,
     },
     /// Toggle HTTPS for a site.
-    Secure { name: String, enable: bool },
+    Secure {
+        name: String,
+        enable: bool,
+    },
     /// Pin a PHP version for a site (isolate / unisolate when `version` is None).
     Isolate {
         name: String,
@@ -51,46 +67,87 @@ pub enum Request {
         version: Option<String>,
     },
     /// Route a `*.tld` host to a running upstream dev server.
-    Proxy { name: String, url: String },
+    Proxy {
+        name: String,
+        url: String,
+    },
     /// Set the global default PHP version (`grove use`).
-    SetDefaultPhp { version: String },
+    SetDefaultPhp {
+        version: String,
+    },
     /// Fetch the editable settings (general + services + parked paths).
     GetSettings,
     /// Apply a partial settings update. Unset fields are left unchanged.
-    UpdateSettings { patch: SettingsPatch },
+    UpdateSettings {
+        patch: SettingsPatch,
+    },
     /// Download + install a static PHP-FPM build for the given version.
-    PhpInstall { version: String },
+    PhpInstall {
+        version: String,
+    },
     /// List offered + installed PHP versions (for the GUI PHP panel).
     PhpVersionList,
     /// List bundled services and their install/run state.
     ServiceList,
     /// Download + initialise a bundled service.
-    ServiceInstall { key: String },
+    ServiceInstall {
+        key: String,
+    },
     /// Start a bundled service.
-    ServiceStart { key: String },
+    ServiceStart {
+        key: String,
+    },
     /// Stop a bundled service.
-    ServiceStop { key: String },
+    ServiceStop {
+        key: String,
+    },
     /// Restart a bundled service.
-    ServiceRestart { key: String },
+    ServiceRestart {
+        key: String,
+    },
     /// Override a bundled service's listen port.
-    ServiceSetPort { key: String, port: u16 },
+    ServiceSetPort {
+        key: String,
+        port: u16,
+    },
     /// Generate a `.env` snippet wiring an app to Grove's bundled services.
-    EnvSnippet { site: Option<String> },
+    EnvSnippet {
+        site: Option<String>,
+    },
     /// List discoverable log files (per-site Laravel logs + Grove service logs).
     LogSources,
     /// Read recent parsed entries from one log file (must be a known source).
-    LogEntries { path: String, limit: usize },
+    LogEntries {
+        path: String,
+        limit: usize,
+    },
     /// List installed + offered Node.js versions.
     NodeList,
     /// Download + install a Node.js version (major or exact).
-    NodeInstall { version: String },
+    NodeInstall {
+        version: String,
+    },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
     /// Start / stop / restart a Docker container backing a site.
-    DockerControl { id: String, action: String },
+    DockerControl {
+        id: String,
+        action: String,
+    },
+    /// Start / stop per-site dev processes (Vite dev server + queue worker).
+    DevStart {
+        site: String,
+    },
+    DevStop {
+        site: String,
+    },
+    /// List sites with dev processes currently running.
+    DevList,
     /// Toggle Xdebug step-debugging for FPM pools. `enable = None` reports the
     /// current state without changing it.
-    Debug { enable: Option<bool> },
+    Debug {
+        enable: Option<bool>,
+    },
     /// Start sharing a site publicly through the configured tunnel server.
     TunnelStart {
         site: String,
@@ -98,11 +155,15 @@ pub enum Request {
         basic_auth: Option<String>,
     },
     /// Stop sharing a site.
-    TunnelStop { site: String },
+    TunnelStop {
+        site: String,
+    },
     /// List active tunnels.
     TunnelList,
     /// Recent requests seen by the tunnel inspector (all sites, or one).
-    TunnelRequests { site: Option<String> },
+    TunnelRequests {
+        site: Option<String>,
+    },
     /// Migrate all user databases from another MySQL server (e.g. Herd) into
     /// Grove's MySQL.
     MysqlMigrate {
@@ -121,7 +182,9 @@ pub enum Request {
     /// List captured emails (newest first).
     MailList,
     /// Fetch one captured email in full.
-    MailGet { id: u64 },
+    MailGet {
+        id: u64,
+    },
     /// Discard all captured emails.
     MailClear,
     /// Ask the daemon to shut down gracefully.
@@ -169,7 +232,9 @@ impl Response {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseData {
-    Pong { version: String },
+    Pong {
+        version: String,
+    },
     Status(DaemonStatus),
     Sites(Vec<SiteStatus>),
     Message(String),
@@ -185,6 +250,8 @@ pub enum ResponseData {
     Tunnels(Vec<TunnelStatus>),
     TunnelRequests(Vec<TunnelRequestEntry>),
     Xdebug(XdebugStatus),
+    /// Site names with dev processes running.
+    DevSites(Vec<String>),
 }
 
 /// Xdebug state + per-build availability, for `grove debug status` and the GUI.

@@ -29,6 +29,8 @@
   // Map of host → public URL for sites currently being shared.
   let shared = $state<Record<string, string>>({});
   let shareBusy = $state<Record<string, boolean>>({});
+  let devSites = $state<string[]>([]);
+  let devBusy = $state<Record<string, boolean>>({});
   let timer: ReturnType<typeof setInterval> | undefined;
 
   async function refreshTunnels() {
@@ -40,7 +42,28 @@
     } catch {
       /* daemon down */
     }
+    try {
+      devSites = await api.devList();
+    } catch {
+      /* daemon down */
+    }
   }
+
+  async function toggleDev(s: ResolvedSite) {
+    devBusy = { ...devBusy, [s.name]: true };
+    try {
+      if (devSites.includes(s.name)) {
+        notify(await api.devStop(s.name));
+      } else {
+        notify(await api.devStart(s.name));
+      }
+      await refreshTunnels();
+    } catch (e) {
+      notify(String(e));
+    }
+    devBusy = { ...devBusy, [s.name]: false };
+  }
+
   onMount(() => {
     refreshTunnels();
     timer = setInterval(refreshTunnels, 2500);
@@ -200,6 +223,13 @@
           <td>
             <div class="btn-row">
               <button class="btn icon" title="Open in browser" onclick={() => open(s)}>↗</button>
+              {#if !s.docker && s.driver !== "proxy"}
+                <button
+                  class="btn icon {devSites.includes(s.name) ? 'sharing' : ''}"
+                  title={devSites.includes(s.name) ? "Dev running (Vite + queue) — click to stop" : "Run dev (Vite + queue worker)"}
+                  disabled={devBusy[s.name]}
+                  onclick={() => toggleDev(s)}>⚡</button>
+              {/if}
               <button
                 class="btn icon {shared[s.hostname] ? 'sharing' : ''}"
                 title={shared[s.hostname] ? `Public: ${shared[s.hostname]} — click to stop` : "Share publicly"}

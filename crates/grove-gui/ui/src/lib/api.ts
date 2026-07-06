@@ -92,6 +92,9 @@ export const api = {
   forgetSite: (name: string): Promise<string> => invoke("forget_site", { name }),
   dockerControl: (id: string, action: string): Promise<string> =>
     invoke("docker_control", { id, action }),
+  devStart: (site: string): Promise<string> => invoke("dev_start", { site }),
+  devStop: (site: string): Promise<string> => invoke("dev_stop", { site }),
+  devList: (): Promise<string[]> => invoke("dev_list"),
   mysqlMigrate: (
     host: string,
     port: number,

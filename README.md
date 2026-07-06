@@ -55,6 +55,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🌍 **Public tunnels** — `grove share` exposes a local site to the internet (demos, webhooks) via a self-hostable, native Expose/ngrok alternative.
 - 🛠 **Tools** — migrate MySQL from Herd, and convert whole databases between MySQL, PostgreSQL and SQLite.
 - 🐳 **Docker / OrbStack aware** — auto-discovers containers and serves them as `<name>.test` with trusted local HTTPS, next to native sites.
+- ⚡ **Runs your dev processes** — `grove dev` supervises `npm run dev` (Vite HMR) + a queue worker per site; no `artisan serve` needed.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
 - 🌱 **Create / import sites** — scaffold a new Laravel or static project, or link existing ones.
 - 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon, plus a macOS menu-bar icon.

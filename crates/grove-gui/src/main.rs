@@ -213,6 +213,24 @@ async fn docker_control(id: String, action: String) -> CmdResult<String> {
 }
 
 #[tauri::command]
+async fn dev_start(site: String) -> CmdResult<String> {
+    message(Request::DevStart { site }).await
+}
+
+#[tauri::command]
+async fn dev_stop(site: String) -> CmdResult<String> {
+    message(Request::DevStop { site }).await
+}
+
+#[tauri::command]
+async fn dev_list() -> CmdResult<Vec<String>> {
+    match call(Request::DevList).await? {
+        ResponseData::DevSites(s) => Ok(s),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
 async fn db_convert(source: DbConnSpec, target: DbConnSpec) -> CmdResult<String> {
     message(Request::DbConvert { source, target }).await
 }
@@ -590,6 +608,9 @@ fn main() {
             tunnel_stop,
             forget_site,
             docker_control,
+            dev_start,
+            dev_stop,
+            dev_list,
             mysql_migrate,
             db_convert,
             debug_status,

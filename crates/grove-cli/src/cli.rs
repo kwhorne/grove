@@ -185,6 +185,12 @@ pub enum Command {
         #[command(subcommand)]
         action: DebugAction,
     },
+
+    /// Run a site's dev processes (Vite dev server + queue worker).
+    Dev {
+        #[command(subcommand)]
+        action: DevAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -223,6 +229,16 @@ pub enum NodeAction {
     Use { site: String, version: String },
     /// Clear a site's pinned Node version.
     Unuse { site: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DevAction {
+    /// Start dev processes for a site.
+    Start { site: String },
+    /// Stop dev processes for a site.
+    Stop { site: String },
+    /// List sites with dev processes running.
+    List,
 }
 
 #[derive(Subcommand, Debug)]

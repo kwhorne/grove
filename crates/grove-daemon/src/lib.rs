@@ -5,6 +5,7 @@
 //! thin clients; all stateful logic lives here.
 
 pub mod commands;
+pub mod dev;
 pub mod docker;
 pub mod ipc;
 pub mod logs;

@@ -39,6 +39,20 @@ grove <command> [args] [--json]
 | `grove share <name> [--subdomain s] [--server host:port] [--token t] [--basic-auth user:pass]` | Share a site publicly through a tunnel server (see [TUNNEL.md](TUNNEL.md)). |
 | `grove import` | Import parked dirs + linked sites from an existing Laravel Valet config. |
 
+## Dev processes
+
+Grove runs a site's long-running dev processes for you — the **Vite dev server**
+(`npm run dev`, HMR) and, for a non-`sync` queue, a **queue worker** — with the
+site's own Node/PHP. No `artisan serve` needed (Grove already serves). Output
+goes to the Logs panel (`dev-<site>-*.log`). In the GUI it's the ⚡ toggle per
+site.
+
+| Command | Description |
+| --- | --- |
+| `grove dev start <site>` | Start the site's dev processes (Vite + queue worker). |
+| `grove dev stop <site>` | Stop them. |
+| `grove dev list` | List sites with dev processes running. |
+
 ## Debugging (Xdebug)
 
 | Command | Description |

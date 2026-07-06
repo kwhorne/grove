@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-06
+
+### Added
+
+- **Per-site dev processes** — Grove runs and supervises a site's long-running
+  dev tasks so you don't have to: the **Vite dev server** (`npm run dev`, HMR)
+  and, for a non-`sync` queue, a **queue worker** — each with the site's own
+  Node/PHP, run as your user, output streamed to the Logs panel. Because Grove
+  already serves the app, there's no `artisan serve` to run. Toggle it with the
+  ⚡ button per site in the GUI, or `grove dev start|stop|list <site>` — a
+  Grove-aware replacement for `composer run dev`.
+
 ## [0.4.2] — 2026-07-06
 
 ### Fixed
@@ -85,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.5.0]: https://github.com/kwhorne/grove/releases/tag/v0.5.0
 [0.4.2]: https://github.com/kwhorne/grove/releases/tag/v0.4.2
 [0.4.1]: https://github.com/kwhorne/grove/releases/tag/v0.4.1
 [0.4.0]: https://github.com/kwhorne/grove/releases/tag/v0.4.0

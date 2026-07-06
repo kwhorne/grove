@@ -650,6 +650,30 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 Err(e) => Ok(Response::err(e.to_string())),
             }
         }
+        Request::DevStart { site } => {
+            let resolved = {
+                let registry = state.shared.registry.read().await;
+                registry.get(&site).cloned()
+            };
+            let Some(resolved) = resolved else {
+                return Ok(Response::err(format!("no site named {site}")));
+            };
+            match state.dev.start(&resolved, &state.paths).await {
+                Ok(names) => Ok(Response::ok(ResponseData::Message(format!(
+                    "dev started for {site}: {}",
+                    names.join(", ")
+                )))),
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
+        Request::DevStop { site } => match state.dev.stop(&site).await {
+            Ok(()) => Ok(Response::ok(ResponseData::Message(format!(
+                "dev stopped for {site}"
+            )))),
+            Err(e) => Ok(Response::err(e.to_string())),
+        },
+        Request::DevList => Ok(Response::ok(ResponseData::DevSites(state.dev.list().await))),
+
         Request::DockerControl { id, action } => {
             match crate::docker::control(&id, &action).await {
                 Ok(()) => {
