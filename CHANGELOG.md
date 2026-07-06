@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-07-06
+
+### Added
+
+- **Vite over HTTPS, automatically.** When `grove dev` starts the Vite server
+  for an HTTPS site, Grove issues a CA-trusted leaf certificate for the host and
+  passes it via the standard `VITE_DEV_SERVER_CERT` / `VITE_DEV_SERVER_KEY` env
+  vars that `laravel-vite-plugin` reads. Vite then serves HTTPS with a trusted
+  cert — no mixed-content, HMR just works — with **no Herd/Valet directories
+  involved**. (Use the standard `laravel-vite-plugin` in `vite.config.js`; a
+  custom hard-coded Herd cert path won't pick this up.)
+
 ## [0.5.0] — 2026-07-06
 
 ### Added
@@ -97,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.5.1]: https://github.com/kwhorne/grove/releases/tag/v0.5.1
 [0.5.0]: https://github.com/kwhorne/grove/releases/tag/v0.5.0
 [0.4.2]: https://github.com/kwhorne/grove/releases/tag/v0.4.2
 [0.4.1]: https://github.com/kwhorne/grove/releases/tag/v0.4.1

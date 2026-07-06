@@ -64,6 +64,15 @@ impl DevManager {
                     let mut cmd = Command::new(&npm);
                     cmd.args(["run", "dev"]).current_dir(&site.path);
                     prepend_path(&mut cmd, &bin_dir);
+                    // For HTTPS sites, make a Grove-CA-signed cert available where
+                    // Laravel/Herd/Valet vite configs look, so Vite serves HTTPS
+                    // (no mixed-content) with a browser-trusted cert.
+                    if site.secure {
+                        if let Some((crt, key)) = ensure_vite_tls(paths, &site.hostname, &ids) {
+                            cmd.env("VITE_DEV_SERVER_CERT", &crt);
+                            cmd.env("VITE_DEV_SERVER_KEY", &key);
+                        }
+                    }
                     set_logs(&mut cmd, &log)?;
                     apply_env(&mut cmd, ids.clone());
                     procs.push(DevProc {
@@ -180,6 +189,41 @@ fn resolve_php_cli(paths: &GrovePaths, version: &str) -> Option<PathBuf> {
         return Some(cli);
     }
     grove_runtime::install::install_cli(paths, version, |_| {}).ok()
+}
+
+/// Issue a Grove-CA leaf for `hostname` into a Grove-owned dir and return its
+/// (cert, key) paths. Fed to Vite via the standard `VITE_DEV_SERVER_CERT` /
+/// `VITE_DEV_SERVER_KEY` env vars that `laravel-vite-plugin` reads natively —
+/// no Herd/Valet involvement.
+fn ensure_vite_tls(
+    paths: &GrovePaths,
+    hostname: &str,
+    ids: &Option<(u32, u32, String)>,
+) -> Option<(String, String)> {
+    let ca = grove_tls::CertificateAuthority::load_or_create(paths).ok()?;
+    let (cert_pem, key_pem) = ca.issue_leaf(&[hostname.to_string()]).ok()?;
+    let dir = paths.certs_dir().join("dev");
+    std::fs::create_dir_all(&dir).ok()?;
+    let crt = dir.join(format!("{hostname}.crt"));
+    let key = dir.join(format!("{hostname}.key"));
+    std::fs::write(&crt, &cert_pem).ok()?;
+    std::fs::write(&key, &key_pem).ok()?;
+    // The Vite process runs as the invoking user; let it read the files.
+    chown_path(&crt, ids);
+    chown_path(&key, ids);
+    Some((
+        crt.to_string_lossy().into_owned(),
+        key.to_string_lossy().into_owned(),
+    ))
+}
+
+fn chown_path(path: &Path, ids: &Option<(u32, u32, String)>) {
+    if let Some((_, _, user)) = ids {
+        let _ = std::process::Command::new("chown")
+            .arg(user)
+            .arg(path)
+            .status();
+    }
 }
 
 fn set_logs(cmd: &mut Command, log: &Path) -> std::io::Result<()> {
