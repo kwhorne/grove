@@ -109,7 +109,9 @@ sudo grove uninstall           # removes service, resolver and CA trust
 - [ ] `grove php install` / `grove node install` download and run self-contained
 - [ ] `grove service install/start/stop/restart` for postgres/mysql/redis
 - [ ] Mail-catcher captures mail; `grove mail` / GUI Mail panel show it
-- [ ] GUI: Sites, Services, Mail, PHP, Node, Logs, Doctor + Settings (⌘,)
+- [ ] `grove requests` / GUI Requests panel show proxied requests live
+- [ ] `grove path install` puts php/composer/node on PATH; `grove db snapshot`/`restore` round-trips
+- [ ] GUI: Sites, Services, Mail, PHP, Node, Tunnels, Requests, Tools, Logs, Doctor + Settings (⌘,)
 - [ ] `grove doctor` is all green
 
 > Tip: run the daemon in the foreground with logs while testing:

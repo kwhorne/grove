@@ -433,6 +433,19 @@ grove logs daemon
 available logs: daemon, dns, mail, blog, shop
 ```
 
+See a live timeline of every request Grove proxied — any site, any framework, no
+setup (also the **Requests** panel in the GUI):
+
+```bash
+grove requests
+```
+
+```text
+12:04:31.512  200  GET      8ms  blog     /
+12:04:31.601  200  GET      3ms  blog     /build/assets/app.css
+12:04:33.020  404  GET      1ms  blog     /favicon.ico
+```
+
 ---
 
 ## 12. Troubleshooting

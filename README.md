@@ -135,9 +135,11 @@ The GUI is a thin client that proxies everything to the daemon over the same
 Svelte 5 + Vite and shares the Elyra Conductor look & feel (Tokyo Night palette,
 JetBrains Mono). The dashboard surfaces every site with its driver, PHP version,
 a one-click HTTPS toggle, isolate, and shortcuts to open in the browser or
-Finder, alongside service, mail, logs and `doctor` panels. The Logs panel parses
-per-site Laravel logs and Grove's own service logs into a level/date/message view
-with a stacktrace detail pane. A Settings panel (⌘,)
+Finder, alongside service, mail, tunnels, tools, logs and `doctor` panels. The
+**Requests** panel is a live, framework-agnostic timeline of every request Grove
+proxies (status colour-coding, slow-request highlighting, per-site filter). The
+Logs panel parses per-site Laravel logs and Grove's own service logs into a
+level/date/message view with a stacktrace detail pane. A Settings panel (⌘,)
 manages parked paths, the TLD, default PHP, the mail-catcher port,
 launch-at-login and the theme (auto/light/dark).
 
