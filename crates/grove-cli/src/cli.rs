@@ -192,6 +192,15 @@ pub enum Command {
         action: DevAction,
     },
 
+    /// Show a live timeline of recent requests Grove proxied (any site, any framework).
+    Requests {
+        /// Only show requests for this site (host or name).
+        site: Option<String>,
+        /// Maximum entries to show.
+        #[arg(long, default_value_t = 40)]
+        limit: usize,
+    },
+
     /// Snapshot / restore Grove's bundled databases (time-travel before risky migrations).
     Db {
         #[command(subcommand)]

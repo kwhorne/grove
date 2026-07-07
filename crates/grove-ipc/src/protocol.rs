@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use grove_core::site::ResolvedSite;
+use grove_core::RequestEntry;
 use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus, Snapshot};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
@@ -141,6 +142,11 @@ pub enum Request {
     },
     /// List stored database snapshots.
     DbSnapshotList,
+    /// Recent proxied requests (the request timeline), optionally per site.
+    RequestLog {
+        site: Option<String>,
+        limit: usize,
+    },
     /// Restore a stored snapshot by id.
     DbSnapshotRestore {
         id: String,
@@ -276,6 +282,8 @@ pub enum ResponseData {
     DevSites(Vec<String>),
     /// Stored database snapshots.
     Snapshots(Vec<Snapshot>),
+    /// Recent proxied requests, newest first.
+    Requests(Vec<RequestEntry>),
 }
 
 /// Xdebug state + per-build availability, for `grove debug status` and the GUI.

@@ -240,6 +240,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             ServiceAction::Restart { key } => Request::ServiceRestart { key },
             ServiceAction::Port { key, port } => Request::ServiceSetPort { key, port },
         },
+        Command::Requests { site, limit } => Request::RequestLog { site, limit },
         Command::Db { action } => match action {
             DbAction::Snapshot { engine, db, note } => Request::DbSnapshot {
                 engine,

@@ -173,6 +173,23 @@ pub fn print_response(resp: &Response, json: bool) {
                 }
             }
         }
+        Some(ResponseData::Requests(reqs)) => {
+            if reqs.is_empty() {
+                println!("no requests recorded yet — open a site and reload");
+            } else {
+                for r in reqs {
+                    println!(
+                        "{}  {:>3}  {:<6} {:>5}ms  {:<16} {}",
+                        r.time,
+                        r.status,
+                        r.method,
+                        r.duration_ms,
+                        truncate(&r.site, 16),
+                        r.path
+                    );
+                }
+            }
+        }
         Some(ResponseData::Snapshots(snaps)) => {
             if snaps.is_empty() {
                 println!("no database snapshots yet — take one with `grove db snapshot`");

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-07
+
+### Added
+
+- **Request timeline.** Grove sits in front of every `*.test` site, so it now
+  records a live, framework-agnostic timeline of the requests it proxies —
+  method, path, status, and duration — with zero configuration and no per-app
+  instrumentation.
+    - New **Requests** panel in the desktop app: a live-updating table with
+      status colour-coding, slow-request highlighting, a per-site filter, and
+      shown/avg-ms/error-rate stats.
+    - `grove requests [site] [--limit N]` on the CLI (`--json` supported).
+  Captured at the proxy layer into a bounded in-memory ring buffer (last 500),
+  so it costs nothing at rest and never grows unbounded.
+
 ## [0.6.0] — 2026-07-07
 
 ### Added
@@ -135,6 +150,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.7.0]: https://github.com/kwhorne/grove/releases/tag/v0.7.0
 [0.6.0]: https://github.com/kwhorne/grove/releases/tag/v0.6.0
 [0.5.2]: https://github.com/kwhorne/grove/releases/tag/v0.5.2
 [0.5.1]: https://github.com/kwhorne/grove/releases/tag/v0.5.1

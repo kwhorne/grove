@@ -681,6 +681,11 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let store = grove_services::SnapshotStore::new(&state.paths);
             Ok(Response::ok(ResponseData::Snapshots(store.list())))
         }
+        Request::RequestLog { site, limit } => {
+            let limit = if limit == 0 { 100 } else { limit.min(500) };
+            let entries = state.shared.log.snapshot(site.as_deref(), limit);
+            Ok(Response::ok(ResponseData::Requests(entries)))
+        }
         Request::DbSnapshotRestore { id } => {
             let paths = state.paths.clone();
             let services = state.services.clone();

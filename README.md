@@ -53,6 +53,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself, so there is no database/cache or Homebrew to install separately.
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer.
 - 🌍 **Public tunnels** — `grove share` exposes a local site to the internet (demos, webhooks) via a self-hostable, native Expose/ngrok alternative.
+- ⇄ **Request timeline** — Grove is the proxy, so it records a live, framework-agnostic log of every request (method, path, status, duration) — a zero-config Telescope for any site, in the CLI (`grove requests`) and a live GUI panel.
 - 🛠 **Tools** — migrate MySQL from Herd, and convert whole databases between MySQL, PostgreSQL and SQLite.
 - ⏱️ **Database snapshots** — `grove db snapshot` takes a point-in-time SQL snapshot of the bundled MySQL/PostgreSQL and `grove db restore` rolls it back, so risky migrations are fearless.
 - 🔀 **Toolchain on your PATH** — `grove path install` puts the bundled `php`, `composer`, `node`, `npm` and `laravel` on your PATH, auto-switching to each project's pinned version — so you can drop Herd/Valet entirely.
@@ -113,6 +114,7 @@ no Homebrew, no Composer, no Valet.
 | Node | `node list`, `node install <version>`, `node use <site> <version>`, `node unuse <site>` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |
 | Databases | `db snapshot`, `db list`, `db restore <id>`, `db rm <id>` |
+| Observability | `requests [site]` (live request timeline) |
 | Toolchain | `path install`, `path show`, `path uninstall` |
 | Dev | `dev start <site>`, `dev stop <site>`, `dev list` |
 | Tunnels | `share <site>` (public URL via `grove-tunnel` server) |

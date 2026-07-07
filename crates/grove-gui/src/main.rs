@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use grove_core::paths::GrovePaths;
 use grove_core::site::ResolvedSite;
+use grove_core::RequestEntry;
 use grove_ipc::client;
 use grove_ipc::protocol::{
     DaemonStatus, DiagnosticEntry, LogEntry, LogSource, NodeVersion, Request, ResponseData,
@@ -283,6 +284,14 @@ async fn tunnel_list() -> CmdResult<Vec<TunnelStatus>> {
 async fn tunnel_requests(site: Option<String>) -> CmdResult<Vec<TunnelRequestEntry>> {
     match call(Request::TunnelRequests { site }).await? {
         ResponseData::TunnelRequests(r) => Ok(r),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn request_log(site: Option<String>, limit: usize) -> CmdResult<Vec<RequestEntry>> {
+    match call(Request::RequestLog { site, limit }).await? {
+        ResponseData::Requests(r) => Ok(r),
         _ => Err("unexpected response".into()),
     }
 }
@@ -618,6 +627,7 @@ fn main() {
             restart_daemon,
             tunnel_list,
             tunnel_requests,
+            request_log,
             php_versions,
             php_install,
             php_list,

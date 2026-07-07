@@ -16,6 +16,7 @@ import type {
   SettingsPatch,
   SettingsView,
   TunnelRequestEntry,
+  RequestEntry,
   TunnelStatus,
   DbConnSpec,
   XdebugStatus,
@@ -109,6 +110,8 @@ export const api = {
   tunnelList: (): Promise<TunnelStatus[]> => invoke("tunnel_list"),
   tunnelRequests: (site: string | null): Promise<TunnelRequestEntry[]> =>
     invoke("tunnel_requests", { site }),
+  requestLog: (site: string | null, limit: number): Promise<RequestEntry[]> =>
+    invoke("request_log", { site, limit }),
 
   openUrl: (url: string): Promise<void> => invoke("open_url", { url }),
   openPath: (path: string): Promise<void> => invoke("open_path", { path }),

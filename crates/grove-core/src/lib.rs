@@ -10,10 +10,12 @@ pub mod driver;
 pub mod error;
 pub mod paths;
 pub mod registry;
+pub mod reqlog;
 pub mod site;
 
 pub use config::Config;
 pub use driver::Driver;
 pub use error::{Error, Result};
 pub use registry::SiteRegistry;
+pub use reqlog::{RequestEntry, RequestLog};
 pub use site::{ResolvedSite, SiteKind};

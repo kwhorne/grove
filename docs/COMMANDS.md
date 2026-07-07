@@ -92,6 +92,18 @@ register a PHP that has it (`grove php register`).
 | `grove service port <key> <port>` | Override a service's listen port. |
 | `grove env [site]` | Print a `.env` snippet for the bundled services. |
 
+## Request timeline
+
+Grove proxies every `*.test` site, so it records a live, framework-agnostic log
+of recent requests — method, path, status, duration — with zero setup. Also shown
+in the desktop app's **Requests** panel.
+
+| Command | Description |
+| --- | --- |
+| `grove requests` | Recent requests across all sites (newest first). |
+| `grove requests <site>` | Filter to one site. |
+| `grove requests --limit <n>` | Cap the number of entries. |
+
 ## Database snapshots
 
 Point-in-time snapshots of Grove's bundled MySQL / PostgreSQL — snapshot before a

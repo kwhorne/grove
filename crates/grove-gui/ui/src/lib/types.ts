@@ -68,6 +68,17 @@ export interface TunnelRequestEntry {
   duration_ms: number;
 }
 
+export interface RequestEntry {
+  time: string;
+  epoch_ms: number;
+  site: string;
+  method: string;
+  path: string;
+  status: number;
+  duration_ms: number;
+  https: boolean;
+}
+
 export interface XdebugBuild {
   version: string;
   availability: string;

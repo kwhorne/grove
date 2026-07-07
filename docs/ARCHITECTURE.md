@@ -71,6 +71,10 @@ local Unix-socket JSON-RPC.
   `runtimes/` dir, so the user-run shims never need write access.
 - **Database snapshots** — `grove db` dumps/restores the bundled MySQL /
   PostgreSQL via their own client tools, indexed under `snapshots/`.
+- **Request timeline** — the proxy handler records every request (method, path,
+  status, duration) into a bounded in-memory ring buffer in `grove-core`
+  (`RequestLog`), shared with the daemon so `grove requests` and the GUI panel
+  can read it. Framework-agnostic; nothing is persisted to disk.
 
 ## Zero external dependencies
 

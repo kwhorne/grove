@@ -34,6 +34,14 @@ pub async fn handle(
     https: bool,
     peer: SocketAddr,
 ) -> Result<Response<BoxBody>, Infallible> {
+    let start = std::time::Instant::now();
+    let method = req.method().as_str().to_string();
+    let path = req
+        .uri()
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
+
     let host = req
         .headers()
         .get(hyper::header::HOST)
@@ -66,6 +74,14 @@ pub async fn handle(
     };
 
     let Some(site) = site else {
+        state.log.record(
+            &route_host,
+            &method,
+            &path,
+            StatusCode::NOT_FOUND.as_u16(),
+            start.elapsed().as_millis() as u64,
+            https,
+        );
         return Ok(text_response(
             StatusCode::NOT_FOUND,
             &format!("Grove: no site registered for host {route_host:?}"),
@@ -73,6 +89,14 @@ pub async fn handle(
     };
 
     if site.docker && !site.docker_running {
+        state.log.record(
+            &site.name,
+            &method,
+            &path,
+            StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+            start.elapsed().as_millis() as u64,
+            https,
+        );
         return Ok(text_response(
             StatusCode::SERVICE_UNAVAILABLE,
             &format!(
@@ -102,10 +126,19 @@ pub async fn handle(
         _ => serve_static(req, &site).await,
     };
 
-    Ok(result.unwrap_or_else(|e| {
+    let response = result.unwrap_or_else(|e| {
         tracing::error!(error = %e, site = %site.name, "request failed");
         text_response(StatusCode::BAD_GATEWAY, &format!("Grove: {e}"))
-    }))
+    });
+    state.log.record(
+        &site.name,
+        &method,
+        &path,
+        response.status().as_u16(),
+        start.elapsed().as_millis() as u64,
+        https,
+    );
+    Ok(response)
 }
 
 /// Serve a static file from the document root, with a directory-index fallback.
