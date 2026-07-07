@@ -114,6 +114,19 @@ services = ["mysql", "redis"]
 dev = true
 ```
 
+## License (Grove Pro / Teams)
+
+Activate a purchased license to unlock Pro/Teams features. Verified offline
+(Ed25519) — no connection required. The free, open-source core is never gated.
+
+| Command | Description |
+| --- | --- |
+| `grove license activate <key>` | Activate a license key (from your purchase email). |
+| `grove license status` | Show the current entitlement (plan, seats, renewal). |
+| `grove license deactivate` | Remove the stored license. |
+
+Also available in the desktop app under **Settings → License**.
+
 ## Request timeline
 
 Grove proxies every `*.test` site, so it records a live, framework-agnostic log

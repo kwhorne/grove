@@ -12,8 +12,8 @@ use grove_ipc::client;
 use grove_ipc::protocol::{Request, ResponseData};
 
 use cli::{
-    CaAction, Cli, Command, DbAction, DebugAction, DevAction, MailAction, NodeAction, PathAction,
-    PhpAction, ServiceAction,
+    CaAction, Cli, Command, DbAction, DebugAction, DevAction, LicenseAction, MailAction,
+    NodeAction, PathAction, PhpAction, ServiceAction,
 };
 
 #[tokio::main]
@@ -246,6 +246,11 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             ServiceAction::Port { key, port } => Request::ServiceSetPort { key, port },
         },
         Command::Requests { site, limit } => Request::RequestLog { site, limit },
+        Command::License { action } => match action {
+            LicenseAction::Activate { key } => Request::LicenseActivate { key },
+            LicenseAction::Status => Request::LicenseStatus,
+            LicenseAction::Deactivate => Request::LicenseDeactivate,
+        },
         Command::Db { action } => match action {
             DbAction::Snapshot { engine, db, note } => Request::DbSnapshot {
                 engine,

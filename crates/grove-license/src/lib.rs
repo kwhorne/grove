@@ -79,7 +79,9 @@ pub fn verify(key: &str, now_unix: i64) -> Result<LicenseClaims> {
 pub fn verify_with(key: &str, public_key_hex: &str, now_unix: i64) -> Result<LicenseClaims> {
     let verifying = verifying_key(public_key_hex)?;
 
-    let body = key.strip_prefix(KEY_PREFIX).ok_or(LicenseError::Malformed)?;
+    let body = key
+        .strip_prefix(KEY_PREFIX)
+        .ok_or(LicenseError::Malformed)?;
     let (msg_b64, sig_b64) = body.split_once('.').ok_or(LicenseError::Malformed)?;
 
     let sig_bytes = URL_SAFE_NO_PAD

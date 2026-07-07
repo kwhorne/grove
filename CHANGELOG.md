@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-07
+
+### Added
+
+- **License activation for Grove Pro / Teams.** Activate a purchased license key
+  and Grove verifies it **offline** (Ed25519, `grove-license`) against a baked-in
+  public key — no network call needed, so entitlements keep working without a
+  connection.
+    - `grove license activate <key>` / `grove license status` / `grove license
+      deactivate`.
+    - A **License** section in the desktop app's Settings (activate, status,
+      remove).
+    - Entitlement gates (`require_pro` / `require_teams`) that Pro/Teams features
+      check; the free, open-source core is never gated.
+
 ## [0.8.1] — 2026-07-07
 
 ### Fixed
@@ -174,6 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.9.0]: https://github.com/kwhorne/grove/releases/tag/v0.9.0
 [0.8.1]: https://github.com/kwhorne/grove/releases/tag/v0.8.1
 [0.8.0]: https://github.com/kwhorne/grove/releases/tag/v0.8.0
 [0.7.0]: https://github.com/kwhorne/grove/releases/tag/v0.7.0

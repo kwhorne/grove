@@ -15,6 +15,7 @@ use grove_ipc::protocol::{
     DaemonStatus, DiagnosticEntry, LogEntry, LogSource, NodeVersion, Request, ResponseData,
     SettingsPatch, SettingsView, TunnelRequestEntry, TunnelStatus, XdebugStatus,
 };
+use grove_license::LicenseClaims;
 use grove_runtime::PhpRegistry;
 use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus};
 use serde::Serialize;
@@ -292,6 +293,30 @@ async fn tunnel_requests(site: Option<String>) -> CmdResult<Vec<TunnelRequestEnt
 async fn request_log(site: Option<String>, limit: usize) -> CmdResult<Vec<RequestEntry>> {
     match call(Request::RequestLog { site, limit }).await? {
         ResponseData::Requests(r) => Ok(r),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn license_status() -> CmdResult<Option<LicenseClaims>> {
+    match call(Request::LicenseStatus).await? {
+        ResponseData::License(l) => Ok(l),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn license_activate(key: String) -> CmdResult<Option<LicenseClaims>> {
+    match call(Request::LicenseActivate { key }).await? {
+        ResponseData::License(l) => Ok(l),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn license_deactivate() -> CmdResult<Option<LicenseClaims>> {
+    match call(Request::LicenseDeactivate).await? {
+        ResponseData::License(l) => Ok(l),
         _ => Err("unexpected response".into()),
     }
 }
@@ -628,6 +653,9 @@ fn main() {
             tunnel_list,
             tunnel_requests,
             request_log,
+            license_status,
+            license_activate,
+            license_deactivate,
             php_versions,
             php_install,
             php_list,

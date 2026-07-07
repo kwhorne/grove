@@ -1,7 +1,7 @@
 <script lang="ts">
   import { open } from "@tauri-apps/plugin-dialog";
   import { api } from "../lib/api";
-  import type { SettingsPatch, SettingsView } from "../lib/types";
+  import type { SettingsPatch, SettingsView, LicenseClaims } from "../lib/types";
   import { applyTheme, getTheme, type Theme } from "../lib/theme";
 
   let { open: isOpen = false, onclose, notify }: {
@@ -10,13 +10,40 @@
     notify: (m: string) => void;
   } = $props();
 
-  type Section = "general" | "mail";
+  type Section = "general" | "mail" | "license";
   let section = $state<Section>("general");
   let s = $state<SettingsView | null>(null);
   let parked = $state<string[]>([]);
   let originalParked = $state<string[]>([]);
   let theme = $state<Theme>(getTheme());
   let saving = $state(false);
+  let license = $state<LicenseClaims | null>(null);
+  let licenseKey = $state("");
+  let licenseBusy = $state(false);
+
+  async function activateLicense() {
+    if (!licenseKey.trim()) return;
+    licenseBusy = true;
+    try {
+      license = await api.licenseActivate(licenseKey.trim());
+      if (license) { notify("License activated"); licenseKey = ""; }
+      else notify("Could not activate license");
+    } catch (e) {
+      notify(String(e));
+    }
+    licenseBusy = false;
+  }
+
+  async function deactivateLicense() {
+    licenseBusy = true;
+    try {
+      license = await api.licenseDeactivate();
+      notify("License removed");
+    } catch (e) {
+      notify(String(e));
+    }
+    licenseBusy = false;
+  }
 
   $effect(() => {
     if (isOpen && !s) void load();
@@ -27,6 +54,7 @@
       s = await api.getSettings();
       parked = [...s.parked];
       originalParked = [...s.parked];
+      license = await api.licenseStatus();
     } catch (e) {
       notify(String(e));
     }
@@ -93,6 +121,9 @@
         </button>
         <button class="snav-item {section === 'mail' ? 'active' : ''}" onclick={() => (section = "mail")}>
           <span class="ico">✉</span> Mail
+        </button>
+        <button class="snav-item {section === 'license' ? 'active' : ''}" onclick={() => (section = "license")}>
+          <span class="ico">🔑</span> License
         </button>
       </aside>
 
@@ -190,6 +221,30 @@
             </div>
             <input class="inp" type="number" bind:value={s.mail_port} style="width:90px" />
           </div>
+        {:else if section === "license"}
+          <h3>License</h3>
+          <p class="ghelp">Activate a Grove Pro or Teams license to unlock team features. Verified offline — no connection required.</p>
+
+          {#if license}
+            <div class="field">
+              <div>
+                <div class="flabel">{license.plan === "teams" ? "Grove Teams" : "Grove Pro"} active</div>
+                <div class="fhelp">{license.seats} seat{license.seats === 1 ? "" : "s"} · {license.email} · renews {new Date(license.exp * 1000).toLocaleDateString()}</div>
+              </div>
+              <span class="dot on"></span>
+            </div>
+            <button class="btn" onclick={deactivateLicense} disabled={licenseBusy}>Remove license</button>
+          {:else}
+            <div class="group">
+              <div class="glabel">License key</div>
+              <p class="ghelp">Paste the key from your purchase email (starts with <span class="mono">GROVE-</span>).</p>
+              <input class="inp" style="width:100%" bind:value={licenseKey} placeholder="GROVE-…" />
+              <button class="btn primary" style="margin-top:8px" onclick={activateLicense} disabled={licenseBusy || !licenseKey.trim()}>
+                {licenseBusy ? "Activating…" : "Activate"}
+              </button>
+            </div>
+            <p class="ghelp">No license yet? Get Grove Pro at <span class="mono">elyracode.com/grove</span>.</p>
+          {/if}
         {/if}
       </div>
 

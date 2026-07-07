@@ -68,6 +68,16 @@ export interface TunnelRequestEntry {
   duration_ms: number;
 }
 
+export interface LicenseClaims {
+  v: number;
+  id: string;
+  plan: string;
+  seats: number;
+  email: string;
+  iat: number;
+  exp: number;
+}
+
 export interface RequestEntry {
   time: string;
   epoch_ms: number;

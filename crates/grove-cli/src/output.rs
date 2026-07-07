@@ -173,6 +173,26 @@ pub fn print_response(resp: &Response, json: bool) {
                 }
             }
         }
+        Some(ResponseData::License(license)) => match license {
+            None => println!("No license active — Grove is running the free, open-source edition."),
+            Some(c) => {
+                let product = if c.is_teams() {
+                    "Grove Teams"
+                } else {
+                    "Grove Pro"
+                };
+                println!("✓ {product} active");
+                println!("  seats  : {}", c.seats);
+                println!("  email  : {}", c.email);
+                let days = (c.exp
+                    - std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0))
+                    / 86_400;
+                println!("  renews : in {days} days");
+            }
+        },
         Some(ResponseData::Requests(reqs)) => {
             if reqs.is_empty() {
                 println!("no requests recorded yet — open a site and reload");

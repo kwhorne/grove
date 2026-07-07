@@ -686,6 +686,18 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let entries = state.shared.log.snapshot(site.as_deref(), limit);
             Ok(Response::ok(ResponseData::Requests(entries)))
         }
+        Request::LicenseActivate { key } => match crate::license::activate(&state.paths, &key) {
+            Ok(claims) => Ok(Response::ok(ResponseData::License(Some(claims)))),
+            Err(e) => Ok(Response::err(format!("could not activate license: {e}"))),
+        },
+        Request::LicenseStatus => Ok(Response::ok(ResponseData::License(
+            crate::license::current(&state.paths),
+        ))),
+        Request::LicenseDeactivate => {
+            crate::license::deactivate(&state.paths)
+                .map_err(|e| anyhow::anyhow!("removing license: {e}"))?;
+            Ok(Response::ok(ResponseData::License(None)))
+        }
         Request::DbSnapshotRestore { id } => {
             let paths = state.paths.clone();
             let services = state.services.clone();

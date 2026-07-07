@@ -16,6 +16,7 @@ grove-services = { path = "../grove-services" }
 grove-tls = { path = "../grove-tls" }
 grove-os = { path = "../grove-os" }
 grove-tunnel = { path = "../grove-tunnel" }
+grove-license = { path = "../grove-license" }
 tokio.workspace = true
 tracing.workspace = true
 anyhow.workspace = true

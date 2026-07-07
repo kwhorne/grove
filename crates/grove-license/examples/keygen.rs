@@ -22,7 +22,9 @@ fn main() {
         .map(|s| s.trim().to_string())
         .expect("pass the 64-char seed hex as an argument");
 
-    let seed: [u8; 32] = hex_decode(&seed_hex).try_into().expect("seed must be 32 bytes");
+    let seed: [u8; 32] = hex_decode(&seed_hex)
+        .try_into()
+        .expect("seed must be 32 bytes");
     let sk = SigningKey::from_bytes(&seed);
     let pk = sk.verifying_key();
     let pk_hex: String = pk.to_bytes().iter().map(|b| format!("{b:02x}")).collect();

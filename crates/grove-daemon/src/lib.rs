@@ -8,6 +8,7 @@ pub mod commands;
 pub mod dev;
 pub mod docker;
 pub mod ipc;
+pub mod license;
 pub mod logs;
 pub mod state;
 pub mod tunnels;

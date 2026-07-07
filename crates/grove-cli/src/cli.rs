@@ -214,6 +214,12 @@ pub enum Command {
         limit: usize,
     },
 
+    /// Activate and inspect a Grove Pro / Teams license.
+    License {
+        #[command(subcommand)]
+        action: LicenseAction,
+    },
+
     /// Snapshot / restore Grove's bundled databases (time-travel before risky migrations).
     Db {
         #[command(subcommand)]
@@ -240,6 +246,16 @@ pub enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LicenseAction {
+    /// Activate a license key (verified offline).
+    Activate { key: String },
+    /// Show the current license entitlement.
+    Status,
+    /// Remove the stored license.
+    Deactivate,
 }
 
 #[derive(Subcommand, Debug)]

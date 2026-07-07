@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use grove_core::site::ResolvedSite;
 use grove_core::RequestEntry;
+use grove_license::LicenseClaims;
 use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus, Snapshot};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
@@ -147,6 +148,14 @@ pub enum Request {
         site: Option<String>,
         limit: usize,
     },
+    /// Activate a Grove Pro/Teams license key (verified offline, then stored).
+    LicenseActivate {
+        key: String,
+    },
+    /// The current license entitlement, if any.
+    LicenseStatus,
+    /// Remove the stored license.
+    LicenseDeactivate,
     /// Restore a stored snapshot by id.
     DbSnapshotRestore {
         id: String,
@@ -284,6 +293,8 @@ pub enum ResponseData {
     Snapshots(Vec<Snapshot>),
     /// Recent proxied requests, newest first.
     Requests(Vec<RequestEntry>),
+    /// The active license entitlement (None = free / unlicensed).
+    License(Option<LicenseClaims>),
 }
 
 /// Xdebug state + per-build availability, for `grove debug status` and the GUI.
