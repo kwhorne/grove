@@ -9,6 +9,8 @@ members = [
     "crates/grove-tunnel",
     "crates/grove-runtime",
     "crates/grove-services",
+    "crates/grove-secrets",
+    "crates/grove-license",
     "crates/grove-os",
     "crates/grove-daemon",
     "crates/grove-cli",
