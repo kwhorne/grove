@@ -68,7 +68,8 @@ local Unix-socket JSON-RPC.
 - **Toolchain on PATH** — `grove path` writes read-only shims that resolve each
   project's pinned `php`/`node`/`composer` version and `exec` it. Runtimes are
   provisioned by the (root) daemon (`ProvisionToolchain`) into the shared
-  `runtimes/` dir, so the user-run shims never need write access.
+  `runtimes/` dir, so the user-run shims never need write access. The shims
+  themselves live in `~/.grove/bin` (user-owned, added to PATH).
 - **Database snapshots** — `grove db` dumps/restores the bundled MySQL /
   PostgreSQL via their own client tools, indexed under `snapshots/`.
 - **Reproducible environments** — `grove up` reads a project's committed
@@ -99,7 +100,6 @@ certs/                 root CA + issued leaf certs (incl. certs/dev for Vite HTT
 runtimes/              PHP/Node builds, FPM configs, php-builds.json, composer.phar
 services/              bundled DB/cache binaries + data dirs + state.json
 snapshots/             database snapshots (SQL dumps) + index.json
-shims/                 `grove path` shims (php, composer, node, npm, npx, laravel)
 logs/                  per-service logs
 run/                   daemon IPC socket, pidfile, FPM/service sockets
 ```

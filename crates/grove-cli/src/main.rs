@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Php { action } => local::php(&paths, action, args.json),
         Command::Path { action } => {
             let action = action.unwrap_or(PathAction::Show);
-            local::path(&paths, action.clone(), args.json)?;
+            local::path(action.clone(), args.json)?;
             if matches!(action, PathAction::Install) {
                 let socket = paths.ipc_socket();
                 if client::is_running(&socket).await {
@@ -993,8 +993,15 @@ mod local {
     const SHIM_TOOLS: [&str; 6] = ["php", "composer", "node", "npm", "npx", "laravel"];
 
     /// Manage the PATH shims that expose Grove's bundled toolchain.
-    pub fn path(paths: &GrovePaths, action: PathAction, json: bool) -> anyhow::Result<()> {
-        let shims = paths.base().join("shims");
+    /// The shims live under the user's home (not `$GROVE_HOME`, which is
+    /// root-owned under the LaunchDaemon and so not writable by the shims' user).
+    fn shims_dir() -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        PathBuf::from(home).join(".grove/bin")
+    }
+
+    pub fn path(action: PathAction, json: bool) -> anyhow::Result<()> {
+        let shims = shims_dir();
         match action {
             PathAction::Install => {
                 let grove_bin = std::env::current_exe().context("locating the grove binary")?;

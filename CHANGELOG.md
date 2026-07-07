@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-07-07
+
+### Fixed
+
+- **`grove path install` no longer fails with a permission error.** The shims
+  now live under `~/.grove/bin` (a user-owned directory) instead of under the
+  root-owned `$GROVE_HOME`, so the command works when Grove runs as a root
+  LaunchDaemon. Add `~/.grove/bin` to your PATH (the command prints the line).
+
 ## [0.8.0] — 2026-07-07
 
 ### Added
@@ -165,6 +174,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.8.1]: https://github.com/kwhorne/grove/releases/tag/v0.8.1
 [0.8.0]: https://github.com/kwhorne/grove/releases/tag/v0.8.0
 [0.7.0]: https://github.com/kwhorne/grove/releases/tag/v0.7.0
 [0.6.0]: https://github.com/kwhorne/grove/releases/tag/v0.6.0
