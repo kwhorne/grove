@@ -111,6 +111,7 @@ sudo grove uninstall           # removes service, resolver and CA trust
 - [ ] Mail-catcher captures mail; `grove mail` / GUI Mail panel show it
 - [ ] `grove requests` / GUI Requests panel show proxied requests live
 - [ ] `grove path install` puts php/composer/node on PATH; `grove db snapshot`/`restore` round-trips
+- [ ] `grove up --write` scaffolds `grove.toml`; `grove up` links + configures the project
 - [ ] GUI: Sites, Services, Mail, PHP, Node, Tunnels, Requests, Tools, Logs, Doctor + Settings (⌘,)
 - [ ] `grove doctor` is all green
 

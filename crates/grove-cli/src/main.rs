@@ -115,6 +115,11 @@ async fn main() -> anyhow::Result<()> {
         Command::Uninstall => lifecycle::uninstall(&paths, args.json),
         Command::Import => lifecycle::import_valet(&paths, args.json),
         Command::Init { php, no_php } => lifecycle::init(&paths, php, no_php, args.json),
+        Command::Up {
+            path,
+            write,
+            no_dev,
+        } => lifecycle::up(&paths, path, write, no_dev, args.json).await,
         Command::Share {
             site,
             server,
@@ -261,6 +266,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Uninstall
         | Command::Import
         | Command::Init { .. }
+        | Command::Up { .. }
         | Command::Share { .. }
         | Command::Env { .. }
         | Command::Logs { .. }
@@ -447,6 +453,166 @@ mod lifecycle {
     }
 
     /// Share a local site publicly through a Grove Tunnel server.
+    /// Bring a project up from its `grove.toml`, or scaffold one with `--write`.
+    pub async fn up(
+        paths: &GrovePaths,
+        path: Option<String>,
+        write: bool,
+        no_dev: bool,
+        json: bool,
+    ) -> anyhow::Result<()> {
+        use grove_core::ProjectFile;
+        use grove_ipc::protocol::Response;
+
+        let dir = match path {
+            Some(p) => std::path::PathBuf::from(p),
+            None => std::env::current_dir().context("resolving current directory")?,
+        };
+        let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+
+        if write {
+            let target = ProjectFile::path_in(&dir);
+            if target.exists() {
+                anyhow::bail!("grove.toml already exists at {}", target.display());
+            }
+            let name = dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("app")
+                .to_string();
+            let php = Config::load(paths).unwrap_or_default().general.default_php;
+            std::fs::write(&target, ProjectFile::starter_template(&name, &php))?;
+            output::print_message(
+                &format!("wrote {} — edit it, then run `grove up`", target.display()),
+                json,
+            );
+            return Ok(());
+        }
+
+        let Some(pf) = ProjectFile::load(&dir).map_err(|e| anyhow::anyhow!(e))? else {
+            anyhow::bail!(
+                "no grove.toml in {} — create one with `grove up --write`",
+                dir.display()
+            );
+        };
+
+        let socket = paths.ipc_socket();
+        if !client::is_running(&socket).await {
+            anyhow::bail!("Grove daemon is not running. Start it with `grove start`.");
+        }
+
+        let name = pf.site_name(&dir);
+        if !json {
+            println!("Bringing up {name}…");
+        }
+
+        fn print_step(label: &str, resp: &Response, json: bool) {
+            if json {
+                return;
+            }
+            if resp.ok {
+                println!("  ✓ {label}");
+            } else {
+                println!("  ✗ {label}: {}", resp.error.as_deref().unwrap_or("failed"));
+            }
+        }
+
+        // 1. Link the project (critical).
+        let resp = client::send(
+            &socket,
+            &Request::Link {
+                path: dir.to_string_lossy().into_owned(),
+                name: Some(name.clone()),
+            },
+        )
+        .await?;
+        print_step("link", &resp, json);
+        if !resp.ok {
+            anyhow::bail!("could not link the project");
+        }
+
+        // 2. HTTPS.
+        let resp = client::send(
+            &socket,
+            &Request::Secure {
+                name: name.clone(),
+                enable: pf.secure,
+            },
+        )
+        .await?;
+        print_step(
+            if pf.secure { "https on" } else { "https off" },
+            &resp,
+            json,
+        );
+
+        // 3. PHP: ensure installed, then pin.
+        if let Some(php) = &pf.php {
+            if !json {
+                println!("  … PHP {php} (may download)");
+            }
+            let _ = client::send(
+                &socket,
+                &Request::PhpInstall {
+                    version: php.clone(),
+                },
+            )
+            .await;
+            let resp = client::send(
+                &socket,
+                &Request::Isolate {
+                    name: name.clone(),
+                    version: Some(php.clone()),
+                },
+            )
+            .await?;
+            print_step(&format!("php {php}"), &resp, json);
+        }
+
+        // 4. Node.
+        if let Some(node) = &pf.node {
+            if !json {
+                println!("  … Node {node} (may download)");
+            }
+            let _ = client::send(
+                &socket,
+                &Request::NodeInstall {
+                    version: node.clone(),
+                },
+            )
+            .await;
+            let resp = client::send(
+                &socket,
+                &Request::SiteNode {
+                    name: name.clone(),
+                    version: Some(node.clone()),
+                },
+            )
+            .await?;
+            print_step(&format!("node {node}"), &resp, json);
+        }
+
+        // 5. Services.
+        for svc in &pf.services {
+            if !json {
+                println!("  … {svc} (may download)");
+            }
+            let _ = client::send(&socket, &Request::ServiceInstall { key: svc.clone() }).await;
+            let resp = client::send(&socket, &Request::ServiceStart { key: svc.clone() }).await?;
+            print_step(svc, &resp, json);
+        }
+
+        // 6. Dev processes.
+        if pf.dev && !no_dev {
+            let resp = client::send(&socket, &Request::DevStart { site: name.clone() }).await?;
+            print_step("dev", &resp, json);
+        }
+
+        let scheme = if pf.secure { "https" } else { "http" };
+        output::print_message(&format!("{name} is up → {scheme}://{name}.test"), json);
+        Ok(())
+    }
+
     pub async fn share(
         paths: &GrovePaths,
         site: String,

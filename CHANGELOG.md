@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-07
+
+### Added
+
+- **`grove.toml` + `grove up` — reproducible project environments.** Commit a
+  small `grove.toml` describing what a project needs (PHP/Node versions, bundled
+  services, HTTPS, dev processes); a teammate then goes from `git clone` to a
+  running, identical setup with a single command:
+    - `grove up` links the project, pins its PHP/Node, ensures its services are
+      installed + running, and (optionally) starts its dev processes.
+    - `grove up --write` scaffolds a friendly, commented starter `grove.toml`.
+    - `grove up [path]` targets a directory other than the cwd; `--no-dev`
+      skips dev processes.
+  It orchestrates the same daemon operations you'd run by hand, in one step.
+
 ## [0.7.0] — 2026-07-07
 
 ### Added
@@ -150,6 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.8.0]: https://github.com/kwhorne/grove/releases/tag/v0.8.0
 [0.7.0]: https://github.com/kwhorne/grove/releases/tag/v0.7.0
 [0.6.0]: https://github.com/kwhorne/grove/releases/tag/v0.6.0
 [0.5.2]: https://github.com/kwhorne/grove/releases/tag/v0.5.2

@@ -92,6 +92,28 @@ register a PHP that has it (`grove php register`).
 | `grove service port <key> <port>` | Override a service's listen port. |
 | `grove env [site]` | Print a `.env` snippet for the bundled services. |
 
+## Reproducible environments (`grove.toml`)
+
+Commit a `grove.toml` to a project so a teammate can go from `git clone` to a
+running, identical environment in one command.
+
+| Command | Description |
+| --- | --- |
+| `grove up` | Bring the current project up from its `grove.toml` (link, pin PHP/Node, start services, optional dev). |
+| `grove up <path>` | Target a different project directory. |
+| `grove up --write` | Scaffold a starter `grove.toml` for the current project. |
+| `grove up --no-dev` | Bring up but skip starting dev processes. |
+
+```toml
+# grove.toml
+name = "myapp"
+php = "8.4"
+node = "22"
+secure = true
+services = ["mysql", "redis"]
+dev = true
+```
+
 ## Request timeline
 
 Grove proxies every `*.test` site, so it records a live, framework-agnostic log

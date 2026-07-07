@@ -192,6 +192,19 @@ pub enum Command {
         action: DevAction,
     },
 
+    /// Bring a project's environment up from its `grove.toml` (link, pin PHP/Node,
+    /// start services, optional dev) — one command after `git clone`.
+    Up {
+        /// Project directory (defaults to the current directory).
+        path: Option<String>,
+        /// Write a starter `grove.toml` instead of bringing the project up.
+        #[arg(long)]
+        write: bool,
+        /// Skip starting dev processes even if `grove.toml` enables them.
+        #[arg(long = "no-dev")]
+        no_dev: bool,
+    },
+
     /// Show a live timeline of recent requests Grove proxied (any site, any framework).
     Requests {
         /// Only show requests for this site (host or name).

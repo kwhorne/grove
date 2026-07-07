@@ -222,6 +222,37 @@ docs.test         static     8.4     no     http://docs.test
 Grove auto-detects the right driver (Laravel, WordPress, plain PHP, static, or a
 reverse proxy) from each project's contents.
 
+### Option C — Reproducible with `grove.toml`
+
+Commit a `grove.toml` to a project so anyone can reproduce its environment. From
+a fresh clone:
+
+```bash
+grove up --write     # scaffold a starter grove.toml (edit to taste)
+grove up             # link + pin PHP/Node + start services + optional dev
+```
+
+```toml
+# grove.toml
+name = "myapp"
+php = "8.4"
+services = ["mysql", "redis"]
+dev = true
+```
+
+```text
+Bringing up myapp…
+  ✓ link
+  ✓ https on
+  ✓ php 8.4
+  ✓ mysql
+  ✓ redis
+  ✓ dev
+✓ myapp is up → https://myapp.test
+```
+
+A teammate goes from `git clone` to a running, identical setup with one command.
+
 ---
 
 ## 7. Enable HTTPS and pin a PHP version

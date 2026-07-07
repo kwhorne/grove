@@ -53,6 +53,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself, so there is no database/cache or Homebrew to install separately.
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer.
 - 🌍 **Public tunnels** — `grove share` exposes a local site to the internet (demos, webhooks) via a self-hostable, native Expose/ngrok alternative.
+- 📦 **Reproducible environments** — commit a `grove.toml` (PHP/Node versions, services, HTTPS, dev), and a teammate goes from `git clone` to a running, identical setup with one `grove up`.
 - ⇄ **Request timeline** — Grove is the proxy, so it records a live, framework-agnostic log of every request (method, path, status, duration) — a zero-config Telescope for any site, in the CLI (`grove requests`) and a live GUI panel.
 - 🛠 **Tools** — migrate MySQL from Herd, and convert whole databases between MySQL, PostgreSQL and SQLite.
 - ⏱️ **Database snapshots** — `grove db snapshot` takes a point-in-time SQL snapshot of the bundled MySQL/PostgreSQL and `grove db restore` rolls it back, so risky migrations are fearless.
@@ -109,7 +110,7 @@ no Homebrew, no Composer, no Valet.
 | --- | --- |
 | Setup | `init`, `ca trust` / `ca uninstall`, `install` / `uninstall` (service) |
 | Lifecycle | `daemon`, `start`, `stop`, `restart` |
-| Sites | `new`, `park` / `unpark`, `link` / `unlink`, `list`, `secure` / `unsecure`, `isolate` / `unisolate`, `proxy` |
+| Sites | `new`, `up` (from `grove.toml`), `park` / `unpark`, `link` / `unlink`, `list`, `secure` / `unsecure`, `isolate` / `unisolate`, `proxy` |
 | PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
 | Node | `node list`, `node install <version>`, `node use <site> <version>`, `node unuse <site>` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |

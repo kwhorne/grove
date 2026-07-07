@@ -71,6 +71,10 @@ local Unix-socket JSON-RPC.
   `runtimes/` dir, so the user-run shims never need write access.
 - **Database snapshots** — `grove db` dumps/restores the bundled MySQL /
   PostgreSQL via their own client tools, indexed under `snapshots/`.
+- **Reproducible environments** — `grove up` reads a project's committed
+  `grove.toml` (`grove-core::ProjectFile`) and orchestrates the existing daemon
+  operations (link, isolate, node pin, service install/start, dev start) so a
+  fresh clone comes up identically in one command.
 - **Request timeline** — the proxy handler records every request (method, path,
   status, duration) into a bounded in-memory ring buffer in `grove-core`
   (`RequestLog`), shared with the daemon so `grove requests` and the GUI panel
