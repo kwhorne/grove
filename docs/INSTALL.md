@@ -340,6 +340,20 @@ MAIL_HOST=127.0.0.1
 MAIL_PORT=1025
 ```
 
+### Snapshots (time-travel before a risky migration)
+
+Because Grove owns the database, it can snapshot and roll it back in one command:
+
+```bash
+grove db snapshot --db myapp --note "before migrate"
+# ...run the scary migration...
+grove db list
+grove db restore <id>     # data restored exactly as it was
+```
+
+Snapshots are plain SQL dumps under `$GROVE_HOME/snapshots/`. Works for MySQL
+(omit `--db` for all databases) and PostgreSQL (`--engine postgres`).
+
 ---
 
 ## 10. PHP & Node versions
@@ -370,6 +384,27 @@ grove node use 22
 ✓ Node 22.x installed
 ✓ default Node set to 22
 ```
+
+### Use them in your terminal (drop Herd/Valet)
+
+By default Grove uses these bundled runtimes to *serve* your sites. To also use
+them in your shell — so `php`, `composer`, `node`, `npm`, `npx` and `laravel`
+resolve to whatever version each project pins — add the shims to your PATH:
+
+```bash
+grove path install
+```
+
+```text
+✓ Installed shims for php, composer, node, npm, npx, laravel.
+✓ provisioned toolchain: PHP 8.4 CLI, Composer, Node 22
+
+    echo 'export PATH="$HOME/Library/Application Support/Grove/shims:$PATH"' >> ~/.zshrc
+```
+
+Add that line, restart your shell, and your terminal `php` / `composer` come from
+Grove — auto-switching per project. This is what lets you uninstall Herd/Valet
+entirely; afterwards run `sudo grove install` once to re-assert the resolver + CA.
 
 ---
 
@@ -493,6 +528,13 @@ installed app bundle.
 ---
 
 ## 14. Uninstalling
+
+If you added the toolchain to your PATH, remove the shims first (and delete the
+PATH line from your shell profile):
+
+```bash
+grove path uninstall
+```
 
 Remove the background service, the DNS resolver and the CA trust:
 

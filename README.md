@@ -54,6 +54,8 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer.
 - 🌍 **Public tunnels** — `grove share` exposes a local site to the internet (demos, webhooks) via a self-hostable, native Expose/ngrok alternative.
 - 🛠 **Tools** — migrate MySQL from Herd, and convert whole databases between MySQL, PostgreSQL and SQLite.
+- ⏱️ **Database snapshots** — `grove db snapshot` takes a point-in-time SQL snapshot of the bundled MySQL/PostgreSQL and `grove db restore` rolls it back, so risky migrations are fearless.
+- 🔀 **Toolchain on your PATH** — `grove path install` puts the bundled `php`, `composer`, `node`, `npm` and `laravel` on your PATH, auto-switching to each project's pinned version — so you can drop Herd/Valet entirely.
 - 🐳 **Docker / OrbStack aware** — auto-discovers containers and serves them as `<name>.test` with trusted local HTTPS, next to native sites.
 - ⚡ **Runs your dev processes** — `grove dev` supervises `npm run dev` (Vite HMR) + a queue worker per site; no `artisan serve` needed.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
@@ -110,6 +112,9 @@ no Homebrew, no Composer, no Valet.
 | PHP | `php install`, `php register`, `php discover`, `php list`, `use` |
 | Node | `node list`, `node install <version>`, `node use <site> <version>`, `node unuse <site>` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |
+| Databases | `db snapshot`, `db list`, `db restore <id>`, `db rm <id>` |
+| Toolchain | `path install`, `path show`, `path uninstall` |
+| Dev | `dev start <site>`, `dev stop <site>`, `dev list` |
 | Tunnels | `share <site>` (public URL via `grove-tunnel` server) |
 | Mail | `mail`, `mail show <id>`, `mail clear` |
 | Logs | `logs` (list sources), `logs <site>` (view entries) |

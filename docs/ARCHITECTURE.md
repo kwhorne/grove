@@ -35,8 +35,8 @@ local Unix-socket JSON-RPC.
 | `grove-tls` | Root CA generation + on-demand leaf issuance (rcgen/rustls). |
 | `grove-dns` | Embedded authoritative resolver for `*.<tld>` (hickory). |
 | `grove-proxy` | HTTP/HTTPS listeners, per-driver dispatch, SNI cert resolution, and a minimal FastCGI client. |
-| `grove-runtime` | PHP version management + lazy FPM pools; Node version management; project scaffolding. |
-| `grove-services` | Bundled service manager (PostgreSQL/MySQL/Redis) + the SMTP mail-catcher + cross-dialect database conversion. |
+| `grove-runtime` | PHP version management + lazy FPM pools; Node version management; project scaffolding; the bundled toolchain (Composer, Laravel installer) exposed by `grove path`. |
+| `grove-services` | Bundled service manager (PostgreSQL/MySQL/Redis) + the SMTP mail-catcher + cross-dialect database conversion + point-in-time database snapshots. |
 | `grove-tunnel` | Native public tunnels: `grove share` client + the self-hostable `grove-tunnel` server (yamux + hyper). |
 | `grove-os` | Platform integration: resolver setup, trust store, OS service install, elevation checks. |
 | `grove-daemon` | The long-running process: boots listeners, supervises runtimes/services, serves IPC. |
@@ -65,6 +65,12 @@ local Unix-socket JSON-RPC.
   a yamux-multiplexed connection. See [TUNNEL.md](TUNNEL.md).
 - **Xdebug** — when enabled, FPM pools are respawned with `-d` Xdebug INI
   overrides (trigger mode). See [DEBUGGING.md](DEBUGGING.md).
+- **Toolchain on PATH** — `grove path` writes read-only shims that resolve each
+  project's pinned `php`/`node`/`composer` version and `exec` it. Runtimes are
+  provisioned by the (root) daemon (`ProvisionToolchain`) into the shared
+  `runtimes/` dir, so the user-run shims never need write access.
+- **Database snapshots** — `grove db` dumps/restores the bundled MySQL /
+  PostgreSQL via their own client tools, indexed under `snapshots/`.
 
 ## Zero external dependencies
 
@@ -81,9 +87,11 @@ default such as `~/Library/Application Support/Grove`):
 
 ```
 config.toml            declarative source of truth
-certs/                 root CA + issued leaf certs
+certs/                 root CA + issued leaf certs (incl. certs/dev for Vite HTTPS)
 runtimes/              PHP/Node builds, FPM configs, php-builds.json, composer.phar
 services/              bundled DB/cache binaries + data dirs + state.json
+snapshots/             database snapshots (SQL dumps) + index.json
+shims/                 `grove path` shims (php, composer, node, npm, npx, laravel)
 logs/                  per-service logs
 run/                   daemon IPC socket, pidfile, FPM/service sockets
 ```
