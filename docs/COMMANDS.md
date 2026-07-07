@@ -92,6 +92,31 @@ register a PHP that has it (`grove php register`).
 | `grove service port <key> <port>` | Override a service's listen port. |
 | `grove env [site]` | Print a `.env` snippet for the bundled services. |
 
+## Database snapshots
+
+Point-in-time snapshots of Grove's bundled MySQL / PostgreSQL — snapshot before a
+risky migration and roll back in one command. Stored as SQL under
+`$GROVE_HOME/snapshots/`.
+
+| Command | Description |
+| --- | --- |
+| `grove db snapshot [--engine mysql\|postgres] [--db NAME] [--note TEXT]` | Snapshot a database (MySQL: omit `--db` for all). |
+| `grove db list` | List stored snapshots. |
+| `grove db restore <id>` | Restore a snapshot by id. |
+| `grove db rm <id>` | Delete a snapshot. |
+
+## Toolchain on your PATH
+
+Expose Grove's bundled `php`, `composer`, `node`, `npm`, `npx` and `laravel`,
+auto-switching to whatever version each project pins (`grove isolate` /
+`grove node use`) — so you can drop Herd/Valet entirely.
+
+| Command | Description |
+| --- | --- |
+| `grove path install` | Create the shims + provision the toolchain, then print the PATH line to add. |
+| `grove path show` | Show whether the shims are installed and on your PATH. |
+| `grove path uninstall` | Remove the shims. |
+
 ## Docker / OrbStack
 
 Running containers are discovered automatically and served as `<name>.test` with

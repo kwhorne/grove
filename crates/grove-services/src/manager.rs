@@ -398,6 +398,104 @@ impl ServiceManager {
         ))
     }
 
+    /// Ensure a bundled DB service is installed + running, returning (bin, port).
+    fn db_ready(&self, key: &str) -> Result<(PathBuf, u16)> {
+        let spec = catalog::spec(key).ok_or_else(|| ServiceError::Unknown(key.into()))?;
+        if !self.is_installed(spec) {
+            return Err(ServiceError::NotInstalled(format!(
+                "{key} (add it under Services first)"
+            )));
+        }
+        if !self.is_running(key) {
+            self.start(key)?;
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+        }
+        let bin = self
+            .bin_dir(spec)
+            .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
+        Ok((bin, self.effective_port(spec)))
+    }
+
+    /// Dump a database (or all user databases when `db` is None) from Grove's
+    /// bundled MySQL to `out` as SQL.
+    pub fn snapshot_mysql(&self, db: Option<&str>, out: &std::path::Path) -> Result<()> {
+        let (bin, port) = self.db_ready("mysql")?;
+        let file = std::fs::File::create(out)?;
+        let mut cmd = std::process::Command::new(bin.join("mysqldump"));
+        cmd.args(["-h", "127.0.0.1", "-P", &port.to_string(), "-u", "root"])
+            .args([
+                "--single-transaction",
+                "--routines",
+                "--triggers",
+                "--events",
+                "--no-tablespaces",
+                "--column-statistics=0",
+            ]);
+        match db {
+            Some(name) => {
+                cmd.arg("--databases").arg(name);
+            }
+            None => {
+                cmd.arg("--all-databases");
+            }
+        }
+        cmd.stdout(file);
+        if !cmd.status()?.success() {
+            let _ = std::fs::remove_file(out);
+            return Err(ServiceError::Init("mysqldump failed".into()));
+        }
+        Ok(())
+    }
+
+    /// Restore an SQL dump into Grove's bundled MySQL.
+    pub fn restore_mysql(&self, sql: &std::path::Path) -> Result<()> {
+        let (bin, port) = self.db_ready("mysql")?;
+        let infile = std::fs::File::open(sql)?;
+        let out = std::process::Command::new(bin.join("mysql"))
+            .args(["-h", "127.0.0.1", "-P", &port.to_string(), "-u", "root"])
+            .stdin(infile)
+            .output()?;
+        if !out.status.success() {
+            return Err(ServiceError::Init(format!(
+                "restore into MySQL failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Dump a PostgreSQL database (self-contained, with CREATE/DROP) to `out`.
+    pub fn snapshot_postgres(&self, db: &str, out: &std::path::Path) -> Result<()> {
+        let (bin, port) = self.db_ready("postgres")?;
+        let status = std::process::Command::new(bin.join("pg_dump"))
+            .args(["-h", "127.0.0.1", "-p", &port.to_string(), "-U", "grove"])
+            .args(["--clean", "--create", "-d", db, "-f"])
+            .arg(out)
+            .status()?;
+        if !status.success() {
+            let _ = std::fs::remove_file(out);
+            return Err(ServiceError::Init("pg_dump failed".into()));
+        }
+        Ok(())
+    }
+
+    /// Restore a PostgreSQL dump (created with --create) via the `postgres` db.
+    pub fn restore_postgres(&self, sql: &std::path::Path) -> Result<()> {
+        let (bin, port) = self.db_ready("postgres")?;
+        let out = std::process::Command::new(bin.join("psql"))
+            .args(["-h", "127.0.0.1", "-p", &port.to_string(), "-U", "grove"])
+            .args(["-d", "postgres", "-f"])
+            .arg(sql)
+            .output()?;
+        if !out.status.success() {
+            return Err(ServiceError::Init(format!(
+                "restore into PostgreSQL failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(())
+    }
+
     /// Initialise a MySQL data directory with a passwordless root (local dev).
     fn init_mysql(&self, spec: &ServiceSpec, progress: &impl Fn(&str)) -> Result<()> {
         let data = self.data_dir(spec);

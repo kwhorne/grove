@@ -29,8 +29,18 @@ pub enum ScaffoldError {
 
 pub type Result<T> = std::result::Result<T, ScaffoldError>;
 
+/// Path to Grove's bundled `composer.phar` (may not exist yet).
+pub fn composer_phar(paths: &GrovePaths) -> PathBuf {
+    paths.runtimes_dir().join("composer.phar")
+}
+
+/// Path to the Grove-managed `laravel` installer binary (may not exist yet).
+pub fn laravel_installer(paths: &GrovePaths) -> PathBuf {
+    composer_home(paths).join("vendor/bin/laravel")
+}
+
 /// Download composer.phar into Grove's runtimes dir if missing.
-fn ensure_composer(paths: &GrovePaths) -> Result<PathBuf> {
+pub fn ensure_composer(paths: &GrovePaths) -> Result<PathBuf> {
     let dest = paths.runtimes_dir().join("composer.phar");
     if dest.exists() {
         return Ok(dest);

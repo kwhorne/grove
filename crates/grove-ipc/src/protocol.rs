@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use grove_core::site::ResolvedSite;
-use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus};
+use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus, Snapshot};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
 /// frontends stay in parity.
@@ -126,6 +126,28 @@ pub enum Request {
     /// Download + install a Node.js version (major or exact).
     NodeInstall {
         version: String,
+    },
+    /// Provision the bundled toolchain (PHP CLI, Composer, Node) so the PATH
+    /// shims created by `grove path` have something to resolve. Runs as the
+    /// (root) daemon so the files land in the shared runtimes dir.
+    ProvisionToolchain {
+        php: Option<String>,
+    },
+    /// Snapshot a database from Grove's bundled MySQL / PostgreSQL.
+    DbSnapshot {
+        engine: String,
+        database: Option<String>,
+        note: Option<String>,
+    },
+    /// List stored database snapshots.
+    DbSnapshotList,
+    /// Restore a stored snapshot by id.
+    DbSnapshotRestore {
+        id: String,
+    },
+    /// Delete a stored snapshot by id.
+    DbSnapshotRemove {
+        id: String,
     },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
@@ -252,6 +274,8 @@ pub enum ResponseData {
     Xdebug(XdebugStatus),
     /// Site names with dev processes running.
     DevSites(Vec<String>),
+    /// Stored database snapshots.
+    Snapshots(Vec<Snapshot>),
 }
 
 /// Xdebug state + per-build availability, for `grove debug status` and the GUI.

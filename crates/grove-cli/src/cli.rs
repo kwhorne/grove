@@ -191,6 +191,65 @@ pub enum Command {
         #[command(subcommand)]
         action: DevAction,
     },
+
+    /// Snapshot / restore Grove's bundled databases (time-travel before risky migrations).
+    Db {
+        #[command(subcommand)]
+        action: DbAction,
+    },
+
+    /// Put Grove's bundled PHP, Composer, Node, npm and the Laravel installer on
+    /// your PATH (per-directory version switching, like Herd — but zero-config).
+    Path {
+        #[command(subcommand)]
+        action: Option<PathAction>,
+    },
+
+    /// (internal) Resolve and exec a bundled tool for a directory. Used by the
+    /// shims that `grove path install` creates.
+    #[command(hide = true)]
+    Resolve {
+        /// Tool to run: php, composer, node, npm, npx or laravel.
+        tool: String,
+        /// Directory whose site pins the version (defaults to the cwd).
+        #[arg(long)]
+        dir: Option<String>,
+        /// Arguments passed through to the tool.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DbAction {
+    /// Take a snapshot of a bundled database.
+    Snapshot {
+        /// Engine: mysql (default) or postgres.
+        #[arg(long, default_value = "mysql")]
+        engine: String,
+        /// Database name. Omit for all MySQL databases; required for postgres.
+        #[arg(long)]
+        db: Option<String>,
+        /// Optional note to remember why you took it.
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// List stored snapshots.
+    List,
+    /// Restore a snapshot by id (see `grove db list`).
+    Restore { id: String },
+    /// Delete a snapshot by id.
+    Rm { id: String },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum PathAction {
+    /// Show whether the shims are installed and the line to add to your shell.
+    Show,
+    /// Create the shims and print the line to add to your shell profile.
+    Install,
+    /// Remove the shims.
+    Uninstall,
 }
 
 #[derive(Subcommand, Debug)]

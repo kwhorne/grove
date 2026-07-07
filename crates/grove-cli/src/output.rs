@@ -173,6 +173,24 @@ pub fn print_response(resp: &Response, json: bool) {
                 }
             }
         }
+        Some(ResponseData::Snapshots(snaps)) => {
+            if snaps.is_empty() {
+                println!("no database snapshots yet — take one with `grove db snapshot`");
+            } else {
+                for s in snaps {
+                    let kb = s.bytes / 1024;
+                    let note = if s.note.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  — {}", s.note)
+                    };
+                    println!(
+                        "{}  {:<9} {:<20} {:>6} KB  {}{}",
+                        s.id, s.engine, s.database, kb, s.created, note
+                    );
+                }
+            }
+        }
         Some(ResponseData::Xdebug(x)) => {
             println!(
                 "Xdebug {} (DBGp port {})",

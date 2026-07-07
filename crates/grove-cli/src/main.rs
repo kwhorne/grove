@@ -12,8 +12,8 @@ use grove_ipc::client;
 use grove_ipc::protocol::{Request, ResponseData};
 
 use cli::{
-    CaAction, Cli, Command, DebugAction, DevAction, MailAction, NodeAction, PhpAction,
-    ServiceAction,
+    CaAction, Cli, Command, DbAction, DebugAction, DevAction, MailAction, NodeAction, PathAction,
+    PhpAction, ServiceAction,
 };
 
 #[tokio::main]
@@ -32,6 +32,31 @@ async fn main() -> anyhow::Result<()> {
 
         Command::Ca { action } => local::ca(&paths, action, args.json),
         Command::Php { action } => local::php(&paths, action, args.json),
+        Command::Path { action } => {
+            let action = action.unwrap_or(PathAction::Show);
+            local::path(&paths, action.clone(), args.json)?;
+            if matches!(action, PathAction::Install) {
+                let socket = paths.ipc_socket();
+                if client::is_running(&socket).await {
+                    if !args.json {
+                        eprintln!("\nProvisioning the bundled toolchain (php, composer, node)…");
+                    }
+                    let resp =
+                        client::send(&socket, &Request::ProvisionToolchain { php: None }).await?;
+                    output::print_response(&resp, args.json);
+                } else if !args.json {
+                    eprintln!(
+                        "\nStart Grove to provision the toolchain: `grove start`, then re-run `grove path install`."
+                    );
+                }
+            }
+            Ok(())
+        }
+        Command::Resolve {
+            tool,
+            dir,
+            args: rest,
+        } => local::resolve(&paths, &tool, dir, rest),
         Command::Debug {
             action: DebugAction::Env,
         } => local::debug_env(&paths, args.json),
@@ -215,6 +240,16 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             ServiceAction::Restart { key } => Request::ServiceRestart { key },
             ServiceAction::Port { key, port } => Request::ServiceSetPort { key, port },
         },
+        Command::Db { action } => match action {
+            DbAction::Snapshot { engine, db, note } => Request::DbSnapshot {
+                engine,
+                database: db,
+                note,
+            },
+            DbAction::List => Request::DbSnapshotList,
+            DbAction::Restore { id } => Request::DbSnapshotRestore { id },
+            DbAction::Rm { id } => Request::DbSnapshotRemove { id },
+        },
         Command::Daemon
         | Command::Ca { .. }
         | Command::Php { .. }
@@ -228,6 +263,8 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Share { .. }
         | Command::Env { .. }
         | Command::Logs { .. }
+        | Command::Path { .. }
+        | Command::Resolve { .. }
         | Command::Gui => {
             unreachable!("handled before to_request")
         }
@@ -696,7 +733,7 @@ mod local {
     use grove_os::PlatformIntegration;
     use grove_runtime::{PhpBuild, PhpRegistry};
     use grove_tls::CertificateAuthority;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     pub fn ca(paths: &GrovePaths, action: CaAction, json: bool) -> anyhow::Result<()> {
         let platform = grove_os::current();
@@ -784,5 +821,242 @@ mod local {
             }
         }
         Ok(())
+    }
+
+    const SHIM_TOOLS: [&str; 6] = ["php", "composer", "node", "npm", "npx", "laravel"];
+
+    /// Manage the PATH shims that expose Grove's bundled toolchain.
+    pub fn path(paths: &GrovePaths, action: PathAction, json: bool) -> anyhow::Result<()> {
+        let shims = paths.base().join("shims");
+        match action {
+            PathAction::Install => {
+                let grove_bin = std::env::current_exe().context("locating the grove binary")?;
+                std::fs::create_dir_all(&shims)?;
+                for tool in SHIM_TOOLS {
+                    let script = format!(
+                        "#!/bin/sh\n# Managed by `grove path` — resolves the version Grove pinned for this dir.\nexec \"{}\" resolve {} --dir \"$PWD\" -- \"$@\"\n",
+                        grove_bin.display(),
+                        tool,
+                    );
+                    let dest = shims.join(tool);
+                    std::fs::write(&dest, script)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
+                    }
+                }
+                print_path_instructions(&shims, true, json);
+            }
+            PathAction::Uninstall => {
+                if shims.exists() {
+                    std::fs::remove_dir_all(&shims)?;
+                }
+                output::print_message(
+                    "Removed Grove shims. Delete the PATH line from your shell profile too.",
+                    json,
+                );
+            }
+            PathAction::Show => {
+                let installed = shims.join("php").exists();
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "ok": true,
+                            "installed": installed,
+                            "shims_dir": shims.display().to_string(),
+                            "on_path": path_contains(&shims),
+                            "tools": SHIM_TOOLS,
+                        })
+                    );
+                } else if installed {
+                    print_path_instructions(&shims, false, json);
+                } else {
+                    println!("Grove shims are not installed. Run `grove path install`.");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn path_contains(dir: &Path) -> bool {
+        std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).any(|e| e == dir))
+            .unwrap_or(false)
+    }
+
+    fn print_path_instructions(shims: &Path, just_installed: bool, json: bool) {
+        if json {
+            return;
+        }
+        let dir = shims.display();
+        if just_installed {
+            println!("✓ Installed shims for {}.\n", SHIM_TOOLS.join(", "));
+        }
+        if path_contains(shims) {
+            println!("Grove's toolchain is on your PATH ({dir}).");
+            println!("php, composer, node, npm, npx and laravel now resolve to the version each project pins.");
+            return;
+        }
+        let shell = std::env::var("SHELL").unwrap_or_default();
+        println!("Add Grove's toolchain to your PATH, then restart your shell:\n");
+        if shell.ends_with("fish") {
+            println!("    fish_add_path {dir}\n");
+        } else {
+            let profile = if shell.ends_with("zsh") {
+                "~/.zshrc"
+            } else {
+                "~/.bashrc"
+            };
+            println!("    echo 'export PATH=\"{dir}:$PATH\"' >> {profile}\n");
+        }
+        println!("Then `php`, `composer`, `node`, `npm`, `npx` and `laravel` use Grove's bundled versions,");
+        println!(
+            "auto-switching to whatever each project pins with `grove isolate` / `grove node use`."
+        );
+    }
+
+    /// Resolve a bundled tool for `dir` and exec it (replacing this process).
+    pub fn resolve(
+        paths: &GrovePaths,
+        tool: &str,
+        dir: Option<String>,
+        args: Vec<String>,
+    ) -> anyhow::Result<()> {
+        let dir = dir
+            .map(PathBuf::from)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let cfg = grove_core::Config::load(paths).unwrap_or_default();
+        let (php_pin, node_pin) = pins_for_dir(&cfg, &dir);
+
+        let (bin, lead): (PathBuf, Vec<PathBuf>) = match tool {
+            "php" => (resolve_php(paths, &cfg, php_pin)?, vec![]),
+            "composer" => {
+                let php = resolve_php(paths, &cfg, php_pin)?;
+                let phar = grove_runtime::scaffold::ensure_composer(paths)
+                    .map_err(|e| anyhow::anyhow!("preparing composer: {e}"))?;
+                (php, vec![phar])
+            }
+            "laravel" => {
+                let php = resolve_php(paths, &cfg, php_pin)?;
+                let installer = grove_runtime::scaffold::laravel_installer(paths);
+                if !installer.exists() {
+                    anyhow::bail!(
+                        "the Laravel installer isn't set up yet — run `grove new <name>` once (it installs it), then retry"
+                    );
+                }
+                (php, vec![installer])
+            }
+            "node" => (resolve_node(paths, node_pin)?.0, vec![]),
+            "npm" => (resolve_node(paths, node_pin)?.1, vec![]),
+            "npx" => (resolve_node(paths, node_pin)?.2, vec![]),
+            other => anyhow::bail!(
+                "unknown tool {other:?}; use php, composer, node, npm, npx or laravel"
+            ),
+        };
+
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.args(&lead).args(&args);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let err = cmd.exec();
+            anyhow::bail!("failed to exec {}: {err}", bin.display());
+        }
+        #[cfg(not(unix))]
+        {
+            let status = cmd.status()?;
+            std::process::exit(status.code().unwrap_or(1));
+        }
+    }
+
+    /// (php_version_override, node_major_override) from the site containing `dir`.
+    fn pins_for_dir(cfg: &grove_core::Config, dir: &Path) -> (Option<String>, Option<String>) {
+        cfg.sites
+            .iter()
+            .filter(|s| {
+                s.path
+                    .as_deref()
+                    .map(|p| dir.starts_with(p))
+                    .unwrap_or(false)
+            })
+            .max_by_key(|s| {
+                s.path
+                    .as_deref()
+                    .map(|p| p.components().count())
+                    .unwrap_or(0)
+            })
+            .map(|s| (s.php.clone(), s.node.clone()))
+            .unwrap_or((None, None))
+    }
+
+    fn resolve_php(
+        paths: &GrovePaths,
+        cfg: &grove_core::Config,
+        pin: Option<String>,
+    ) -> anyhow::Result<PathBuf> {
+        let version = pin.unwrap_or_else(|| cfg.general.default_php.clone());
+        // Shims run as the user and can only read what the (root) daemon
+        // provisioned, so never download here — resolve read-only.
+        let reg = PhpRegistry::load(paths);
+        if let Some(cli) = reg
+            .iter()
+            .filter(|b| b.version.starts_with(&version) || version.starts_with(&b.version))
+            .find_map(|b| b.cli_binary.clone())
+            .filter(|p| p.exists())
+        {
+            return Ok(cli);
+        }
+        // A CLI provisioned by `grove new` / `grove path install` lives under
+        // runtimes/cli/<minor>/php. Prefer the pinned version, else the newest.
+        let cli_root = paths.runtimes_dir().join("cli");
+        let mut candidates: Vec<PathBuf> = std::fs::read_dir(&cli_root)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.join("php").exists())
+            .collect();
+        candidates.sort();
+        if let Some(hit) = candidates.iter().find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with(&version))
+                .unwrap_or(false)
+        }) {
+            return Ok(hit.join("php"));
+        }
+        if let Some(newest) = candidates.last() {
+            return Ok(newest.join("php"));
+        }
+        anyhow::bail!(
+            "no PHP {version} runtime found — run `grove path install` (or `grove php install {version}`) to provision it"
+        )
+    }
+
+    fn resolve_node(
+        paths: &GrovePaths,
+        pin: Option<String>,
+    ) -> anyhow::Result<(PathBuf, PathBuf, PathBuf)> {
+        let reg = grove_runtime::NodeRegistry::load(paths);
+        let build = pin
+            .as_deref()
+            .and_then(|major| reg.get(major).cloned())
+            .or_else(|| {
+                reg.iter()
+                    .max_by_key(|b| b.major.parse::<u32>().unwrap_or(0))
+                    .cloned()
+            });
+        let Some(b) = build else {
+            anyhow::bail!("no Node installed — run `grove node install 22`");
+        };
+        let npx = b
+            .node_binary
+            .parent()
+            .map(|d| d.join("npx"))
+            .unwrap_or_else(|| PathBuf::from("npx"));
+        Ok((b.node_binary, b.npm_binary, npx))
     }
 }

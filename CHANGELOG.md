@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-07
+
+### Added
+
+- **`grove path` — the bundled toolchain on your PATH.** Installs shims for
+  `php`, `composer`, `node`, `npm`, `npx` and `laravel` that resolve to whatever
+  version each project pins (via `grove isolate` / `grove node use`), falling
+  back to the defaults — zero-config per-directory version switching, so you can
+  finally drop Herd/Valet entirely. Runtimes are provisioned by the (root)
+  daemon so the shims only ever read them.
+    - `grove path install` / `grove path show` / `grove path uninstall`.
+- **`grove db` — database time-travel.** Point-in-time snapshots of Grove's
+  bundled MySQL / PostgreSQL so you can experiment (or migrate) without fear:
+    - `grove db snapshot [--engine mysql|postgres] [--db NAME] [--note TEXT]`
+    - `grove db list`, `grove db restore <id>`, `grove db rm <id>`.
+  Snapshots are plain SQL dumps under `$GROVE_HOME/snapshots/` with a JSON index.
+
 ## [0.5.2] — 2026-07-06
 
 ### Fixed
@@ -118,6 +135,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.6.0]: https://github.com/kwhorne/grove/releases/tag/v0.6.0
 [0.5.2]: https://github.com/kwhorne/grove/releases/tag/v0.5.2
 [0.5.1]: https://github.com/kwhorne/grove/releases/tag/v0.5.1
 [0.5.0]: https://github.com/kwhorne/grove/releases/tag/v0.5.0

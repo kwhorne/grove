@@ -616,6 +616,98 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             ))))
         }
 
+        Request::ProvisionToolchain { php } => {
+            let paths = state.paths.clone();
+            let default_php = state.config.lock().await.general.default_php.clone();
+            let version = php.unwrap_or(default_php);
+            let summary = tokio::task::spawn_blocking(move || {
+                let mut done: Vec<String> = Vec::new();
+                match grove_runtime::install::install_cli(&paths, &version, |_| {}) {
+                    Ok(_) => done.push(format!("PHP {version} CLI")),
+                    Err(e) => done.push(format!("PHP CLI failed: {e}")),
+                }
+                match grove_runtime::scaffold::ensure_composer(&paths) {
+                    Ok(_) => done.push("Composer".into()),
+                    Err(e) => done.push(format!("Composer failed: {e}")),
+                }
+                let mut reg = grove_runtime::NodeRegistry::load(&paths);
+                if reg.iter().next().is_none() {
+                    match grove_runtime::install_node(&paths, &mut reg, "22", |_| {}) {
+                        Ok(_) => {
+                            let _ = reg.save(&paths);
+                            done.push("Node 22".into());
+                        }
+                        Err(e) => done.push(format!("Node failed: {e}")),
+                    }
+                } else {
+                    done.push("Node (already installed)".into());
+                }
+                done.join(", ")
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("provision task panicked: {e}"))?;
+            Ok(Response::ok(ResponseData::Message(format!(
+                "provisioned toolchain: {summary}"
+            ))))
+        }
+
+        Request::DbSnapshot {
+            engine,
+            database,
+            note,
+        } => {
+            let paths = state.paths.clone();
+            let services = state.services.clone();
+            let snap = tokio::task::spawn_blocking(move || {
+                let store = grove_services::SnapshotStore::new(&paths);
+                store.create(
+                    &services,
+                    &engine,
+                    database.as_deref(),
+                    note.as_deref().unwrap_or(""),
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("snapshot task panicked: {e}"))?;
+            match snap {
+                Ok(s) => Ok(Response::ok(ResponseData::Message(format!(
+                    "snapshot {} created ({}, {}, {} bytes)",
+                    s.id, s.engine, s.database, s.bytes
+                )))),
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
+        Request::DbSnapshotList => {
+            let store = grove_services::SnapshotStore::new(&state.paths);
+            Ok(Response::ok(ResponseData::Snapshots(store.list())))
+        }
+        Request::DbSnapshotRestore { id } => {
+            let paths = state.paths.clone();
+            let services = state.services.clone();
+            let res = tokio::task::spawn_blocking(move || {
+                grove_services::SnapshotStore::new(&paths).restore(&services, &id)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("restore task panicked: {e}"))?;
+            match res {
+                Ok(s) => Ok(Response::ok(ResponseData::Message(format!(
+                    "restored snapshot {} into {} ({})",
+                    s.id, s.engine, s.database
+                )))),
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
+        Request::DbSnapshotRemove { id } => {
+            let store = grove_services::SnapshotStore::new(&state.paths);
+            match store.remove(&id) {
+                Ok(s) => Ok(Response::ok(ResponseData::Message(format!(
+                    "deleted snapshot {}",
+                    s.id
+                )))),
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
+
         Request::TunnelStart {
             site,
             subdomain,

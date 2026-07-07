@@ -9,10 +9,12 @@ pub mod catalog;
 pub mod convert;
 pub mod mail;
 pub mod manager;
+pub mod snapshot;
 pub mod store;
 
 pub use catalog::{ServiceKind, ServiceSpec, CATALOG};
 pub use convert::{convert as convert_database, DbConnSpec};
 pub use mail::serve_smtp;
 pub use manager::{ServiceManager, ServiceStatus};
+pub use snapshot::{Snapshot, SnapshotStore};
 pub use store::{CapturedEmail, EmailSummary, MailStore};
