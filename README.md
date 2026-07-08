@@ -250,11 +250,16 @@ service once: `sudo grove install`. The GUI is a dashboard over that daemon.
 ## Grove Pro
 
 Everything above is **free and open source, forever** — the core is never gated.
-**Grove Pro** ($99/seat/year) adds shared, synced team infrastructure on top,
-starting with **end-to-end encrypted team secret sync** (`grove secret`) — a
-project's `.env` shared securely, never pasted into a chat window. Licenses are
-verified offline; secrets are encrypted on your machine (age/X25519) and the
-backend only ever stores ciphertext. See [Pro & Teams](docs/PRO.md).
+**Grove Pro** ($99/seat/year) unlocks power features on top:
+
+- **Database client** — a built-in Database panel that auto-connects from each
+  site's `.env`. Browsing + `SELECT` is free; Pro adds inline row editing, a
+  schema inspector, and a production-safety guard.
+- **End-to-end encrypted team secret sync** (`grove secret`) — a project's `.env`
+  shared securely, never pasted into a chat window. Encrypted on your machine
+  (age/X25519); the backend only ever stores ciphertext.
+
+Licenses are verified offline. See [Pro & Teams](docs/PRO.md).
 
 ## Documentation
 

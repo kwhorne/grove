@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-08
+
+### Added
+
+- **Built-in database client.** A new **Database** panel browses and queries your
+  sites' databases — auto-connected from each project's `.env`, with no
+  connection details to enter. Browsing tables and running `SELECT` queries is
+  free; **Grove Pro** adds inline row editing, a schema inspector (columns,
+  indexes, foreign keys), and a production-safety guard. See the
+  [Pro & Teams guide](docs/PRO.md).
+
 ## [0.10.0] — 2026-07-08
 
 ### Added
@@ -198,6 +209,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.11.0]: https://github.com/kwhorne/grove/releases/tag/v0.11.0
 [0.10.0]: https://github.com/kwhorne/grove/releases/tag/v0.10.0
 [0.9.0]: https://github.com/kwhorne/grove/releases/tag/v0.9.0
 [0.8.1]: https://github.com/kwhorne/grove/releases/tag/v0.8.1

@@ -20,6 +20,10 @@ import type {
   LicenseClaims,
   DbConnInfo,
   DbQueryResult,
+  ColumnInfo,
+  IndexRow,
+  FkRow,
+  PkPair,
   TunnelStatus,
   DbConnSpec,
   XdebugStatus,
@@ -120,6 +124,23 @@ export const api = {
   dbTables: (key: string): Promise<string[]> => invoke("db_tables", { key }),
   dbQuery: (key: string, sql: string): Promise<DbQueryResult> =>
     invoke("db_query", { key, sql }),
+  dbColumns: (key: string, table: string): Promise<ColumnInfo[]> =>
+    invoke("db_columns", { key, table }),
+  dbIndexes: (key: string, table: string): Promise<IndexRow[]> =>
+    invoke("db_indexes", { key, table }),
+  dbForeignKeys: (key: string): Promise<FkRow[]> =>
+    invoke("db_foreign_keys", { key }),
+  dbTableDdl: (key: string, table: string): Promise<string> =>
+    invoke("db_table_ddl", { key, table }),
+  dbUpdateCell: (
+    key: string,
+    table: string,
+    column: string,
+    value: string | null,
+    pk: PkPair[],
+  ): Promise<number> => invoke("db_update_cell", { key, table, column, value, pk }),
+  dbDeleteRow: (key: string, table: string, pk: PkPair[]): Promise<number> =>
+    invoke("db_delete_row", { key, table, pk }),
 
   licenseStatus: (): Promise<LicenseClaims | null> => invoke("license_status"),
   licenseActivate: (key: string): Promise<LicenseClaims | null> =>

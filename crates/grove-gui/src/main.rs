@@ -405,6 +405,145 @@ async fn db_query(key: String, sql: String) -> CmdResult<e_db::QueryResult> {
     .map_err(|e| e.to_string())?
 }
 
+const DB_PRO_MSG: &str =
+    "This is a Grove Pro feature — activate a license to unlock it (elyracode.com/grove).";
+
+type PkPairs = Vec<(String, Option<String>)>;
+
+#[tauri::command]
+async fn db_columns(key: String, table: String) -> CmdResult<Vec<e_db::ColumnInfo>> {
+    if !is_pro().await {
+        return Err(DB_PRO_MSG.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        e_db::columns(&conn, &table)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(serde::Serialize)]
+struct IndexRow {
+    name: String,
+    unique: bool,
+    columns: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct FkRow {
+    table: String,
+    column: String,
+    ref_table: String,
+    ref_column: String,
+}
+
+#[tauri::command]
+async fn db_indexes(key: String, table: String) -> CmdResult<Vec<IndexRow>> {
+    if !is_pro().await {
+        return Err(DB_PRO_MSG.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        Ok(e_db::indexes(&conn, &table)?
+            .into_iter()
+            .map(|i| IndexRow {
+                name: i.name,
+                unique: i.unique,
+                columns: i.columns,
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn db_foreign_keys(key: String) -> CmdResult<Vec<FkRow>> {
+    if !is_pro().await {
+        return Err(DB_PRO_MSG.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        Ok(e_db::foreign_keys(&conn)?
+            .into_iter()
+            .map(|f| FkRow {
+                table: f.table,
+                column: f.column,
+                ref_table: f.ref_table,
+                ref_column: f.ref_column,
+            })
+            .collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn db_table_ddl(key: String, table: String) -> CmdResult<String> {
+    if !is_pro().await {
+        return Err(DB_PRO_MSG.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        e_db::table_ddl(&conn, &table)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn db_update_cell(
+    key: String,
+    table: String,
+    column: String,
+    value: Option<String>,
+    pk: PkPairs,
+) -> CmdResult<u64> {
+    if !is_pro().await {
+        return Err(DB_PRO_MSG.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        e_db::update_cell(&conn, &cfg.engine, &table, &column, value.as_deref(), &pk)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn db_delete_row(key: String, table: String, pk: PkPairs) -> CmdResult<u64> {
+    if !is_pro().await {
+        return Err(DB_PRO_MSG.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        e_db::delete_row(&conn, &cfg.engine, &table, &pk)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn db_insert_row(key: String, table: String, values: PkPairs) -> CmdResult<u64> {
+    if !is_pro().await {
+        return Err(DB_PRO_MSG.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        e_db::insert_row(&conn, &cfg.engine, &table, &values)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn license_status() -> CmdResult<Option<LicenseClaims>> {
     match call(Request::LicenseStatus).await? {
@@ -767,6 +906,13 @@ fn main() {
             db_connections,
             db_tables,
             db_query,
+            db_columns,
+            db_indexes,
+            db_foreign_keys,
+            db_table_ddl,
+            db_update_cell,
+            db_delete_row,
+            db_insert_row,
             php_versions,
             php_install,
             php_list,

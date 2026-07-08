@@ -77,6 +77,28 @@ export interface DbConnInfo {
   is_prod: boolean;
 }
 
+export interface ColumnInfo {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+  key: string;
+}
+
+export interface IndexRow {
+  name: string;
+  unique: boolean;
+  columns: string[];
+}
+
+export interface FkRow {
+  table: string;
+  column: string;
+  ref_table: string;
+  ref_column: string;
+}
+
+export type PkPair = [string, string | null];
+
 export interface DbQueryResult {
   columns: string[];
   rows: (string | null)[][];

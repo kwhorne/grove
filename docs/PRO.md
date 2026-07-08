@@ -4,11 +4,12 @@ Everything you need for local development is **free and open source, forever** �
 serving `*.test` with HTTPS, bundled PHP/Node/databases, mail, tunnels, the
 request timeline, and database snapshots. The core is never gated.
 
-**Grove Pro** adds the layer that appears the moment you stop working alone:
-shared, synced team infrastructure.
+**Grove Pro** unlocks power features on top:
 
-- **End-to-end encrypted team secret sync** — a project's `.env`, shared securely,
-  never pasted into a chat window.
+- **Database client** — browse and edit your databases right inside Grove,
+  auto-connected from each project's `.env`.
+- **End-to-end encrypted team secret sync** (Teams) — a project's `.env`, shared
+  securely, never pasted into a chat window.
 - Priority support and a commercial license.
 
 Pricing is **$99 per seat, per year**. Buy as many seats as your team needs and
@@ -116,7 +117,18 @@ grove secret pull myapp --write       # .env is ready — app runs
 
 ---
 
-## 4. Security model
+## 4. Database client
+
+The **Database** panel in the desktop app connects to each site's database
+**automatically** — Grove reads the connection details from the project's `.env`,
+so there's nothing to configure.
+
+- **Free:** browse tables and run `SELECT` queries in a data grid.
+- **Pro:** edit rows inline (double-click a cell), inspect the schema (columns,
+  indexes, foreign keys), and a **production-safety guard** that flags
+  prod-looking connections and disables editing there.
+
+## 5. Security model
 
 - **End-to-end encryption.** Secrets are encrypted client-side with `age`
   (X25519) to the current members' public keys. Only someone holding a member
@@ -132,7 +144,7 @@ grove secret pull myapp --write       # .env is ready — app runs
 
 ---
 
-## 5. Self-hosting / custom backend
+## 6. Self-hosting / custom backend
 
 The client talks to `https://teams.elyracode.com` by default. Point it elsewhere
 with an environment variable:
@@ -143,7 +155,7 @@ export GROVE_TEAMS_SERVER=https://teams.example.com
 
 ---
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
