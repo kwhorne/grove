@@ -2,6 +2,7 @@
 
 - [**Installation guide**](INSTALL.md) — step-by-step setup with example output.
 - [Architecture](ARCHITECTURE.md) — crates, request flow, on-disk state.
+- [**Migrate from Herd**](MIGRATE-FROM-HERD.md) — move over in a few minutes, nothing lost.
 - [**Pro & Teams**](PRO.md) — licensing + end-to-end encrypted team secret sync.
 - [Docker & OrbStack](DOCKER.md) — serve containers as `*.test` with trusted HTTPS.
 - [Tunnels](TUNNEL.md) — share local sites publicly with `grove share`.
