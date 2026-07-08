@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-07
+
+### Added
+
+- **`grove secret` — end-to-end encrypted team secret sync (Grove Teams).** Share
+  a project's `.env` with your team without ever pasting it into a chat window:
+    - `grove secret set <project> KEY=VALUE` — encrypt + push.
+    - `grove secret pull <project> [--write]` — fetch + decrypt (optionally to `.env`).
+    - `grove secret share <project> <public-key>` / `grove secret revoke …` — grant
+      or remove a teammate and re-encrypt.
+    - `grove secret whoami` / `grove secret members <project>`.
+  Secrets are encrypted **on your machine** (age / X25519) to the current
+  members' public keys; the hosted backend only ever stores ciphertext. Requires
+  an active Grove Teams license.
+
 ## [0.9.0] — 2026-07-07
 
 ### Added
@@ -189,6 +204,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.10.0]: https://github.com/kwhorne/grove/releases/tag/v0.10.0
 [0.9.0]: https://github.com/kwhorne/grove/releases/tag/v0.9.0
 [0.8.1]: https://github.com/kwhorne/grove/releases/tag/v0.8.1
 [0.8.0]: https://github.com/kwhorne/grove/releases/tag/v0.8.0

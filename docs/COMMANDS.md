@@ -114,6 +114,24 @@ services = ["mysql", "redis"]
 dev = true
 ```
 
+## Team secrets (Grove Teams)
+
+End-to-end encrypted `.env` sync for your team. Secrets are encrypted on your
+machine (age / X25519) to members' public keys; the backend only stores
+ciphertext. Requires an active Teams license (`grove license activate`).
+
+| Command | Description |
+| --- | --- |
+| `grove secret set <project> KEY=VALUE` | Encrypt + push a secret. |
+| `grove secret pull <project> [--write]` | Fetch + decrypt (optionally write `.env`). |
+| `grove secret share <project> <public-key>` | Grant a teammate access + re-encrypt. |
+| `grove secret revoke <project> <public-key>` | Remove a teammate + re-encrypt. |
+| `grove secret members <project>` | List members with access. |
+| `grove secret whoami` | Print your member public key. |
+
+The backend URL defaults to `https://teams.elyracode.com` (`GROVE_TEAMS_SERVER`
+overrides it).
+
 ## License (Grove Pro / Teams)
 
 Activate a purchased license to unlock Pro/Teams features. Verified offline
