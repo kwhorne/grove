@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// The store's Ed25519 public key (hex). The matching secret seed lives only on
 /// elyra-web. Replace this for production before shipping paid builds.
-pub const PUBLIC_KEY_HEX: &str = "3ac02668e75cf52913b5793fa546286b838a16d506e6a4df3989e0d02a301aa5";
+pub const PUBLIC_KEY_HEX: &str = "be6f87b6fff94f8c120256d20019ce92b970e2a18c6316f6ca705105bce5bf9f";
 
 /// The human-facing prefix every key carries.
 pub const KEY_PREFIX: &str = "GROVE-";
