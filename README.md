@@ -247,9 +247,18 @@ by Apple**, so it opens normally — download the `.dmg`, drag Grove to
 To actually serve `*.test` (which needs ports 53/80/443), install the background
 service once: `sudo grove install`. The GUI is a dashboard over that daemon.
 
+## Grove Pro
+
+Everything above is **free and open source, forever** — the core is never gated.
+**Grove Pro** ($99/seat/year) adds shared, synced team infrastructure on top,
+starting with **end-to-end encrypted team secret sync** (`grove secret`) — a
+project's `.env` shared securely, never pasted into a chat window. Licenses are
+verified offline; secrets are encrypted on your machine (age/X25519) and the
+backend only ever stores ciphertext. See [Pro & Teams](docs/PRO.md).
+
 ## Documentation
 
-- [Installation guide](docs/INSTALL.md) · [Docker](docs/DOCKER.md) · [Tunnels](docs/TUNNEL.md) · [Debugging](docs/DEBUGGING.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
+- [Installation guide](docs/INSTALL.md) · [Pro & Teams](docs/PRO.md) · [Docker](docs/DOCKER.md) · [Tunnels](docs/TUNNEL.md) · [Debugging](docs/DEBUGGING.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
 - [Changelog](CHANGELOG.md)
 
 ## Contributing

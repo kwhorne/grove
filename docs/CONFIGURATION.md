@@ -107,3 +107,23 @@ support `~` and environment variables.
 > Tip: most changes are easiest via the CLI (`grove secure`, `grove isolate`,
 > `grove node use`, …) or the GUI Settings panel (⌘,), which write this file for
 > you and reload the daemon atomically.
+
+## Environment variables
+
+| Variable | Purpose |
+| --- | --- |
+| `GROVE_HOME` | Base directory for all state (default `~/Library/Application Support/Grove`). |
+| `GROVE_TEAMS_SERVER` | Grove Teams backend URL (default `https://teams.elyracode.com`). |
+| `GROVE_LOG` | Log filter for the daemon (e.g. `info`, `debug`). |
+
+## Other on-disk files
+
+Beyond `config.toml`, Grove keeps a few files outside the config:
+
+| Path | What |
+| --- | --- |
+| `$GROVE_HOME/license.key` | The activated Pro/Teams license (via `grove license activate`). |
+| `~/.grove/bin/` | PATH shims created by `grove path install`. |
+| `~/.grove/identity` | Your Grove Teams member key pair (private — never leaves the machine). |
+| `$GROVE_HOME/snapshots/` | Database snapshots (`grove db`). |
+| `$GROVE_HOME/certs/` | Root CA + issued leaf certificates. |

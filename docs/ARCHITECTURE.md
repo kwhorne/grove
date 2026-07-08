@@ -38,6 +38,8 @@ local Unix-socket JSON-RPC.
 | `grove-runtime` | PHP version management + lazy FPM pools; Node version management; project scaffolding; the bundled toolchain (Composer, Laravel installer) exposed by `grove path`. |
 | `grove-services` | Bundled service manager (PostgreSQL/MySQL/Redis) + the SMTP mail-catcher + cross-dialect database conversion + point-in-time database snapshots. |
 | `grove-tunnel` | Native public tunnels: `grove share` client + the self-hostable `grove-tunnel` server (yamux + hyper). |
+| `grove-license` | Offline Ed25519 verification of Grove Pro/Teams license keys against a baked-in public key. |
+| `grove-secrets` | End-to-end encrypted team secrets (age/X25519): identities, `EnvSecrets`, `SecretStore` (file mock + HTTP), `SecretsClient`. |
 | `grove-os` | Platform integration: resolver setup, trust store, OS service install, elevation checks. |
 | `grove-daemon` | The long-running process: boots listeners, supervises runtimes/services, serves IPC. |
 | `grove-cli` | clap frontend (binary `grove`). |
@@ -80,6 +82,21 @@ local Unix-socket JSON-RPC.
   status, duration) into a bounded in-memory ring buffer in `grove-core`
   (`RequestLog`), shared with the daemon so `grove requests` and the GUI panel
   can read it. Framework-agnostic; nothing is persisted to disk.
+
+## Licensing & Teams (Grove Pro)
+
+The free core is never gated; Pro/Teams features sit behind an entitlement.
+
+- **License keys** are Ed25519-signed by the store (elyracode.com) and verified
+  **offline** by `grove-license` against a baked-in public key. `grove license
+  activate` stores the key at `$GROVE_HOME/license.key` (written by the root
+  daemon); the daemon exposes `require_pro` / `require_teams` gates.
+- **Team secrets** (`grove secret`) are encrypted **client-side** (`grove-secrets`,
+  age/X25519) to the current members' public keys. `HttpStore` talks to the
+  hosted, zero-knowledge backend, which stores only ciphertext + public keys and
+  **independently** verifies the license + enforces seats (real enforcement is
+  server-side, so the open client is safe to inspect). Your member identity lives
+  at `~/.grove/identity`. See [PRO.md](PRO.md).
 
 ## Zero external dependencies
 
