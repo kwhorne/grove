@@ -159,6 +159,10 @@ in the desktop app's **Requests** panel.
 
 ## Database snapshots
 
+> Looking to **browse or edit** data? That's the **Database** panel in the
+> desktop app (auto-connects from each site's `.env`) — see [DATABASE.md](DATABASE.md).
+> The commands below are for point-in-time **snapshots**.
+
 Point-in-time snapshots of Grove's bundled MySQL / PostgreSQL — snapshot before a
 risky migration and roll back in one command. Stored as SQL under
 `$GROVE_HOME/snapshots/`.

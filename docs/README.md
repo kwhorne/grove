@@ -4,6 +4,7 @@
 - [Architecture](ARCHITECTURE.md) — crates, request flow, on-disk state.
 - [**Migrate from Herd**](MIGRATE-FROM-HERD.md) — move over in a few minutes, nothing lost.
 - [**Pro & Teams**](PRO.md) — licensing + end-to-end encrypted team secret sync.
+- [Database client](DATABASE.md) — browse + edit your databases, auto-connected from `.env`.
 - [Docker & OrbStack](DOCKER.md) — serve containers as `*.test` with trusted HTTPS.
 - [Tunnels](TUNNEL.md) — share local sites publicly with `grove share`.
 - [Debugging](DEBUGGING.md) — step-debugging with Xdebug.

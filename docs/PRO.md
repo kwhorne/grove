@@ -128,6 +128,8 @@ so there's nothing to configure.
   indexes, foreign keys), and a **production-safety guard** that flags
   prod-looking connections and disables editing there.
 
+Full details in the [Database client guide](DATABASE.md).
+
 ## 5. Security model
 
 - **End-to-end encryption.** Secrets are encrypted client-side with `age`

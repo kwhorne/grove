@@ -43,7 +43,7 @@ local Unix-socket JSON-RPC.
 | `grove-os` | Platform integration: resolver setup, trust store, OS service install, elevation checks. |
 | `grove-daemon` | The long-running process: boots listeners, supervises runtimes/services, serves IPC. |
 | `grove-cli` | clap frontend (binary `grove`). |
-| `grove-gui` | Tauri 2 + Svelte 5 desktop app + macOS menu-bar icon. |
+| `grove-gui` | Tauri 2 + Svelte 5 desktop app + macOS menu-bar icon. Hosts the Pro database client (reuses the `e-db` engine). |
 
 ## Request flow
 
@@ -72,6 +72,10 @@ local Unix-socket JSON-RPC.
   provisioned by the (root) daemon (`ProvisionToolchain`) into the shared
   `runtimes/` dir, so the user-run shims never need write access. The shims
   themselves live in `~/.grove/bin` (user-owned, added to PATH).
+- **Database client** — the GUI's Database panel reuses the `e-db` engine to
+  browse/edit databases, auto-discovering connections from each site's `.env`.
+  Free tier is read-only; editing + schema inspection are gated behind an active
+  Pro license (client-side, since it's a local feature). See [DATABASE.md](DATABASE.md).
 - **Database snapshots** — `grove db` dumps/restores the bundled MySQL /
   PostgreSQL via their own client tools, indexed under `snapshots/`.
 - **Reproducible environments** — `grove up` reads a project's committed
