@@ -9,3 +9,13 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 age = "0.10"
+ureq = { version = "2", features = ["json"], optional = true }
+
+[features]
+# HTTP-backed SecretStore (grove-teams backend). Off by default so the crate
+# stays dependency-light; enabled by the Grove CLI.
+http = ["dep:ureq"]
+
+[[example]]
+name = "http_demo"
+required-features = ["http"]

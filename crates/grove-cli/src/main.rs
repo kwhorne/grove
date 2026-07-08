@@ -13,7 +13,7 @@ use grove_ipc::protocol::{Request, ResponseData};
 
 use cli::{
     CaAction, Cli, Command, DbAction, DebugAction, DevAction, LicenseAction, MailAction,
-    NodeAction, PathAction, PhpAction, ServiceAction,
+    NodeAction, PathAction, PhpAction, SecretAction, ServiceAction,
 };
 
 #[tokio::main]
@@ -57,6 +57,7 @@ async fn main() -> anyhow::Result<()> {
             dir,
             args: rest,
         } => local::resolve(&paths, &tool, dir, rest),
+        Command::Secret { action } => secret::run(&paths, action, args.json),
         Command::Debug {
             action: DebugAction::Env,
         } => local::debug_env(&paths, args.json),
@@ -277,6 +278,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Logs { .. }
         | Command::Path { .. }
         | Command::Resolve { .. }
+        | Command::Secret { .. }
         | Command::Gui => {
             unreachable!("handled before to_request")
         }
@@ -1237,5 +1239,127 @@ mod local {
             .map(|d| d.join("npx"))
             .unwrap_or_else(|| PathBuf::from("npx"));
         Ok((b.node_binary, b.npm_binary, npx))
+    }
+}
+
+/// Grove Teams: end-to-end encrypted secret sync (client-side crypto).
+mod secret {
+    use super::*;
+    use grove_secrets::{HttpStore, Identity, PublicKey, SecretsClient};
+    use std::path::PathBuf;
+
+    const DEFAULT_SERVER: &str = "https://teams.elyracode.com";
+
+    fn identity_path() -> PathBuf {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        PathBuf::from(home).join(".grove/identity")
+    }
+
+    fn load_or_create_identity() -> anyhow::Result<Identity> {
+        let path = identity_path();
+        if let Ok(secret) = std::fs::read_to_string(&path) {
+            return Identity::from_secret(secret.trim()).map_err(|e| anyhow::anyhow!("{e}"));
+        }
+        let id = Identity::generate();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, id.secret_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
+        Ok(id)
+    }
+
+    fn license_token(paths: &GrovePaths) -> anyhow::Result<String> {
+        let key = std::fs::read_to_string(paths.base().join("license.key")).map_err(|_| {
+            anyhow::anyhow!("no license found — activate one with `grove license activate <key>`")
+        })?;
+        let key = key.trim().to_string();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let claims =
+            grove_license::verify(&key, now).map_err(|e| anyhow::anyhow!("license: {e}"))?;
+        if !claims.is_teams() {
+            anyhow::bail!("secret sync is a Grove Teams feature — upgrade at elyracode.com/grove");
+        }
+        Ok(key)
+    }
+
+    fn server() -> String {
+        std::env::var("GROVE_TEAMS_SERVER").unwrap_or_else(|_| DEFAULT_SERVER.into())
+    }
+
+    fn client(paths: &GrovePaths) -> anyhow::Result<SecretsClient<HttpStore>> {
+        let token = license_token(paths)?;
+        let id = load_or_create_identity()?;
+        Ok(SecretsClient::new(HttpStore::new(server(), token), id))
+    }
+
+    pub fn run(paths: &GrovePaths, action: SecretAction, json: bool) -> anyhow::Result<()> {
+        match action {
+            SecretAction::Whoami => {
+                let id = load_or_create_identity()?;
+                println!("{}", id.public().as_str());
+            }
+            SecretAction::Set {
+                project,
+                assignment,
+            } => {
+                let (k, v) = assignment
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("use KEY=VALUE"))?;
+                let c = client(paths)?;
+                let me = load_or_create_identity()?.public();
+                if c.members(&project)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+                    .is_empty()
+                {
+                    c.init_project(&project, &[me])
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                }
+                c.set(&project, k, v).map_err(|e| anyhow::anyhow!("{e}"))?;
+                output::print_message(&format!("set {k} in {project}"), json);
+            }
+            SecretAction::Pull { project, write } => {
+                let c = client(paths)?;
+                let env = c.pull(&project).map_err(|e| anyhow::anyhow!("{e}"))?;
+                if write {
+                    std::fs::write(".env", env.to_dotenv())?;
+                    output::print_message("wrote .env", json);
+                } else {
+                    print!("{}", env.to_dotenv());
+                }
+            }
+            SecretAction::Share {
+                project,
+                public_key,
+            } => {
+                let c = client(paths)?;
+                c.add_member(&project, PublicKey(public_key.clone()))
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                output::print_message(&format!("granted access to {project}"), json);
+            }
+            SecretAction::Revoke {
+                project,
+                public_key,
+            } => {
+                let c = client(paths)?;
+                c.remove_member(&project, &PublicKey(public_key.clone()))
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                output::print_message(&format!("revoked access to {project}"), json);
+            }
+            SecretAction::Members { project } => {
+                let c = client(paths)?;
+                for m in c.members(&project).map_err(|e| anyhow::anyhow!("{e}"))? {
+                    println!("{}", m.as_str());
+                }
+            }
+        }
+        Ok(())
     }
 }

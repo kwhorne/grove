@@ -33,6 +33,8 @@ pub enum SecretsError {
     NotAMember(String),
     #[error("serialization: {0}")]
     Serde(#[from] serde_json::Error),
+    #[error("backend: {0}")]
+    Http(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +328,91 @@ impl<S: SecretStore> SecretsClient<S> {
         }
         let ciphertext = encrypt(&env.to_bytes()?, members)?;
         self.store.put_env(project, &ciphertext)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP store — talks to the grove-teams backend (feature = "http")
+// ---------------------------------------------------------------------------
+
+/// A [`SecretStore`] backed by the hosted grove-teams API. The license key is
+/// sent as a bearer token; the server verifies it and enforces entitlement.
+/// Only ciphertext + public keys ever leave the machine.
+#[cfg(feature = "http")]
+pub struct HttpStore {
+    base: String,
+    token: String,
+}
+
+#[cfg(feature = "http")]
+impl HttpStore {
+    pub fn new(base: impl Into<String>, token: impl Into<String>) -> Self {
+        Self {
+            base: base.into().trim_end_matches('/').to_string(),
+            token: token.into(),
+        }
+    }
+
+    fn auth(&self, req: ureq::Request) -> ureq::Request {
+        req.set("Authorization", &format!("Bearer {}", self.token))
+    }
+
+    fn url(&self, project: &str, leaf: &str) -> String {
+        format!("{}/v1/projects/{}/{}", self.base, urlencode(project), leaf)
+    }
+}
+
+#[cfg(feature = "http")]
+fn urlencode(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => c.to_string(),
+            _ => format!("%{:02X}", c as u32),
+        })
+        .collect()
+}
+
+#[cfg(feature = "http")]
+impl SecretStore for HttpStore {
+    fn put_env(&self, project: &str, ciphertext: &[u8]) -> Result<()> {
+        self.auth(ureq::put(&self.url(project, "env")))
+            .send_bytes(ciphertext)
+            .map_err(|e| SecretsError::Http(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_env(&self, project: &str) -> Result<Option<Vec<u8>>> {
+        let resp = self
+            .auth(ureq::get(&self.url(project, "env")))
+            .call()
+            .map_err(|e| SecretsError::Http(e.to_string()))?;
+        if resp.status() == 204 {
+            return Ok(None);
+        }
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .read_to_end(&mut buf)
+            .map_err(|e| SecretsError::Http(e.to_string()))?;
+        Ok(Some(buf))
+    }
+
+    fn put_recipients(&self, project: &str, recipients: &[PublicKey]) -> Result<()> {
+        let keys: Vec<&str> = recipients.iter().map(|r| r.as_str()).collect();
+        self.auth(ureq::put(&self.url(project, "recipients")))
+            .send_json(ureq::json!(keys))
+            .map_err(|e| SecretsError::Http(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_recipients(&self, project: &str) -> Result<Vec<PublicKey>> {
+        let resp = self
+            .auth(ureq::get(&self.url(project, "recipients")))
+            .call()
+            .map_err(|e| SecretsError::Http(e.to_string()))?;
+        let keys: Vec<String> = resp
+            .into_json()
+            .map_err(|e| SecretsError::Http(e.to_string()))?;
+        Ok(keys.into_iter().map(PublicKey).collect())
     }
 }
 

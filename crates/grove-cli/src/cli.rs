@@ -220,6 +220,12 @@ pub enum Command {
         action: LicenseAction,
     },
 
+    /// Grove Teams: end-to-end encrypted secret sync for a project.
+    Secret {
+        #[command(subcommand)]
+        action: SecretAction,
+    },
+
     /// Snapshot / restore Grove's bundled databases (time-travel before risky migrations).
     Db {
         #[command(subcommand)]
@@ -246,6 +252,26 @@ pub enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SecretAction {
+    /// Print your member public key (creates your local identity if needed).
+    Whoami,
+    /// Set a secret: `grove secret set <project> KEY=VALUE`.
+    Set { project: String, assignment: String },
+    /// Fetch + decrypt a project's secrets (add --write to write .env).
+    Pull {
+        project: String,
+        #[arg(long)]
+        write: bool,
+    },
+    /// Grant a teammate access by their public key, and re-encrypt.
+    Share { project: String, public_key: String },
+    /// Revoke a teammate's access by their public key, and re-encrypt.
+    Revoke { project: String, public_key: String },
+    /// List the member public keys with access to a project.
+    Members { project: String },
 }
 
 #[derive(Subcommand, Debug)]
