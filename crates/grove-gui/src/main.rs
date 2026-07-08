@@ -297,6 +297,114 @@ async fn request_log(site: Option<String>, limit: usize) -> CmdResult<Vec<Reques
     }
 }
 
+// ---------------------------------------------------------------------------
+// Database client (Pro) — reuses the `e-db` engine, auto-discovering each site's
+// connection from its .env. Free tier is read-only; editing is Pro.
+// ---------------------------------------------------------------------------
+
+fn db_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, e_db::DbConfig>> {
+    static C: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, e_db::DbConfig>>,
+    > = std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[derive(serde::Serialize)]
+struct DbConnInfo {
+    key: String,
+    label: String,
+    engine: String,
+    database: String,
+    environment: String,
+    is_prod: bool,
+}
+
+#[tauri::command]
+async fn db_connections() -> CmdResult<Vec<DbConnInfo>> {
+    let sites = match call(Request::ListSites).await? {
+        ResponseData::Sites(s) => s,
+        _ => return Err("unexpected response".into()),
+    };
+    let mut infos = Vec::new();
+    let mut cache = db_cache().lock().unwrap();
+    cache.clear();
+    for ss in sites {
+        let site = ss.site;
+        if let Some(cfg) = e_db::from_env(&site.path) {
+            if cfg.engine.is_empty() {
+                continue;
+            }
+            infos.push(DbConnInfo {
+                key: site.name.clone(),
+                label: if cfg.database.is_empty() {
+                    site.name.clone()
+                } else {
+                    cfg.database.clone()
+                },
+                engine: cfg.engine.clone(),
+                database: cfg.database.clone(),
+                environment: format!("{:?}", cfg.environment()),
+                is_prod: cfg.looks_like_prod(),
+            });
+            cache.insert(site.name, cfg);
+        }
+    }
+    Ok(infos)
+}
+
+fn db_config_for(key: &str) -> Result<e_db::DbConfig, String> {
+    db_cache()
+        .lock()
+        .unwrap()
+        .get(key)
+        .cloned()
+        .ok_or_else(|| format!("unknown connection {key}"))
+}
+
+fn looks_readonly(sql: &str) -> bool {
+    let s = sql.trim_start().to_ascii_lowercase();
+    [
+        "select", "with", "show", "explain", "pragma", "describe", "desc",
+    ]
+    .iter()
+    .any(|kw| s.starts_with(kw))
+}
+
+async fn is_pro() -> bool {
+    matches!(
+        call(Request::LicenseStatus).await,
+        Ok(ResponseData::License(Some(c))) if c.is_pro()
+    )
+}
+
+#[tauri::command]
+async fn db_tables(key: String) -> CmdResult<Vec<String>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        e_db::tables(&conn)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn db_query(key: String, sql: String) -> CmdResult<e_db::QueryResult> {
+    // Free tier is read-only; anything that writes requires Grove Pro.
+    if !looks_readonly(&sql) && !is_pro().await {
+        return Err(
+            "Editing data is a Grove Pro feature — activate a license to run writes.".into(),
+        );
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = db_config_for(&key)?;
+        let conn = e_db::connect(&cfg)?;
+        e_db::query(&conn, &sql, 500)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn license_status() -> CmdResult<Option<LicenseClaims>> {
     match call(Request::LicenseStatus).await? {
@@ -656,6 +764,9 @@ fn main() {
             license_status,
             license_activate,
             license_deactivate,
+            db_connections,
+            db_tables,
+            db_query,
             php_versions,
             php_install,
             php_list,

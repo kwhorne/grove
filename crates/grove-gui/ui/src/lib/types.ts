@@ -68,6 +68,24 @@ export interface TunnelRequestEntry {
   duration_ms: number;
 }
 
+export interface DbConnInfo {
+  key: string;
+  label: string;
+  engine: string;
+  database: string;
+  environment: string;
+  is_prod: boolean;
+}
+
+export interface DbQueryResult {
+  columns: string[];
+  rows: (string | null)[][];
+  rows_affected: number | null;
+  elapsed_ms: number;
+  is_select: boolean;
+  truncated: boolean;
+}
+
 export interface LicenseClaims {
   v: number;
   id: string;

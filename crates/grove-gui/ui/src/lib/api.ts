@@ -18,6 +18,8 @@ import type {
   TunnelRequestEntry,
   RequestEntry,
   LicenseClaims,
+  DbConnInfo,
+  DbQueryResult,
   TunnelStatus,
   DbConnSpec,
   XdebugStatus,
@@ -113,6 +115,11 @@ export const api = {
     invoke("tunnel_requests", { site }),
   requestLog: (site: string | null, limit: number): Promise<RequestEntry[]> =>
     invoke("request_log", { site, limit }),
+
+  dbConnections: (): Promise<DbConnInfo[]> => invoke("db_connections"),
+  dbTables: (key: string): Promise<string[]> => invoke("db_tables", { key }),
+  dbQuery: (key: string, sql: string): Promise<DbQueryResult> =>
+    invoke("db_query", { key, sql }),
 
   licenseStatus: (): Promise<LicenseClaims | null> => invoke("license_status"),
   licenseActivate: (key: string): Promise<LicenseClaims | null> =>

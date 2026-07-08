@@ -18,12 +18,13 @@
   import Tunnels from "./components/Tunnels.svelte";
   import Tools from "./components/Tools.svelte";
   import Requests from "./components/Requests.svelte";
+  import Database from "./components/Database.svelte";
   import Logs from "./components/Logs.svelte";
   import AboutModal from "./components/AboutModal.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import NewSiteModal from "./components/NewSiteModal.svelte";
 
-  type Tab = "sites" | "services" | "mail" | "php" | "node" | "tunnels" | "requests" | "tools" | "logs" | "doctor";
+  type Tab = "sites" | "services" | "mail" | "php" | "node" | "tunnels" | "requests" | "database" | "tools" | "logs" | "doctor";
 
   let tab = $state<Tab>("sites");
   let running = $state(false);
@@ -159,6 +160,7 @@
     { id: "node", icon: "⬢", label: "Node" },
     { id: "tunnels", icon: "🌍", label: "Tunnels" },
     { id: "requests", icon: "⇄", label: "Requests" },
+    { id: "database", icon: "🗄", label: "Database" },
     { id: "tools", icon: "🛠", label: "Tools" },
     { id: "logs", icon: "≡", label: "Logs" },
     { id: "doctor", icon: "✚", label: "Doctor" },
@@ -302,6 +304,10 @@
         <h2>Requests</h2>
         <p class="subtitle">A live timeline of every request Grove proxied — any site, any framework</p>
         <Requests {sites} />
+      {:else if tab === "database"}
+        <h2>Database</h2>
+        <p class="subtitle">Browse and query your sites' databases — auto-connected from each project's .env</p>
+        <Database {notify} />
       {:else if tab === "tools"}
         <h2>Tools</h2>
         <p class="subtitle">Migrations and one-off utilities</p>
