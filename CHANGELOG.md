@@ -11,16 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`grove secret` — end-to-end encrypted team secret sync (Grove Teams).** Share
-  a project's `.env` with your team without ever pasting it into a chat window:
-    - `grove secret set <project> KEY=VALUE` — encrypt + push.
-    - `grove secret pull <project> [--write]` — fetch + decrypt (optionally to `.env`).
-    - `grove secret share <project> <public-key>` / `grove secret revoke …` — grant
-      or remove a teammate and re-encrypt.
-    - `grove secret whoami` / `grove secret members <project>`.
-  Secrets are encrypted **on your machine** (age / X25519) to the current
-  members' public keys; the hosted backend only ever stores ciphertext. Requires
-  an active Grove Teams license.
+- **Team secret sync (Grove Teams).** Share a project's `.env` with your team
+  securely — encrypted end-to-end, so it never gets pasted into a chat window.
+  Manage access with `grove secret`. Requires a Grove Teams license; see the
+  [Pro & Teams guide](docs/PRO.md).
 
 ## [0.9.0] — 2026-07-07
 
