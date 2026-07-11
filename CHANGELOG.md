@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-07-11
+
+### Changed
+
+- Internal packaging change for how Grove Pro features are built. No user-facing
+  changes — the free core and Pro features behave exactly as in 0.11.0.
+
 ## [0.11.0] — 2026-07-08
 
 ### Added
@@ -209,6 +216,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.11.1]: https://github.com/kwhorne/grove/releases/tag/v0.11.1
 [0.11.0]: https://github.com/kwhorne/grove/releases/tag/v0.11.0
 [0.10.0]: https://github.com/kwhorne/grove/releases/tag/v0.10.0
 [0.9.0]: https://github.com/kwhorne/grove/releases/tag/v0.9.0

@@ -88,17 +88,19 @@ jobs:
       - name: Inject Grove Pro (proprietary)
         shell: bash
         env:
-          GROVE_PRO_TOKEN: ${{ secrets.GROVE_PRO_TOKEN }}
+          GROVE_PRO_SSH_KEY: ${{ secrets.GROVE_PRO_SSH_KEY }}
         run: |
-          if [ -n "$GROVE_PRO_TOKEN" ]; then
+          if [ -n "$GROVE_PRO_SSH_KEY" ]; then
+            mkdir -p ~/.ssh
+            printf '%s\n' "$GROVE_PRO_SSH_KEY" > ~/.ssh/grove_pro
+            chmod 600 ~/.ssh/grove_pro
+            export GIT_SSH_COMMAND="ssh -i ~/.ssh/grove_pro -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
             rm -rf crates/grove-pro
-            git clone --depth 1 \
-              "https://x-access-token:${GROVE_PRO_TOKEN}@github.com/kwhorne/grove-pro.git" \
-              crates/grove-pro
-            rm -rf crates/grove-pro/.git
+            git clone --depth 1 git@github.com:kwhorne/grove-pro.git crates/grove-pro
+            rm -rf crates/grove-pro/.git ~/.ssh/grove_pro
             echo "Injected proprietary grove-pro."
           else
-            echo "GROVE_PRO_TOKEN not set — building with the open-source stub (no Pro)."
+            echo "GROVE_PRO_SSH_KEY not set — building with the open-source stub (no Pro)."
           fi
 
       # Builds + signs the GUI, generates latest.json, creates/updates the
