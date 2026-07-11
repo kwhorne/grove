@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-07-11
+
+Grove 1.0. A native, zero-dependency local dev environment for macOS: `*.test`
+sites with trusted HTTPS, bundled multi-version PHP/Node, databases, mail,
+tunnels, a request timeline with replay, a webhook hub, a database client,
+reproducible environment bundles, and end-to-end encrypted team secret sync —
+with the entire core free and open source.
+
+### Added
+
+- **AI tools (MCP server).** `grove mcp` runs a Model Context Protocol server
+  that exposes your local environment — sites, request timeline, webhooks, logs,
+  and database schema/queries — to AI clients like Claude and Cursor. Read-only
+  and local-only; point your client at `grove mcp` and ask it about what's
+  actually running. See [docs/MCP.md](docs/MCP.md).
+
 ## [0.13.1] — 2026-07-11
 
 ### Changed
@@ -255,6 +271,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[1.0.0]: https://github.com/kwhorne/grove/releases/tag/v1.0.0
 [0.13.1]: https://github.com/kwhorne/grove/releases/tag/v0.13.1
 [0.13.0]: https://github.com/kwhorne/grove/releases/tag/v0.13.0
 [0.12.0]: https://github.com/kwhorne/grove/releases/tag/v0.12.0

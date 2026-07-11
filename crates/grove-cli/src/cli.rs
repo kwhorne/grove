@@ -231,6 +231,11 @@ pub enum Command {
         limit: usize,
     },
 
+    /// Run a Model Context Protocol (MCP) server over stdio, exposing your local
+    /// sites, requests, webhooks, logs, and database schema to AI tools like
+    /// Claude and Cursor. Configure your client to launch `grove mcp`.
+    Mcp,
+
     /// Re-issue a captured request through Grove (framework-agnostic replay).
     Replay {
         /// Request id from `grove requests`.

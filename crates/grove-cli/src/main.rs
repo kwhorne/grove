@@ -108,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
+        Command::Mcp => mcp::serve(&paths).await,
         Command::Gui => lifecycle::gui(&paths).await,
         Command::Start => lifecycle::start(&paths, args.json).await,
         Command::Stop => lifecycle::stop(&paths, args.json).await,
@@ -289,6 +290,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Init { .. }
         | Command::Up { .. }
         | Command::Bundle { .. }
+        | Command::Mcp
         | Command::Share { .. }
         | Command::Env { .. }
         | Command::Logs { .. }
@@ -305,7 +307,297 @@ fn init_tracing(daemon: bool) {
     use tracing_subscriber::{fmt, EnvFilter};
     let default = if daemon { "info" } else { "warn" };
     let filter = EnvFilter::try_from_env("GROVE_LOG").unwrap_or_else(|_| EnvFilter::new(default));
-    let _ = fmt().with_env_filter(filter).with_target(false).try_init();
+    // Always log to stderr so stdout stays clean for machine protocols (e.g. `grove mcp`).
+    let _ = fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_writer(std::io::stderr)
+        .try_init();
+}
+
+/// Model Context Protocol server (stdio). Exposes Grove's live local state —
+/// sites, request timeline, webhooks, logs, and database schema/queries — as
+/// read-only tools an AI client (Claude, Cursor, …) can call. Newline-delimited
+/// JSON-RPC 2.0 over stdin/stdout; all logging goes to stderr.
+mod mcp {
+    use super::*;
+    use grove_ipc::protocol::{Request, ResponseData};
+    use serde_json::{json, Value};
+    use std::path::{Path, PathBuf};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    pub async fn serve(paths: &GrovePaths) -> anyhow::Result<()> {
+        let socket = paths.ipc_socket();
+        let mut lines = BufReader::new(tokio::io::stdin()).lines();
+        let mut out = tokio::io::stdout();
+        while let Some(line) = lines.next_line().await? {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(msg) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            // Notifications (no id) need no reply.
+            let Some(id) = msg.get("id").cloned() else {
+                continue;
+            };
+            let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
+            let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
+            let reply = match dispatch(&socket, method, &params).await {
+                Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+                Err(e) => json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "error": {"code": -32000, "message": e.to_string()}
+                }),
+            };
+            let mut s = serde_json::to_string(&reply)?;
+            s.push('\n');
+            out.write_all(s.as_bytes()).await?;
+            out.flush().await?;
+        }
+        Ok(())
+    }
+
+    async fn dispatch(socket: &Path, method: &str, params: &Value) -> anyhow::Result<Value> {
+        match method {
+            "initialize" => Ok(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "grove", "version": env!("CARGO_PKG_VERSION")}
+            })),
+            "tools/list" => Ok(json!({"tools": tool_defs()})),
+            "resources/list" => Ok(json!({"resources": []})),
+            "prompts/list" => Ok(json!({"prompts": []})),
+            "ping" => Ok(json!({})),
+            "tools/call" => {
+                let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+                let args = params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                match call_tool(socket, name, &args).await {
+                    Ok(text) => Ok(json!({
+                        "content": [{"type": "text", "text": text}],
+                        "isError": false
+                    })),
+                    Err(e) => Ok(json!({
+                        "content": [{"type": "text", "text": e.to_string()}],
+                        "isError": true
+                    })),
+                }
+            }
+            other => anyhow::bail!("method not found: {other}"),
+        }
+    }
+
+    fn tool_defs() -> Value {
+        json!([
+            {
+                "name": "grove_sites",
+                "description": "List all sites Grove serves on .test (name, host, driver, PHP/Node version, HTTPS, path).",
+                "inputSchema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "grove_requests",
+                "description": "Recent HTTP requests Grove proxied (framework-agnostic), newest first. Optionally filter by site.",
+                "inputSchema": {"type": "object", "properties": {
+                    "site": {"type": "string", "description": "Site name to filter by"},
+                    "limit": {"type": "integer", "description": "Max entries (default 40)"}
+                }}
+            },
+            {
+                "name": "grove_request",
+                "description": "Full detail (headers + body) of one captured request, by id from grove_requests.",
+                "inputSchema": {"type": "object", "properties": {
+                    "id": {"type": "integer"}
+                }, "required": ["id"]}
+            },
+            {
+                "name": "grove_webhooks",
+                "description": "Recently captured inbound webhooks (requests to /__grove/hooks/...).",
+                "inputSchema": {"type": "object", "properties": {
+                    "limit": {"type": "integer", "description": "Max entries (default 40)"}
+                }}
+            },
+            {
+                "name": "grove_logs",
+                "description": "List available log sources, or read recent entries from one. Omit 'source' to list.",
+                "inputSchema": {"type": "object", "properties": {
+                    "source": {"type": "string", "description": "Log source name (substring match)"},
+                    "lines": {"type": "integer", "description": "Max entries (default 50)"}
+                }}
+            },
+            {
+                "name": "grove_db_schema",
+                "description": "Database schema (tables and their columns) for a site, read from its .env. Great for answering questions about data shape.",
+                "inputSchema": {"type": "object", "properties": {
+                    "site": {"type": "string"}
+                }, "required": ["site"]}
+            },
+            {
+                "name": "grove_db_query",
+                "description": "Run a READ-ONLY SQL query (SELECT/SHOW/EXPLAIN/PRAGMA) against a site's database and return rows. Writes are refused.",
+                "inputSchema": {"type": "object", "properties": {
+                    "site": {"type": "string"},
+                    "sql": {"type": "string"}
+                }, "required": ["site", "sql"]}
+            }
+        ])
+    }
+
+    async fn call(socket: &Path, req: Request) -> anyhow::Result<ResponseData> {
+        let resp = client::send(socket, &req)
+            .await
+            .context("talking to the Grove daemon (is it running? `grove start`)")?;
+        if !resp.ok {
+            anyhow::bail!("{}", resp.error.unwrap_or_else(|| "request failed".into()));
+        }
+        resp.data
+            .ok_or_else(|| anyhow::anyhow!("no data in response"))
+    }
+
+    async fn site_path(socket: &Path, name: &str) -> anyhow::Result<PathBuf> {
+        match call(socket, Request::ListSites).await? {
+            ResponseData::Sites(sites) => sites
+                .into_iter()
+                .find(|s| s.site.name == name || s.site.hostname == name)
+                .map(|s| s.site.path)
+                .ok_or_else(|| anyhow::anyhow!("no site named {name:?}")),
+            _ => anyhow::bail!("unexpected response"),
+        }
+    }
+
+    fn is_readonly(sql: &str) -> bool {
+        let s = sql.trim_start().to_ascii_lowercase();
+        [
+            "select", "with", "show", "explain", "pragma", "describe", "desc",
+        ]
+        .iter()
+        .any(|kw| s.starts_with(kw))
+    }
+
+    async fn call_tool(socket: &Path, name: &str, args: &Value) -> anyhow::Result<String> {
+        let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
+        let n = |k: &str| args.get(k).and_then(Value::as_u64);
+        match name {
+            "grove_sites" => match call(socket, Request::ListSites).await? {
+                ResponseData::Sites(sites) => {
+                    let slim: Vec<Value> = sites
+                        .iter()
+                        .map(|ss| {
+                            json!({
+                                "name": ss.site.name,
+                                "host": ss.site.hostname,
+                                "driver": ss.site.driver.to_string(),
+                                "php": ss.site.php,
+                                "node": ss.site.node,
+                                "https": ss.site.secure,
+                                "docker": ss.site.docker,
+                                "path": ss.site.path,
+                            })
+                        })
+                        .collect();
+                    Ok(serde_json::to_string_pretty(&slim)?)
+                }
+                _ => anyhow::bail!("unexpected response"),
+            },
+            "grove_requests" => {
+                let limit = n("limit").unwrap_or(40) as usize;
+                match call(
+                    socket,
+                    Request::RequestLog {
+                        site: s("site"),
+                        limit,
+                    },
+                )
+                .await?
+                {
+                    ResponseData::Requests(r) => Ok(serde_json::to_string_pretty(&r)?),
+                    _ => anyhow::bail!("unexpected response"),
+                }
+            }
+            "grove_request" => {
+                let id = n("id").ok_or_else(|| anyhow::anyhow!("id is required"))?;
+                match call(socket, Request::RequestDetail { id }).await? {
+                    ResponseData::RequestDetail(Some(d)) => Ok(serde_json::to_string_pretty(&d)?),
+                    ResponseData::RequestDetail(None) => anyhow::bail!("no request with id {id}"),
+                    _ => anyhow::bail!("unexpected response"),
+                }
+            }
+            "grove_webhooks" => {
+                let limit = n("limit").unwrap_or(40) as usize;
+                match call(socket, Request::HookList { limit }).await? {
+                    ResponseData::Hooks(h) => Ok(serde_json::to_string_pretty(&h)?),
+                    _ => anyhow::bail!("unexpected response"),
+                }
+            }
+            "grove_logs" => match s("source") {
+                None => match call(socket, Request::LogSources).await? {
+                    ResponseData::LogSources(list) => Ok(serde_json::to_string_pretty(&list)?),
+                    _ => anyhow::bail!("unexpected response"),
+                },
+                Some(q) => {
+                    let path = match call(socket, Request::LogSources).await? {
+                        ResponseData::LogSources(list) => list
+                            .into_iter()
+                            .find(|l| l.name.to_lowercase().contains(&q.to_lowercase()))
+                            .map(|l| l.path)
+                            .ok_or_else(|| anyhow::anyhow!("no log source matching {q:?}"))?,
+                        _ => anyhow::bail!("unexpected response"),
+                    };
+                    let limit = n("lines").unwrap_or(50) as usize;
+                    match call(socket, Request::LogEntries { path, limit }).await? {
+                        ResponseData::LogEntries(e) => Ok(serde_json::to_string_pretty(&e)?),
+                        _ => anyhow::bail!("unexpected response"),
+                    }
+                }
+            },
+            "grove_db_schema" => {
+                let site = s("site").ok_or_else(|| anyhow::anyhow!("site is required"))?;
+                let path = site_path(socket, &site).await?;
+                tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+                    let cfg = e_db::from_env(&path)
+                        .ok_or_else(|| anyhow::anyhow!("no database configured in {site}'s .env"))?;
+                    let conn = e_db::connect(&cfg).map_err(|e| anyhow::anyhow!(e))?;
+                    let tables = e_db::tables(&conn).map_err(|e| anyhow::anyhow!(e))?;
+                    let mut schema = serde_json::Map::new();
+                    for t in &tables {
+                        let cols = e_db::columns(&conn, t).map_err(|e| anyhow::anyhow!(e))?;
+                        let cols: Vec<Value> = cols
+                            .iter()
+                            .map(|c| {
+                                json!({"name": c.name, "type": c.data_type, "nullable": c.nullable, "key": c.key})
+                            })
+                            .collect();
+                        schema.insert(t.clone(), json!(cols));
+                    }
+                    Ok(serde_json::to_string_pretty(&schema)?)
+                })
+                .await?
+            }
+            "grove_db_query" => {
+                let site = s("site").ok_or_else(|| anyhow::anyhow!("site is required"))?;
+                let sql = s("sql").ok_or_else(|| anyhow::anyhow!("sql is required"))?;
+                if !is_readonly(&sql) {
+                    anyhow::bail!(
+                        "only read-only queries are allowed via MCP (SELECT/SHOW/EXPLAIN/PRAGMA)"
+                    );
+                }
+                let path = site_path(socket, &site).await?;
+                tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+                    let cfg = e_db::from_env(&path).ok_or_else(|| {
+                        anyhow::anyhow!("no database configured in {site}'s .env")
+                    })?;
+                    let conn = e_db::connect(&cfg).map_err(|e| anyhow::anyhow!(e))?;
+                    let result = e_db::query(&conn, &sql, 200).map_err(|e| anyhow::anyhow!(e))?;
+                    Ok(serde_json::to_string_pretty(&result)?)
+                })
+                .await?
+            }
+            other => anyhow::bail!("unknown tool: {other}"),
+        }
+    }
 }
 
 /// Reproducible environment bundles: package grove.toml + .env + database into

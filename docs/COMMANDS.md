@@ -178,6 +178,15 @@ copy it as a curl command, a `.http` file, or a Pest test — a framework-agnost
 way to re-run a failed request (or turn it into a regression test) while you fix
 the code.
 
+## AI tools (MCP)
+
+Expose your local environment to AI clients (Claude, Cursor) over the Model
+Context Protocol — read-only, local-only. See [MCP.md](MCP.md) for client setup.
+
+| Command | Description |
+| --- | --- |
+| `grove mcp` | Run the MCP server over stdio (your AI client launches this for you). |
+
 ## Webhooks
 
 Grove captures any request to `/__grove/hooks/<bucket>` on a site and answers
