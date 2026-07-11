@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-07-11
+
+### Changed
+
+- The in-app logo (header, About dialog, and splash screen) now matches the new
+  **lime** app icon.
+
 ## [0.13.0] — 2026-07-11
 
 ### Added
@@ -248,6 +255,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.13.1]: https://github.com/kwhorne/grove/releases/tag/v0.13.1
 [0.13.0]: https://github.com/kwhorne/grove/releases/tag/v0.13.0
 [0.12.0]: https://github.com/kwhorne/grove/releases/tag/v0.12.0
 [0.11.1]: https://github.com/kwhorne/grove/releases/tag/v0.11.1
