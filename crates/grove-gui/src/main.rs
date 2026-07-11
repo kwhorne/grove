@@ -405,6 +405,13 @@ async fn db_query(key: String, sql: String) -> CmdResult<e_db::QueryResult> {
     .map_err(|e| e.to_string())?
 }
 
+// Pro data operations (schema inspector + row editing) are delegated to the
+// `grove-pro` crate. In-tree it's an open-source stub that returns "not
+// included"; official release builds swap in the proprietary implementation, so
+// there's nothing in public source to patch. The free read-only browser
+// (db_connections/db_tables/db_query) never touches it.
+use grove_pro as prodb;
+
 const DB_PRO_MSG: &str =
     "This is a Grove Pro feature — activate a license to unlock it (elyracode.com/grove).";
 
@@ -417,8 +424,7 @@ async fn db_columns(key: String, table: String) -> CmdResult<Vec<e_db::ColumnInf
     }
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = db_config_for(&key)?;
-        let conn = e_db::connect(&cfg)?;
-        e_db::columns(&conn, &table)
+        prodb::columns(&cfg, &table)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -446,8 +452,7 @@ async fn db_indexes(key: String, table: String) -> CmdResult<Vec<IndexRow>> {
     }
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = db_config_for(&key)?;
-        let conn = e_db::connect(&cfg)?;
-        Ok(e_db::indexes(&conn, &table)?
+        Ok(prodb::indexes(&cfg, &table)?
             .into_iter()
             .map(|i| IndexRow {
                 name: i.name,
@@ -467,8 +472,7 @@ async fn db_foreign_keys(key: String) -> CmdResult<Vec<FkRow>> {
     }
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = db_config_for(&key)?;
-        let conn = e_db::connect(&cfg)?;
-        Ok(e_db::foreign_keys(&conn)?
+        Ok(prodb::foreign_keys(&cfg)?
             .into_iter()
             .map(|f| FkRow {
                 table: f.table,
@@ -489,8 +493,7 @@ async fn db_table_ddl(key: String, table: String) -> CmdResult<String> {
     }
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = db_config_for(&key)?;
-        let conn = e_db::connect(&cfg)?;
-        e_db::table_ddl(&conn, &table)
+        prodb::table_ddl(&cfg, &table)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -509,8 +512,7 @@ async fn db_update_cell(
     }
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = db_config_for(&key)?;
-        let conn = e_db::connect(&cfg)?;
-        e_db::update_cell(&conn, &cfg.engine, &table, &column, value.as_deref(), &pk)
+        prodb::update_cell(&cfg, &table, &column, value.as_deref(), &pk)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -523,8 +525,7 @@ async fn db_delete_row(key: String, table: String, pk: PkPairs) -> CmdResult<u64
     }
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = db_config_for(&key)?;
-        let conn = e_db::connect(&cfg)?;
-        e_db::delete_row(&conn, &cfg.engine, &table, &pk)
+        prodb::delete_row(&cfg, &table, &pk)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -537,8 +538,7 @@ async fn db_insert_row(key: String, table: String, values: PkPairs) -> CmdResult
     }
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = db_config_for(&key)?;
-        let conn = e_db::connect(&cfg)?;
-        e_db::insert_row(&conn, &cfg.engine, &table, &values)
+        prodb::insert_row(&cfg, &table, &values)
     })
     .await
     .map_err(|e| e.to_string())?

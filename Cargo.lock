@@ -2283,6 +2283,7 @@ dependencies = [
  "grove-core",
  "grove-ipc",
  "grove-license",
+ "grove-pro",
  "grove-runtime",
  "grove-services",
  "serde",
@@ -2329,6 +2330,13 @@ dependencies = [
  "grove-core",
  "thiserror 1.0.69",
  "tracing",
+]
+
+[[package]]
+name = "grove-pro"
+version = "0.1.0"
+dependencies = [
+ "e-db",
 ]
 
 [[package]]

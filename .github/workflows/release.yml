@@ -81,6 +81,26 @@ jobs:
           cp "target/${{ matrix.target }}/release/grove${ext}" \
              "crates/grove-gui/binaries/grove-${{ matrix.target }}${ext}"
 
+      # Swap the open-source Pro stub for the proprietary implementation so
+      # official binaries ship the Pro features. Needs a read token for the
+      # private repo; without it (forks, PRs) the build keeps the stub and
+      # simply omits Pro — the free core is unaffected.
+      - name: Inject Grove Pro (proprietary)
+        shell: bash
+        env:
+          GROVE_PRO_TOKEN: ${{ secrets.GROVE_PRO_TOKEN }}
+        run: |
+          if [ -n "$GROVE_PRO_TOKEN" ]; then
+            rm -rf crates/grove-pro
+            git clone --depth 1 \
+              "https://x-access-token:${GROVE_PRO_TOKEN}@github.com/kwhorne/grove-pro.git" \
+              crates/grove-pro
+            rm -rf crates/grove-pro/.git
+            echo "Injected proprietary grove-pro."
+          else
+            echo "GROVE_PRO_TOKEN not set — building with the open-source stub (no Pro)."
+          fi
+
       # Builds + signs the GUI, generates latest.json, creates/updates the
       # GitHub Release and uploads the bundles + updater artifacts.
       - name: Build & release GUI (Tauri)

@@ -1,0 +1,10 @@
+[package]
+name = "grove-pro"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Open-source stub for Grove Pro feature entry points. Official release builds inject the proprietary implementation."
+
+[dependencies]
+e-db = { git = "https://github.com/kwhorne/e.git" }

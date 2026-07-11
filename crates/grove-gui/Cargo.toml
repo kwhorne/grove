@@ -22,6 +22,11 @@ grove-services = { path = "../grove-services" }
 grove-license = { path = "../grove-license" }
 # Reused database-client engine (Laravel .env aware) from the `e` editor.
 e-db = { git = "https://github.com/kwhorne/e.git" }
+# Grove Pro feature entry points. The in-tree crate is an open-source STUB that
+# returns a friendly "not included" error; official release builds swap in the
+# proprietary implementation (private repo) so the license gate can't simply be
+# patched out. The free read-only database browser never touches this crate.
+grove-pro = { path = "../grove-pro" }
 tauri = { version = "2", features = ["devtools", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"

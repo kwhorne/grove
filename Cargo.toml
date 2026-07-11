@@ -11,6 +11,7 @@ members = [
     "crates/grove-services",
     "crates/grove-secrets",
     "crates/grove-license",
+    "crates/grove-pro",
     "crates/grove-os",
     "crates/grove-daemon",
     "crates/grove-cli",
