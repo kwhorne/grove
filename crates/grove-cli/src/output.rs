@@ -199,7 +199,8 @@ pub fn print_response(resp: &Response, json: bool) {
             } else {
                 for r in reqs {
                     println!(
-                        "{}  {:>3}  {:<6} {:>5}ms  {:<16} {}",
+                        "#{:<5} {}  {:>3}  {:<6} {:>5}ms  {:<16} {}",
+                        r.id,
                         r.time,
                         r.status,
                         r.method,
@@ -208,7 +209,15 @@ pub fn print_response(resp: &Response, json: bool) {
                         r.path
                     );
                 }
+                println!("\nreplay any of these with: grove replay <id>");
             }
+        }
+        Some(ResponseData::RequestDetail(_)) => {} // GUI-only detail view
+        Some(ResponseData::Replayed {
+            status,
+            duration_ms,
+        }) => {
+            println!("replayed → {status} in {duration_ms}ms (see it in `grove requests`)");
         }
         Some(ResponseData::Snapshots(snaps)) => {
             if snaps.is_empty() {

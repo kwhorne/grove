@@ -12,8 +12,8 @@ use grove_ipc::client;
 use grove_ipc::protocol::{Request, ResponseData};
 
 use cli::{
-    CaAction, Cli, Command, DbAction, DebugAction, DevAction, LicenseAction, MailAction,
-    NodeAction, PathAction, PhpAction, SecretAction, ServiceAction,
+    BundleAction, CaAction, Cli, Command, DbAction, DebugAction, DevAction, LicenseAction,
+    MailAction, NodeAction, PathAction, PhpAction, SecretAction, ServiceAction,
 };
 
 #[tokio::main]
@@ -121,6 +121,14 @@ async fn main() -> anyhow::Result<()> {
             write,
             no_dev,
         } => lifecycle::up(&paths, path, write, no_dev, args.json).await,
+        Command::Bundle { action } => match action {
+            BundleAction::Export { path, out, no_env } => {
+                bundle::export(&paths, path, out, no_env, args.json).await
+            }
+            BundleAction::Import { file, into } => {
+                bundle::import(&paths, file, into, args.json).await
+            }
+        },
         Command::Share {
             site,
             server,
@@ -247,6 +255,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             ServiceAction::Port { key, port } => Request::ServiceSetPort { key, port },
         },
         Command::Requests { site, limit } => Request::RequestLog { site, limit },
+        Command::Replay { id } => Request::ReplayRequest { id },
         Command::License { action } => match action {
             LicenseAction::Activate { key } => Request::LicenseActivate { key },
             LicenseAction::Status => Request::LicenseStatus,
@@ -273,6 +282,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Import
         | Command::Init { .. }
         | Command::Up { .. }
+        | Command::Bundle { .. }
         | Command::Share { .. }
         | Command::Env { .. }
         | Command::Logs { .. }
@@ -290,6 +300,285 @@ fn init_tracing(daemon: bool) {
     let default = if daemon { "info" } else { "warn" };
     let filter = EnvFilter::try_from_env("GROVE_LOG").unwrap_or_else(|_| EnvFilter::new(default));
     let _ = fmt().with_env_filter(filter).with_target(false).try_init();
+}
+
+/// Reproducible environment bundles: package grove.toml + .env + database into
+/// one shareable file, and restore it with a single command.
+mod bundle {
+    use super::*;
+    use grove_core::ProjectFile;
+    use grove_ipc::protocol::Request;
+    use std::path::{Path, PathBuf};
+
+    struct DbInfo {
+        engine: String,
+        database: String,
+        sqlite_path: Option<PathBuf>,
+    }
+
+    fn unquote(s: &str) -> String {
+        s.trim().trim_matches('"').trim_matches('\'').to_string()
+    }
+
+    fn read_env_db(dir: &Path) -> Option<DbInfo> {
+        let env = std::fs::read_to_string(dir.join(".env")).ok()?;
+        let (mut conn, mut database) = (String::new(), String::new());
+        for line in env.lines() {
+            let line = line.trim();
+            if let Some(v) = line.strip_prefix("DB_CONNECTION=") {
+                conn = unquote(v);
+            } else if let Some(v) = line.strip_prefix("DB_DATABASE=") {
+                database = unquote(v);
+            }
+        }
+        let engine = match conn.as_str() {
+            "mysql" | "mariadb" => "mysql",
+            "pgsql" | "postgres" | "postgresql" => "postgres",
+            "sqlite" => "sqlite",
+            _ => return None,
+        }
+        .to_string();
+        let sqlite_path = if engine == "sqlite" {
+            let p = if database.is_empty() {
+                dir.join("database/database.sqlite")
+            } else {
+                let pb = PathBuf::from(&database);
+                if pb.is_absolute() {
+                    pb
+                } else {
+                    dir.join(&database)
+                }
+            };
+            Some(p)
+        } else {
+            None
+        };
+        Some(DbInfo {
+            engine,
+            database,
+            sqlite_path,
+        })
+    }
+
+    pub async fn export(
+        paths: &GrovePaths,
+        path: Option<String>,
+        out: Option<String>,
+        no_env: bool,
+        json: bool,
+    ) -> anyhow::Result<()> {
+        let dir = match path {
+            Some(p) => PathBuf::from(p),
+            None => std::env::current_dir()?,
+        };
+        let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+
+        let Some(pf) = ProjectFile::load(&dir).map_err(|e| anyhow::anyhow!(e))? else {
+            anyhow::bail!(
+                "no grove.toml in {} — create one with `grove up --write` first",
+                dir.display()
+            );
+        };
+        let name = pf.site_name(&dir);
+        let socket = paths.ipc_socket();
+
+        let stage =
+            std::env::temp_dir().join(format!("grove-bundle-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&stage);
+        std::fs::create_dir_all(&stage)?;
+
+        std::fs::copy(ProjectFile::path_in(&dir), stage.join("grove.toml"))?;
+
+        let has_env = !no_env && dir.join(".env").exists();
+        if has_env {
+            std::fs::copy(dir.join(".env"), stage.join("env"))?;
+        }
+
+        let (mut db_engine, mut db_database) = (String::new(), String::new());
+        if let Some(info) = read_env_db(&dir) {
+            db_database = info.database.clone();
+            match info.engine.as_str() {
+                "sqlite" => {
+                    if let Some(sp) = &info.sqlite_path {
+                        if sp.exists() {
+                            std::fs::copy(sp, stage.join("database.sqlite"))?;
+                            db_engine = "sqlite".into();
+                        }
+                    }
+                }
+                eng => {
+                    if !client::is_running(&socket).await {
+                        anyhow::bail!("Grove daemon is not running (needed to dump the database). Start it with `grove start`.");
+                    }
+                    if !json {
+                        println!("Dumping {eng} database {db_database}…");
+                    }
+                    let sqlpath = stage.join("database.sql");
+                    let resp = client::send(
+                        &socket,
+                        &Request::DbDumpFile {
+                            engine: eng.to_string(),
+                            database: if db_database.is_empty() {
+                                None
+                            } else {
+                                Some(db_database.clone())
+                            },
+                            path: sqlpath.to_string_lossy().into_owned(),
+                        },
+                    )
+                    .await?;
+                    if !resp.ok {
+                        anyhow::bail!(
+                            "database dump failed: {}",
+                            resp.error.as_deref().unwrap_or("unknown")
+                        );
+                    }
+                    db_engine = eng.to_string();
+                }
+            }
+        }
+
+        let meta = format!(
+            "name = {name:?}\ndb_engine = {db_engine:?}\ndb_database = {db_database:?}\nhas_env = {has_env}\n"
+        );
+        std::fs::write(stage.join("bundle.toml"), meta)?;
+
+        let out_file = out
+            .map(PathBuf::from)
+            .unwrap_or_else(|| dir.join(format!("{name}.grovebundle")));
+        write_targz(&stage, &out_file)?;
+        let _ = std::fs::remove_dir_all(&stage);
+
+        output::print_message(
+            &format!(
+                "wrote {} — share it; restore with `grove bundle import <file>`",
+                out_file.display()
+            ),
+            json,
+        );
+        Ok(())
+    }
+
+    pub async fn import(
+        paths: &GrovePaths,
+        file: String,
+        into: Option<String>,
+        json: bool,
+    ) -> anyhow::Result<()> {
+        let file = PathBuf::from(file);
+        if !file.exists() {
+            anyhow::bail!("no such bundle: {}", file.display());
+        }
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("app")
+            .to_string();
+        let target = match into {
+            Some(p) => PathBuf::from(p),
+            None => std::env::current_dir()?.join(&stem),
+        };
+        std::fs::create_dir_all(&target)?;
+        extract_targz(&file, &target)?;
+
+        let meta = std::fs::read_to_string(target.join("bundle.toml")).unwrap_or_default();
+        let get = |k: &str| -> String {
+            for line in meta.lines() {
+                if let Some(v) = line.trim().strip_prefix(&format!("{k} = ")) {
+                    return v.trim().trim_matches('"').to_string();
+                }
+            }
+            String::new()
+        };
+        let db_engine = get("db_engine");
+        let has_env = get("has_env") == "true";
+
+        if has_env && target.join("env").exists() {
+            let _ = std::fs::rename(target.join("env"), target.join(".env"));
+        }
+
+        if !json {
+            println!("Restoring into {}", target.display());
+        }
+        lifecycle::up(
+            paths,
+            Some(target.to_string_lossy().into_owned()),
+            false,
+            false,
+            json,
+        )
+        .await?;
+
+        let socket = paths.ipc_socket();
+        match db_engine.as_str() {
+            "sqlite" => {
+                let src = target.join("database.sqlite");
+                let dest = read_env_db(&target).and_then(|i| i.sqlite_path);
+                if let (true, Some(sp)) = (src.exists(), dest) {
+                    if let Some(parent) = sp.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    std::fs::copy(&src, &sp)?;
+                }
+            }
+            "mysql" | "postgres" => {
+                let sql = target.join("database.sql");
+                if sql.exists() {
+                    if !json {
+                        println!("Loading {db_engine} database…");
+                    }
+                    let resp = client::send(
+                        &socket,
+                        &Request::DbRestoreFile {
+                            engine: db_engine.clone(),
+                            path: sql.to_string_lossy().into_owned(),
+                        },
+                    )
+                    .await?;
+                    if !resp.ok {
+                        anyhow::bail!(
+                            "database restore failed: {}",
+                            resp.error.as_deref().unwrap_or("unknown")
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        let _ = std::fs::remove_file(target.join("bundle.toml"));
+        let _ = std::fs::remove_file(target.join("database.sql"));
+        let _ = std::fs::remove_file(target.join("database.sqlite"));
+
+        output::print_message(
+            &format!(
+                "restored to {} — live at https://{}.test",
+                target.display(),
+                get("name")
+            ),
+            json,
+        );
+        Ok(())
+    }
+
+    fn write_targz(src_dir: &Path, out: &Path) -> anyhow::Result<()> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        let f = std::fs::File::create(out)?;
+        let enc = GzEncoder::new(f, Compression::default());
+        let mut tar = tar::Builder::new(enc);
+        tar.append_dir_all(".", src_dir)?;
+        tar.into_inner()?.finish()?;
+        Ok(())
+    }
+
+    fn extract_targz(file: &Path, dest: &Path) -> anyhow::Result<()> {
+        use flate2::read::GzDecoder;
+        let f = std::fs::File::open(file)?;
+        let mut ar = tar::Archive::new(GzDecoder::new(f));
+        ar.unpack(dest)?;
+        Ok(())
+    }
 }
 
 /// Daemon lifecycle + migration commands.

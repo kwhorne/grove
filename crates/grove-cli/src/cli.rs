@@ -205,6 +205,13 @@ pub enum Command {
         no_dev: bool,
     },
 
+    /// Package or restore a whole project environment (grove.toml + .env + database)
+    /// as one shareable file — reproducible dev environments without Docker.
+    Bundle {
+        #[command(subcommand)]
+        action: BundleAction,
+    },
+
     /// Show a live timeline of recent requests Grove proxied (any site, any framework).
     Requests {
         /// Only show requests for this site (host or name).
@@ -212,6 +219,12 @@ pub enum Command {
         /// Maximum entries to show.
         #[arg(long, default_value_t = 40)]
         limit: usize,
+    },
+
+    /// Re-issue a captured request through Grove (framework-agnostic replay).
+    Replay {
+        /// Request id from `grove requests`.
+        id: u64,
     },
 
     /// Activate and inspect a Grove Pro / Teams license.
@@ -304,6 +317,29 @@ pub enum DbAction {
     Restore { id: String },
     /// Delete a snapshot by id.
     Rm { id: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BundleAction {
+    /// Package a project (grove.toml + .env + database) into one shareable file.
+    Export {
+        /// Project directory (defaults to the current directory).
+        path: Option<String>,
+        /// Output file (defaults to <name>.grovebundle).
+        #[arg(long)]
+        out: Option<String>,
+        /// Don't include the project's .env (secrets) in the bundle.
+        #[arg(long = "no-env")]
+        no_env: bool,
+    },
+    /// Restore a bundle: unpack, bring the environment up, and load the database.
+    Import {
+        /// The .grovebundle file to restore.
+        file: String,
+        /// Directory to restore into (defaults to ./<name>).
+        #[arg(long)]
+        into: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]

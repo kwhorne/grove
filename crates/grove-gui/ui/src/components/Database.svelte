@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../lib/api";
+  import { highlightSql } from "../lib/sqlHighlight";
   import type {
     DbConnInfo,
     DbQueryResult,
@@ -30,6 +31,17 @@
   // Inline cell editing state.
   let editing = $state<{ r: number; c: number } | null>(null);
   let editVal = $state("");
+
+  // SQL editor highlight overlay.
+  let hl = $derived(highlightSql(sql));
+  let sqlEl = $state<HTMLTextAreaElement | null>(null);
+  let preEl = $state<HTMLPreElement | null>(null);
+  function syncScroll() {
+    if (sqlEl && preEl) {
+      preEl.scrollTop = sqlEl.scrollTop;
+      preEl.scrollLeft = sqlEl.scrollLeft;
+    }
+  }
 
   let isPro = $derived(license?.plan === "pro" || license?.plan === "teams");
   let pkCols = $derived(
@@ -175,13 +187,18 @@
 
       <div class="main">
         <div class="editor">
-          <textarea
-            class="sql"
-            bind:value={sql}
-            placeholder="select * from users limit 100   —   ⌘⏎ to run"
-            onkeydown={onKeydown}
-            spellcheck="false"
-          ></textarea>
+          <div class="sqlwrap">
+            <pre class="hl" bind:this={preEl} aria-hidden="true">{@html hl}</pre>
+            <textarea
+              class="sql"
+              bind:this={sqlEl}
+              bind:value={sql}
+              onscroll={syncScroll}
+              placeholder="select * from users limit 100   —   ⌘⏎ to run"
+              onkeydown={onKeydown}
+              spellcheck="false"
+            ></textarea>
+          </div>
           <div class="ebtns">
             <button class="btn primary" onclick={run} disabled={busy || !sql.trim()}>
               {busy ? "Running…" : "Run ⌘⏎"}
@@ -315,7 +332,45 @@
   .titem:hover, .titem.sel { background: var(--panel); color: var(--brand); }
   .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
   .editor { display: flex; gap: 8px; align-items: stretch; }
-  .sql { flex: 1; resize: vertical; min-height: 60px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: var(--font-mono); font-size: 13px; padding: 10px; }
+  .sqlwrap { position: relative; flex: 1; min-height: 60px; }
+  .hl, .sql {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    box-sizing: border-box;
+  }
+  .hl {
+    position: absolute;
+    inset: 0;
+    overflow: auto;
+    pointer-events: none;
+    border-color: transparent;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .sql {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 60px;
+    resize: vertical;
+    background: transparent;
+    color: transparent;
+    caret-color: var(--text);
+  }
+  .sql::placeholder { color: var(--text-dim); }
+  .hl :global(.tok-keyword) { color: var(--brand); font-weight: 600; }
+  .hl :global(.tok-string) { color: var(--green); }
+  .hl :global(.tok-number) { color: var(--accent); }
+  .hl :global(.tok-comment) { color: var(--text-dim); font-style: italic; }
+  .hl :global(.tok-punct) { color: var(--text-dim); }
   .ebtns { display: flex; flex-direction: column; gap: 6px; }
   .btn { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 14px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
   .btn.primary { background: var(--brand); border-color: var(--brand); color: #1a1015; font-weight: 600; }

@@ -13,6 +13,7 @@ use hyper::body::Incoming;
 use hyper::{Request, Response, StatusCode};
 
 use grove_core::driver::Driver;
+use grove_core::reqlog::{CapturedRequest, Record};
 use grove_core::site::ResolvedSite;
 
 use crate::fastcgi::{self, FpmAddr};
@@ -68,20 +69,39 @@ pub async fn handle(
             .map(|v| v.eq_ignore_ascii_case("https"))
             .unwrap_or(false);
 
+    // Capture headers + body for the timeline and replay before the body is
+    // consumed downstream. One buffering clone; bodies are typically tiny and
+    // capped in the log.
+    let req_headers: Vec<(String, String)> = req
+        .headers()
+        .iter()
+        .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.to_string(), s.to_string())))
+        .collect();
+    let (parts, body) = req.into_parts();
+    let req_body = body
+        .collect()
+        .await
+        .map(|b| b.to_bytes())
+        .unwrap_or_default();
+    let req = Request::from_parts(parts, Full::new(req_body.clone()));
+
     let site = {
         let registry = state.registry.read().await;
         registry.by_hostname(&route_host).cloned()
     };
 
     let Some(site) = site else {
-        state.log.record(
-            &route_host,
-            &method,
-            &path,
-            StatusCode::NOT_FOUND.as_u16(),
-            start.elapsed().as_millis() as u64,
+        state.log.record(Record {
+            site: &route_host,
+            host: &host,
+            method: &method,
+            path: &path,
+            status: StatusCode::NOT_FOUND.as_u16(),
+            duration_ms: start.elapsed().as_millis() as u64,
             https,
-        );
+            headers: req_headers,
+            body: req_body.to_vec(),
+        });
         return Ok(text_response(
             StatusCode::NOT_FOUND,
             &format!("Grove: no site registered for host {route_host:?}"),
@@ -89,14 +109,17 @@ pub async fn handle(
     };
 
     if site.docker && !site.docker_running {
-        state.log.record(
-            &site.name,
-            &method,
-            &path,
-            StatusCode::SERVICE_UNAVAILABLE.as_u16(),
-            start.elapsed().as_millis() as u64,
+        state.log.record(Record {
+            site: &site.name,
+            host: &host,
+            method: &method,
+            path: &path,
+            status: StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+            duration_ms: start.elapsed().as_millis() as u64,
             https,
-        );
+            headers: req_headers,
+            body: req_body.to_vec(),
+        });
         return Ok(text_response(
             StatusCode::SERVICE_UNAVAILABLE,
             &format!(
@@ -130,20 +153,50 @@ pub async fn handle(
         tracing::error!(error = %e, site = %site.name, "request failed");
         text_response(StatusCode::BAD_GATEWAY, &format!("Grove: {e}"))
     });
-    state.log.record(
-        &site.name,
-        &method,
-        &path,
-        response.status().as_u16(),
-        start.elapsed().as_millis() as u64,
+    state.log.record(Record {
+        site: &site.name,
+        host: &host,
+        method: &method,
+        path: &path,
+        status: response.status().as_u16(),
+        duration_ms: start.elapsed().as_millis() as u64,
         https,
-    );
+        headers: req_headers,
+        body: req_body.to_vec(),
+    });
     Ok(response)
+}
+
+/// Re-issue a captured request through Grove's own HTTP port so it flows through
+/// the full proxy pipeline again (and is logged as a fresh entry). Routing is by
+/// the original `Host` header. Returns `(status, duration_ms)`.
+pub async fn replay(http_port: u16, cap: &CapturedRequest) -> anyhow::Result<(u16, u64)> {
+    use hyper_util::client::legacy::Client;
+    use hyper_util::rt::TokioExecutor;
+
+    let uri: hyper::Uri = format!("http://127.0.0.1:{}{}", http_port, cap.path).parse()?;
+    let mut builder = Request::builder().method(cap.method.as_str()).uri(uri);
+    for (k, v) in &cap.headers {
+        match k.to_ascii_lowercase().as_str() {
+            "host" | "content-length" | "connection" | "transfer-encoding" => continue,
+            _ => builder = builder.header(k, v),
+        }
+    }
+    builder = builder.header(hyper::header::HOST, &cap.host);
+    if cap.https {
+        builder = builder.header("x-forwarded-proto", "https");
+    }
+    let request = builder.body(Full::new(Bytes::from(cap.body.clone())))?;
+
+    let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+    let start = std::time::Instant::now();
+    let resp = client.request(request).await?;
+    Ok((resp.status().as_u16(), start.elapsed().as_millis() as u64))
 }
 
 /// Serve a static file from the document root, with a directory-index fallback.
 async fn serve_static(
-    req: Request<Incoming>,
+    req: Request<Full<Bytes>>,
     site: &ResolvedSite,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
     let rel = sanitize_path(req.uri().path());
@@ -176,7 +229,7 @@ async fn serve_static(
 
 /// Dispatch a request to PHP-FPM over FastCGI.
 async fn serve_php(
-    req: Request<Incoming>,
+    req: Request<Full<Bytes>>,
     site: &ResolvedSite,
     fpm: &dyn FpmLocator,
     https: bool,
@@ -224,7 +277,7 @@ async fn serve_php(
 
 /// Forward to an upstream dev server (Vite/Node) proxy driver.
 async fn serve_proxy(
-    req: Request<Incoming>,
+    req: Request<Full<Bytes>>,
     site: &ResolvedSite,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
     use hyper_util::client::legacy::Client;

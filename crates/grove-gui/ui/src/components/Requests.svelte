@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { api } from "../lib/api";
-  import type { ResolvedSite, RequestEntry } from "../lib/types";
+  import type { ResolvedSite, RequestEntry, RequestDetail } from "../lib/types";
 
   let { sites }: { sites: ResolvedSite[] } = $props();
 
@@ -9,6 +9,11 @@
   let filter = $state("");
   let live = $state(true);
   let timer: ReturnType<typeof setInterval> | undefined;
+
+  let selected = $state<RequestDetail | null>(null);
+  let detailFor = $state<number | null>(null);
+  let replaying = $state(false);
+  let msg = $state("");
 
   async function refresh() {
     if (!live) return;
@@ -29,6 +34,33 @@
     filter;
     refresh();
   });
+
+  async function toggle(r: RequestEntry) {
+    if (detailFor === r.id) {
+      detailFor = null;
+      selected = null;
+      return;
+    }
+    detailFor = r.id;
+    selected = null;
+    try {
+      selected = await api.requestDetail(r.id);
+    } catch (e) {
+      msg = String(e);
+    }
+  }
+
+  async function replay(id: number) {
+    replaying = true;
+    try {
+      const [status, ms] = await api.replayRequest(id);
+      msg = `Replayed → ${status} in ${ms}ms`;
+      await refresh();
+    } catch (e) {
+      msg = String(e);
+    }
+    replaying = false;
+  }
 
   function statusClass(s: number): string {
     if (s === 0 || s >= 500) return "err";
@@ -72,6 +104,8 @@
       <span class:bad={errRate > 0}><b>{errRate}%</b> errors</span>
     </div>
 
+    {#if msg}<span class="msg">{msg}</span>{/if}
+
     <button class="btn" class:primary={live} onclick={() => (live = !live)}>
       {live ? "⏸ Pause" : "▶ Live"}
     </button>
@@ -82,11 +116,12 @@
   {:else}
     <table class="reqs">
       <thead>
-        <tr><th>Time</th><th>Method</th><th>Status</th><th>ms</th><th>Site</th><th>Path</th></tr>
+        <tr><th>#</th><th>Time</th><th>Method</th><th>Status</th><th>ms</th><th>Site</th><th>Path</th></tr>
       </thead>
       <tbody>
-        {#each requests as r (r.epoch_ms + r.path + r.method + r.status)}
-          <tr>
+        {#each requests as r (r.id)}
+          <tr class="rrow" class:sel={detailFor === r.id} onclick={() => toggle(r)}>
+            <td class="dim mono">#{r.id}</td>
             <td class="dim mono">{localTime(r.epoch_ms)}</td>
             <td><span class="method {r.method.toLowerCase()}">{r.method}</span></td>
             <td><span class="code {statusClass(r.status)}">{r.status === 0 ? "ERR" : r.status}</span></td>
@@ -94,6 +129,30 @@
             <td class="dim">{r.site}</td>
             <td class="path mono" title={r.path}>{r.path}</td>
           </tr>
+          {#if detailFor === r.id && selected}
+            <tr class="detail">
+              <td colspan="7">
+                <div class="dhead">
+                  <span class="durl mono">{selected.method} {selected.https ? "https://" : "http://"}{selected.host}{selected.path}</span>
+                  <button class="btn sm" onclick={(e) => { e.stopPropagation(); replay(r.id); }} disabled={replaying}>↻ Replay</button>
+                </div>
+                {#if selected.headers.length}
+                  <div class="dsec">Request headers</div>
+                  <table class="hdrs">
+                    <tbody>
+                      {#each selected.headers as [k, v]}
+                        <tr><td class="hk mono">{k}</td><td class="hv mono">{v}</td></tr>
+                      {/each}
+                    </tbody>
+                  </table>
+                {/if}
+                {#if selected.body}
+                  <div class="dsec">Body{selected.body_truncated ? " (truncated)" : ""}</div>
+                  <pre class="body mono">{selected.body}</pre>
+                {/if}
+              </td>
+            </tr>
+          {/if}
         {/each}
       </tbody>
     </table>
@@ -203,4 +262,19 @@
   .code.redir { color: var(--accent); }
   .code.warn { color: var(--amber); }
   .code.err { color: var(--red); }
+
+  .rrow { cursor: pointer; }
+  .rrow:hover { background: var(--panel); }
+  .rrow.sel { background: var(--panel); }
+  .msg { color: var(--accent); font-size: 12px; margin-left: auto; }
+  .btn.sm { padding: 4px 10px; font-size: 12px; }
+  .detail > td { background: var(--bg); padding: 12px 14px; white-space: normal; }
+  .dhead { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+  .durl { font-size: 12px; color: var(--text); word-break: break-all; flex: 1; }
+  .dsec { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin: 8px 0 4px; }
+  .hdrs { border-collapse: collapse; font-size: 12px; }
+  .hdrs td { padding: 2px 8px 2px 0; vertical-align: top; }
+  .hk { color: var(--text-dim); white-space: nowrap; }
+  .hv { color: var(--text); word-break: break-all; }
+  .body { margin: 0; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; color: var(--text); max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
 </style>

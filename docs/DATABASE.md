@@ -27,7 +27,7 @@ password to type. Supported engines: **MySQL**, **PostgreSQL**, and **SQLite**.
 - Write your own query in the editor and press **⌘⏎** to run it.
 
 Browsing tables and running read-only queries (`SELECT`, `SHOW`, `EXPLAIN`,
-`PRAGMA`, …) is **free**.
+`PRAGMA`, …) is **free**. The query editor has **SQL syntax highlighting**.
 
 ## Free vs Pro
 

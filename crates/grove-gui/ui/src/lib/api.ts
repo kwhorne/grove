@@ -17,6 +17,7 @@ import type {
   SettingsView,
   TunnelRequestEntry,
   RequestEntry,
+  RequestDetail,
   LicenseClaims,
   DbConnInfo,
   DbQueryResult,
@@ -119,6 +120,10 @@ export const api = {
     invoke("tunnel_requests", { site }),
   requestLog: (site: string | null, limit: number): Promise<RequestEntry[]> =>
     invoke("request_log", { site, limit }),
+  requestDetail: (id: number): Promise<RequestDetail | null> =>
+    invoke("request_detail", { id }),
+  replayRequest: (id: number): Promise<[number, number]> =>
+    invoke("replay_request", { id }),
 
   dbConnections: (): Promise<DbConnInfo[]> => invoke("db_connections"),
   dbTables: (key: string): Promise<string[]> => invoke("db_tables", { key }),

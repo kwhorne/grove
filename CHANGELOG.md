@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-07-11
+
+### Added
+
+- **Request inspection & replay.** The request timeline now lets you expand any
+  request to see its headers and body, and **replay it** with one click (or
+  `grove replay <id>`) — a framework-agnostic way to re-run a failed request while
+  you fix the code. Works for any site, any framework, zero setup.
+- **Reproducible environment bundles.** `grove bundle export` packages a
+  project's `grove.toml`, `.env`, and database into one shareable file;
+  `grove bundle import` unpacks it, brings the environment up, and loads the
+  database — reproducible dev environments without Docker. Great for onboarding.
+- **SQL syntax highlighting** in the database client's query editor.
+
 ## [0.11.1] — 2026-07-11
 
 ### Changed
@@ -216,6 +230,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.12.0]: https://github.com/kwhorne/grove/releases/tag/v0.12.0
 [0.11.1]: https://github.com/kwhorne/grove/releases/tag/v0.11.1
 [0.11.0]: https://github.com/kwhorne/grove/releases/tag/v0.11.0
 [0.10.0]: https://github.com/kwhorne/grove/releases/tag/v0.10.0

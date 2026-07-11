@@ -53,8 +53,8 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself, so there is no database/cache or Homebrew to install separately.
 - 📧 **Built-in mail-catcher** — an SMTP server that captures outgoing mail, with a Mailpit-style viewer.
 - 🌍 **Public tunnels** — `grove share` exposes a local site to the internet (demos, webhooks) via a self-hostable, native Expose/ngrok alternative.
-- 📦 **Reproducible environments** — commit a `grove.toml` (PHP/Node versions, services, HTTPS, dev), and a teammate goes from `git clone` to a running, identical setup with one `grove up`.
-- ⇄ **Request timeline** — Grove is the proxy, so it records a live, framework-agnostic log of every request (method, path, status, duration) — a zero-config Telescope for any site, in the CLI (`grove requests`) and a live GUI panel.
+- 📦 **Reproducible environments** — commit a `grove.toml` (PHP/Node versions, services, HTTPS, dev), and a teammate goes from `git clone` to a running, identical setup with one `grove up`. Or package the whole thing — config, `.env`, and database — into one shareable file with `grove bundle export` (no Docker).
+- ⇄ **Request timeline & replay** — Grove is the proxy, so it records a live, framework-agnostic log of every request (method, path, status, duration). Expand any request to see its headers and body, and **replay it** (`grove replay <id>`) to re-run a failed request while you fix the code — a zero-config Telescope for any site.
 - 🛠 **Tools** — migrate MySQL from Herd, and convert whole databases between MySQL, PostgreSQL and SQLite.
 - ⏱️ **Database snapshots** — `grove db snapshot` takes a point-in-time SQL snapshot of the bundled MySQL/PostgreSQL and `grove db restore` rolls it back, so risky migrations are fearless.
 - 🔀 **Toolchain on your PATH** — `grove path install` puts the bundled `php`, `composer`, `node`, `npm` and `laravel` on your PATH, auto-switching to each project's pinned version — so you can drop Herd/Valet entirely.

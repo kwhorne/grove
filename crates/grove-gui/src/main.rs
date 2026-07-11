@@ -297,6 +297,25 @@ async fn request_log(site: Option<String>, limit: usize) -> CmdResult<Vec<Reques
     }
 }
 
+#[tauri::command]
+async fn request_detail(id: u64) -> CmdResult<Option<grove_core::reqlog::RequestDetail>> {
+    match call(Request::RequestDetail { id }).await? {
+        ResponseData::RequestDetail(d) => Ok(d),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn replay_request(id: u64) -> CmdResult<(u16, u64)> {
+    match call(Request::ReplayRequest { id }).await? {
+        ResponseData::Replayed {
+            status,
+            duration_ms,
+        } => Ok((status, duration_ms)),
+        _ => Err("unexpected response".into()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Database client (Pro) — reuses the `e-db` engine, auto-discovering each site's
 // connection from its .env. Free tier is read-only; editing is Pro.
@@ -900,6 +919,8 @@ fn main() {
             tunnel_list,
             tunnel_requests,
             request_log,
+            request_detail,
+            replay_request,
             license_status,
             license_activate,
             license_deactivate,

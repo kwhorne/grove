@@ -148,6 +148,14 @@ pub enum Request {
         site: Option<String>,
         limit: usize,
     },
+    /// Full captured request (headers + body) for one timeline entry.
+    RequestDetail {
+        id: u64,
+    },
+    /// Re-issue a captured request through the proxy pipeline.
+    ReplayRequest {
+        id: u64,
+    },
     /// Activate a Grove Pro/Teams license key (verified offline, then stored).
     LicenseActivate {
         key: String,
@@ -163,6 +171,17 @@ pub enum Request {
     /// Delete a stored snapshot by id.
     DbSnapshotRemove {
         id: String,
+    },
+    /// Dump a database directly to a file path (used by `grove bundle export`).
+    DbDumpFile {
+        engine: String,
+        database: Option<String>,
+        path: String,
+    },
+    /// Restore a database directly from a file path (used by `grove bundle import`).
+    DbRestoreFile {
+        engine: String,
+        path: String,
     },
     /// Ask the daemon to re-read config + rebuild the registry.
     Reload,
@@ -293,6 +312,13 @@ pub enum ResponseData {
     Snapshots(Vec<Snapshot>),
     /// Recent proxied requests, newest first.
     Requests(Vec<RequestEntry>),
+    /// Full captured request for one entry (headers + body).
+    RequestDetail(Option<grove_core::reqlog::RequestDetail>),
+    /// Result of replaying a request: new status + duration in ms.
+    Replayed {
+        status: u16,
+        duration_ms: u64,
+    },
     /// The active license entitlement (None = free / unlicensed).
     License(Option<LicenseClaims>),
 }

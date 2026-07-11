@@ -681,11 +681,78 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let store = grove_services::SnapshotStore::new(&state.paths);
             Ok(Response::ok(ResponseData::Snapshots(store.list())))
         }
+        Request::DbDumpFile {
+            engine,
+            database,
+            path,
+        } => {
+            let services = state.services.clone();
+            let out = std::path::PathBuf::from(path);
+            let r = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                match engine.as_str() {
+                    "mysql" => services
+                        .snapshot_mysql(database.as_deref(), &out)
+                        .map_err(|e| anyhow::anyhow!(e.to_string())),
+                    "postgres" => {
+                        let db = database
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!("postgres needs a database name"))?;
+                        services
+                            .snapshot_postgres(db, &out)
+                            .map_err(|e| anyhow::anyhow!(e.to_string()))
+                    }
+                    other => Err(anyhow::anyhow!("cannot dump engine {other}")),
+                }
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("dump task panicked: {e}"))?;
+            match r {
+                Ok(()) => Ok(Response::ok(ResponseData::Message("dumped".into()))),
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
+        Request::DbRestoreFile { engine, path } => {
+            let services = state.services.clone();
+            let p = std::path::PathBuf::from(path);
+            let r = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+                match engine.as_str() {
+                    "mysql" => services
+                        .restore_mysql(&p)
+                        .map_err(|e| anyhow::anyhow!(e.to_string())),
+                    "postgres" => services
+                        .restore_postgres(&p)
+                        .map_err(|e| anyhow::anyhow!(e.to_string())),
+                    other => Err(anyhow::anyhow!("cannot restore engine {other}")),
+                }
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("restore task panicked: {e}"))?;
+            match r {
+                Ok(()) => Ok(Response::ok(ResponseData::Message("restored".into()))),
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
         Request::RequestLog { site, limit } => {
             let limit = if limit == 0 { 100 } else { limit.min(500) };
             let entries = state.shared.log.snapshot(site.as_deref(), limit);
             Ok(Response::ok(ResponseData::Requests(entries)))
         }
+        Request::RequestDetail { id } => Ok(Response::ok(ResponseData::RequestDetail(
+            state.shared.log.detail(id),
+        ))),
+        Request::ReplayRequest { id } => match state.shared.log.captured(id) {
+            None => Ok(Response::err(format!("no request with id {id}"))),
+            Some(cap) => {
+                let port = state.config.lock().await.general.http_port;
+                match grove_proxy::replay(port, &cap).await {
+                    Ok((status, duration_ms)) => Ok(Response::ok(ResponseData::Replayed {
+                        status,
+                        duration_ms,
+                    })),
+                    Err(e) => Ok(Response::err(format!("replay failed: {e}"))),
+                }
+            }
+        },
         Request::LicenseActivate { key } => match crate::license::activate(&state.paths, &key) {
             Ok(claims) => Ok(Response::ok(ResponseData::License(Some(claims)))),
             Err(e) => Ok(Response::err(format!("could not activate license: {e}"))),

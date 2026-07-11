@@ -119,6 +119,7 @@ export interface LicenseClaims {
 }
 
 export interface RequestEntry {
+  id: number;
   time: string;
   epoch_ms: number;
   site: string;
@@ -127,6 +128,18 @@ export interface RequestEntry {
   status: number;
   duration_ms: number;
   https: boolean;
+}
+
+export interface RequestDetail {
+  id: number;
+  method: string;
+  host: string;
+  path: string;
+  https: boolean;
+  status: number;
+  headers: [string, string][];
+  body: string;
+  body_truncated: boolean;
 }
 
 export interface XdebugBuild {

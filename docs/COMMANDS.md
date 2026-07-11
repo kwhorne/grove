@@ -114,6 +114,20 @@ services = ["mysql", "redis"]
 dev = true
 ```
 
+## Reproducible bundles
+
+Package a whole project environment — `grove.toml`, `.env`, and its database —
+into one shareable file, and restore it with a single command. Reproducible dev
+environments without Docker; ideal for onboarding a teammate.
+
+| Command | Description |
+| --- | --- |
+| `grove bundle export` | Bundle the current project into `<name>.grovebundle`. |
+| `grove bundle export <path> --out <file>` | Choose the project and output file. |
+| `grove bundle export --no-env` | Exclude the project's `.env` (secrets). |
+| `grove bundle import <file>` | Unpack, bring the environment up, and load the database. |
+| `grove bundle import <file> --into <dir>` | Restore into a specific directory. |
+
 ## Team secrets (Grove Teams)
 
 End-to-end encrypted `.env` sync for your team. Secrets are encrypted on your
@@ -153,9 +167,14 @@ in the desktop app's **Requests** panel.
 
 | Command | Description |
 | --- | --- |
-| `grove requests` | Recent requests across all sites (newest first). |
+| `grove requests` | Recent requests across all sites (newest first), with ids. |
 | `grove requests <site>` | Filter to one site. |
 | `grove requests --limit <n>` | Cap the number of entries. |
+| `grove replay <id>` | Re-issue a captured request through Grove (id from `grove requests`). |
+
+In the desktop app, click any request to see its headers and body, and replay it
+with a button — a framework-agnostic way to re-run a failed request while you fix
+the code.
 
 ## Database snapshots
 
