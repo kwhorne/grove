@@ -156,6 +156,31 @@ pub enum Request {
     ReplayRequest {
         id: u64,
     },
+    /// Generate an artifact (curl / http / pest) from a captured request.
+    RequestToTest {
+        id: u64,
+        format: String,
+    },
+    /// Captured inbound webhooks (requests to `/__grove/hooks/...`).
+    HookList {
+        limit: usize,
+    },
+    /// Full captured webhook (headers + body).
+    HookDetail {
+        id: u64,
+    },
+    /// Re-deliver a captured webhook to a local target URL.
+    HookReplayTo {
+        id: u64,
+        to: String,
+    },
+    /// Generate an artifact from a captured webhook.
+    HookToTest {
+        id: u64,
+        format: String,
+    },
+    /// Clear all captured webhooks.
+    HookClear,
     /// Activate a Grove Pro/Teams license key (verified offline, then stored).
     LicenseActivate {
         key: String,
@@ -319,6 +344,10 @@ pub enum ResponseData {
         status: u16,
         duration_ms: u64,
     },
+    /// Generated code (curl / http / pest) for a captured request.
+    Generated(String),
+    /// Captured inbound webhooks.
+    Hooks(Vec<RequestEntry>),
     /// The active license entitlement (None = free / unlicensed).
     License(Option<LicenseClaims>),
 }

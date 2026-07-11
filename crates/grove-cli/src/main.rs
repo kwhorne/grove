@@ -12,8 +12,8 @@ use grove_ipc::client;
 use grove_ipc::protocol::{Request, ResponseData};
 
 use cli::{
-    BundleAction, CaAction, Cli, Command, DbAction, DebugAction, DevAction, LicenseAction,
-    MailAction, NodeAction, PathAction, PhpAction, SecretAction, ServiceAction,
+    BundleAction, CaAction, Cli, Command, DbAction, DebugAction, DevAction, HookAction,
+    LicenseAction, MailAction, NodeAction, PathAction, PhpAction, SecretAction, ServiceAction,
 };
 
 #[tokio::main]
@@ -256,6 +256,12 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         },
         Command::Requests { site, limit } => Request::RequestLog { site, limit },
         Command::Replay { id } => Request::ReplayRequest { id },
+        Command::Request { id, format } => Request::RequestToTest { id, format },
+        Command::Hooks { limit, action } => match action {
+            None => Request::HookList { limit },
+            Some(HookAction::Replay { id, to }) => Request::HookReplayTo { id, to },
+            Some(HookAction::Clear) => Request::HookClear,
+        },
         Command::License { action } => match action {
             LicenseAction::Activate { key } => Request::LicenseActivate { key },
             LicenseAction::Status => Request::LicenseStatus,

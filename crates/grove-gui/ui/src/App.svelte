@@ -18,13 +18,14 @@
   import Tunnels from "./components/Tunnels.svelte";
   import Tools from "./components/Tools.svelte";
   import Requests from "./components/Requests.svelte";
+  import Webhooks from "./components/Webhooks.svelte";
   import Database from "./components/Database.svelte";
   import Logs from "./components/Logs.svelte";
   import AboutModal from "./components/AboutModal.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import NewSiteModal from "./components/NewSiteModal.svelte";
 
-  type Tab = "sites" | "services" | "mail" | "php" | "node" | "tunnels" | "requests" | "database" | "tools" | "logs" | "doctor";
+  type Tab = "sites" | "services" | "mail" | "php" | "node" | "tunnels" | "requests" | "webhooks" | "database" | "tools" | "logs" | "doctor";
 
   let tab = $state<Tab>("sites");
   let running = $state(false);
@@ -160,6 +161,7 @@
     { id: "node", icon: "⬢", label: "Node" },
     { id: "tunnels", icon: "🌍", label: "Tunnels" },
     { id: "requests", icon: "⇄", label: "Requests" },
+    { id: "webhooks", icon: "🪝", label: "Webhooks" },
     { id: "database", icon: "🗄", label: "Database" },
     { id: "tools", icon: "🛠", label: "Tools" },
     { id: "logs", icon: "≡", label: "Logs" },
@@ -304,6 +306,10 @@
         <h2>Requests</h2>
         <p class="subtitle">A live timeline of every request Grove proxied — any site, any framework</p>
         <Requests {sites} />
+      {:else if tab === "webhooks"}
+        <h2>Webhooks</h2>
+        <p class="subtitle">Capture incoming webhooks locally, inspect them, and re-deliver to your app while you fix the handler</p>
+        <Webhooks {sites} {notify} />
       {:else if tab === "database"}
         <h2>Database</h2>
         <p class="subtitle">Browse and query your sites' databases — auto-connected from each project's .env</p>

@@ -213,6 +213,24 @@ pub fn print_response(resp: &Response, json: bool) {
             }
         }
         Some(ResponseData::RequestDetail(_)) => {} // GUI-only detail view
+        Some(ResponseData::Generated(code)) => print!("{code}"),
+        Some(ResponseData::Hooks(hooks)) => {
+            if hooks.is_empty() {
+                println!("no webhooks captured yet — point a provider at https://<site>.test/__grove/hooks/<bucket>");
+            } else {
+                for r in hooks {
+                    println!(
+                        "#{:<5} {}  {:<6} {:<12} {}",
+                        r.id,
+                        r.time,
+                        r.method,
+                        truncate(&r.site, 12),
+                        r.path
+                    );
+                }
+                println!("\nre-deliver one with: grove hooks replay <id> --to https://<site>.test/<handler>");
+            }
+        }
         Some(ResponseData::Replayed {
             status,
             duration_ms,

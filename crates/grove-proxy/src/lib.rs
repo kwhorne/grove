@@ -7,7 +7,7 @@ pub mod state;
 pub mod tls;
 
 pub use fastcgi::FpmAddr;
-pub use handler::{replay, FpmLocator};
+pub use handler::{replay, replay_to, FpmLocator};
 pub use server::{serve_http, serve_https};
 pub use state::SharedState;
 pub use tls::SniResolver;

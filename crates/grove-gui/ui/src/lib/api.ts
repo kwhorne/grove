@@ -124,6 +124,17 @@ export const api = {
     invoke("request_detail", { id }),
   replayRequest: (id: number): Promise<[number, number]> =>
     invoke("replay_request", { id }),
+  requestToTest: (id: number, format: string): Promise<string> =>
+    invoke("request_to_test", { id, format }),
+  hookList: (limit: number): Promise<RequestEntry[]> =>
+    invoke("hook_list", { limit }),
+  hookDetail: (id: number): Promise<RequestDetail | null> =>
+    invoke("hook_detail", { id }),
+  hookReplayTo: (id: number, to: string): Promise<[number, number]> =>
+    invoke("hook_replay_to", { id, to }),
+  hookToTest: (id: number, format: string): Promise<string> =>
+    invoke("hook_to_test", { id, format }),
+  hookClear: (): Promise<void> => invoke("hook_clear"),
 
   dbConnections: (): Promise<DbConnInfo[]> => invoke("db_connections"),
   dbTables: (key: string): Promise<string[]> => invoke("db_tables", { key }),

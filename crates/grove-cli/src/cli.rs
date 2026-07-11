@@ -212,6 +212,16 @@ pub enum Command {
         action: BundleAction,
     },
 
+    /// Inspect webhooks captured at `/__grove/hooks/...` (a local webhook.site),
+    /// and re-deliver them to your app while you fix the handler.
+    Hooks {
+        /// Maximum entries to show when listing.
+        #[arg(long, default_value_t = 40)]
+        limit: usize,
+        #[command(subcommand)]
+        action: Option<HookAction>,
+    },
+
     /// Show a live timeline of recent requests Grove proxied (any site, any framework).
     Requests {
         /// Only show requests for this site (host or name).
@@ -225,6 +235,15 @@ pub enum Command {
     Replay {
         /// Request id from `grove requests`.
         id: u64,
+    },
+
+    /// Generate a curl command, .http file, or Pest test from a captured request.
+    Request {
+        /// Request id from `grove requests`.
+        id: u64,
+        /// Output format: curl (default), http, or pest.
+        #[arg(long = "as", default_value = "curl")]
+        format: String,
     },
 
     /// Activate and inspect a Grove Pro / Teams license.
@@ -317,6 +336,20 @@ pub enum DbAction {
     Restore { id: String },
     /// Delete a snapshot by id.
     Rm { id: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HookAction {
+    /// Re-deliver a captured webhook to a local target URL.
+    Replay {
+        /// Webhook id (from `grove hooks`).
+        id: u64,
+        /// Target URL, e.g. https://myapp.test/stripe/webhook.
+        #[arg(long)]
+        to: String,
+    },
+    /// Clear all captured webhooks.
+    Clear,
 }
 
 #[derive(Subcommand, Debug)]

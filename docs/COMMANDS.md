@@ -171,10 +171,28 @@ in the desktop app's **Requests** panel.
 | `grove requests <site>` | Filter to one site. |
 | `grove requests --limit <n>` | Cap the number of entries. |
 | `grove replay <id>` | Re-issue a captured request through Grove (id from `grove requests`). |
+| `grove request <id> --as <fmt>` | Print the request as `curl`, `http`, or `pest`. |
 
-In the desktop app, click any request to see its headers and body, and replay it
-with a button — a framework-agnostic way to re-run a failed request while you fix
+In the desktop app, click any request to see its headers and body, replay it, or
+copy it as a curl command, a `.http` file, or a Pest test — a framework-agnostic
+way to re-run a failed request (or turn it into a regression test) while you fix
 the code.
+
+## Webhooks
+
+Grove captures any request to `/__grove/hooks/<bucket>` on a site and answers
+`200` — a local webhook.site. Expose it publicly with `grove share <site>` and
+point Stripe, GitHub, etc. at `https://<public-url>/__grove/hooks/<bucket>`.
+Inspect each delivery and **re-deliver it** to your app while you fix the handler.
+
+| Command | Description |
+| --- | --- |
+| `grove hooks` | List captured webhooks (newest first), with ids. |
+| `grove hooks replay <id> --to <url>` | Re-deliver a webhook to a local handler. |
+| `grove hooks clear` | Drop all captured webhooks. |
+
+Also available as the **Webhooks** panel in the desktop app, where you can
+inspect payloads and copy any delivery as a curl/`.http`/Pest test.
 
 ## Database snapshots
 

@@ -141,6 +141,13 @@ impl RequestLog {
         id
     }
 
+    /// Drop all captured entries.
+    pub fn clear(&self) {
+        if let Ok(mut q) = self.inner.lock() {
+            q.clear();
+        }
+    }
+
     /// The most recent requests (newest first), optionally filtered by site.
     pub fn snapshot(&self, site: Option<&str>, limit: usize) -> Vec<RequestEntry> {
         let q = match self.inner.lock() {

@@ -62,6 +62,16 @@
     replaying = false;
   }
 
+  async function copyAs(id: number, format: string) {
+    try {
+      const code = await api.requestToTest(id, format);
+      await navigator.clipboard.writeText(code);
+      msg = `Copied as ${format}`;
+    } catch (e) {
+      msg = String(e);
+    }
+  }
+
   function statusClass(s: number): string {
     if (s === 0 || s >= 500) return "err";
     if (s >= 400) return "warn";
@@ -135,6 +145,9 @@
                 <div class="dhead">
                   <span class="durl mono">{selected.method} {selected.https ? "https://" : "http://"}{selected.host}{selected.path}</span>
                   <button class="btn sm" onclick={(e) => { e.stopPropagation(); replay(r.id); }} disabled={replaying}>↻ Replay</button>
+                  <button class="btn sm" onclick={(e) => { e.stopPropagation(); copyAs(r.id, "curl"); }} title="Copy as curl">curl</button>
+                  <button class="btn sm" onclick={(e) => { e.stopPropagation(); copyAs(r.id, "http"); }} title="Copy as .http">.http</button>
+                  <button class="btn sm" onclick={(e) => { e.stopPropagation(); copyAs(r.id, "pest"); }} title="Copy as Pest test">Pest</button>
                 </div>
                 {#if selected.headers.length}
                   <div class="dsec">Request headers</div>

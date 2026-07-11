@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-11
+
+### Added
+
+- **Local webhook hub.** Any request to `/__grove/hooks/<bucket>` on a site is
+  captured and acknowledged with `200` — a local webhook.site. Expose it with
+  `grove share <site>`, point Stripe/GitHub at it, then inspect each delivery
+  (headers + payload) and **re-deliver it to your app** while you fix the handler.
+  New **Webhooks** panel in the app; `grove hooks` on the CLI.
+- **Turn a request into a test.** From any captured request or webhook, copy it
+  as a `curl` command, a `.http` file, or a **Pest feature test** (`grove request
+  <id> --as pest`, or the buttons in the app) — turn a failing request into a
+  regression test in one click.
+
+### Changed
+
+- Fresh **lime** app icon.
+
 ## [0.12.0] — 2026-07-11
 
 ### Added
@@ -230,6 +248,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[0.13.0]: https://github.com/kwhorne/grove/releases/tag/v0.13.0
 [0.12.0]: https://github.com/kwhorne/grove/releases/tag/v0.12.0
 [0.11.1]: https://github.com/kwhorne/grove/releases/tag/v0.11.1
 [0.11.0]: https://github.com/kwhorne/grove/releases/tag/v0.11.0

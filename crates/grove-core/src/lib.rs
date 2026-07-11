@@ -8,6 +8,7 @@
 pub mod config;
 pub mod driver;
 pub mod error;
+pub mod httpgen;
 pub mod paths;
 pub mod project;
 pub mod registry;

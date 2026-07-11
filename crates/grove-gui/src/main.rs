@@ -316,6 +316,57 @@ async fn replay_request(id: u64) -> CmdResult<(u16, u64)> {
     }
 }
 
+#[tauri::command]
+async fn request_to_test(id: u64, format: String) -> CmdResult<String> {
+    match call(Request::RequestToTest { id, format }).await? {
+        ResponseData::Generated(code) => Ok(code),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn hook_list(limit: usize) -> CmdResult<Vec<RequestEntry>> {
+    match call(Request::HookList { limit }).await? {
+        ResponseData::Hooks(h) => Ok(h),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn hook_detail(id: u64) -> CmdResult<Option<grove_core::reqlog::RequestDetail>> {
+    match call(Request::HookDetail { id }).await? {
+        ResponseData::RequestDetail(d) => Ok(d),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn hook_replay_to(id: u64, to: String) -> CmdResult<(u16, u64)> {
+    match call(Request::HookReplayTo { id, to }).await? {
+        ResponseData::Replayed {
+            status,
+            duration_ms,
+        } => Ok((status, duration_ms)),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn hook_to_test(id: u64, format: String) -> CmdResult<String> {
+    match call(Request::HookToTest { id, format }).await? {
+        ResponseData::Generated(code) => Ok(code),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn hook_clear() -> CmdResult<()> {
+    match call(Request::HookClear).await? {
+        ResponseData::Message(_) => Ok(()),
+        _ => Err("unexpected response".into()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Database client (Pro) — reuses the `e-db` engine, auto-discovering each site's
 // connection from its .env. Free tier is read-only; editing is Pro.
@@ -921,6 +972,12 @@ fn main() {
             request_log,
             request_detail,
             replay_request,
+            request_to_test,
+            hook_list,
+            hook_detail,
+            hook_replay_to,
+            hook_to_test,
+            hook_clear,
             license_status,
             license_activate,
             license_deactivate,

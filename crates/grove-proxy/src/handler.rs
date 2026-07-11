@@ -85,6 +85,35 @@ pub async fn handle(
         .unwrap_or_default();
     let req = Request::from_parts(parts, Full::new(req_body.clone()));
 
+    // Webhook capture: any request to `/__grove/hooks[/bucket]` is recorded and
+    // acknowledged with 200 (never dispatched to the app). Expose it publicly
+    // with `grove share <site>` and point Stripe/GitHub at it.
+    const HOOK_PREFIX: &str = "/__grove/hooks";
+    let just_path = path.split('?').next().unwrap_or(path.as_str());
+    if just_path == HOOK_PREFIX || just_path.starts_with(&format!("{HOOK_PREFIX}/")) {
+        let bucket = just_path
+            .strip_prefix(HOOK_PREFIX)
+            .map(|s| s.trim_start_matches('/'))
+            .filter(|s| !s.is_empty())
+            .unwrap_or("default");
+        state.hooks.record(Record {
+            site: bucket,
+            host: &host,
+            method: &method,
+            path: &path,
+            status: StatusCode::OK.as_u16(),
+            duration_ms: 0,
+            https,
+            headers: req_headers,
+            body: req_body.to_vec(),
+        });
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from_static(b"{\"grove\":\"captured\"}")))
+            .expect("static hook ack"));
+    }
+
     let site = {
         let registry = state.registry.read().await;
         registry.by_hostname(&route_host).cloned()
@@ -192,6 +221,23 @@ pub async fn replay(http_port: u16, cap: &CapturedRequest) -> anyhow::Result<(u1
     let start = std::time::Instant::now();
     let resp = client.request(request).await?;
     Ok((resp.status().as_u16(), start.elapsed().as_millis() as u64))
+}
+
+/// Replay a captured request to a specific local target (host + path), routed
+/// through Grove's HTTP port — used to re-deliver a captured webhook to your
+/// app's real handler. Returns `(status, duration_ms)`.
+pub async fn replay_to(
+    http_port: u16,
+    cap: &CapturedRequest,
+    target_host: &str,
+    target_path: &str,
+    https: bool,
+) -> anyhow::Result<(u16, u64)> {
+    let mut c = cap.clone();
+    c.host = target_host.to_string();
+    c.path = target_path.to_string();
+    c.https = https;
+    replay(http_port, &c).await
 }
 
 /// Serve a static file from the document root, with a directory-index fallback.

@@ -88,6 +88,22 @@ async fn tunnel_start(
 }
 
 /// Execute one request against daemon state, returning the response to send.
+/// Split a target URL into (host, path, https) without a URL crate. Defaults to
+/// https and "/" — targets are local `.test` sites.
+fn parse_target(url: &str) -> (String, String, bool) {
+    let (https, rest) = if let Some(r) = url.strip_prefix("https://") {
+        (true, r)
+    } else if let Some(r) = url.strip_prefix("http://") {
+        (false, r)
+    } else {
+        (true, url)
+    };
+    match rest.find('/') {
+        Some(i) => (rest[..i].to_string(), rest[i..].to_string(), https),
+        None => (rest.to_string(), "/".to_string(), https),
+    }
+}
+
 pub async fn dispatch(state: &Arc<DaemonState>, req: Request) -> Response {
     match handle(state, req).await {
         Ok(resp) => resp,
@@ -740,6 +756,62 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
         Request::RequestDetail { id } => Ok(Response::ok(ResponseData::RequestDetail(
             state.shared.log.detail(id),
         ))),
+        Request::RequestToTest { id, format } => {
+            let Some(fmt) = grove_core::httpgen::TestFormat::parse(&format) else {
+                return Ok(Response::err(format!(
+                    "unknown format {format:?} (use curl, http, or pest)"
+                )));
+            };
+            match state.shared.log.detail(id) {
+                Some(d) => Ok(Response::ok(ResponseData::Generated(
+                    grove_core::httpgen::generate(&d, fmt),
+                ))),
+                None => Ok(Response::err(format!("no request with id {id}"))),
+            }
+        }
+        Request::HookList { limit } => {
+            let limit = if limit == 0 { 100 } else { limit.min(200) };
+            Ok(Response::ok(ResponseData::Hooks(
+                state.shared.hooks.snapshot(None, limit),
+            )))
+        }
+        Request::HookDetail { id } => Ok(Response::ok(ResponseData::RequestDetail(
+            state.shared.hooks.detail(id),
+        ))),
+        Request::HookToTest { id, format } => {
+            let Some(fmt) = grove_core::httpgen::TestFormat::parse(&format) else {
+                return Ok(Response::err(format!("unknown format {format:?}")));
+            };
+            match state.shared.hooks.detail(id) {
+                Some(d) => Ok(Response::ok(ResponseData::Generated(
+                    grove_core::httpgen::generate(&d, fmt),
+                ))),
+                None => Ok(Response::err(format!("no webhook with id {id}"))),
+            }
+        }
+        Request::HookClear => {
+            state.shared.hooks.clear();
+            Ok(Response::ok(ResponseData::Message("cleared".into())))
+        }
+        Request::HookReplayTo { id, to } => match state.shared.hooks.captured(id) {
+            None => Ok(Response::err(format!("no webhook with id {id}"))),
+            Some(cap) => {
+                let (host, path, https) = parse_target(&to);
+                if host.is_empty() {
+                    return Ok(Response::err(
+                        "target needs a host, e.g. https://myapp.test/webhook".to_string(),
+                    ));
+                }
+                let port = state.config.lock().await.general.http_port;
+                match grove_proxy::replay_to(port, &cap, &host, &path, https).await {
+                    Ok((status, duration_ms)) => Ok(Response::ok(ResponseData::Replayed {
+                        status,
+                        duration_ms,
+                    })),
+                    Err(e) => Ok(Response::err(format!("replay failed: {e}"))),
+                }
+            }
+        },
         Request::ReplayRequest { id } => match state.shared.log.captured(id) {
             None => Ok(Response::err(format!("no request with id {id}"))),
             Some(cap) => {
