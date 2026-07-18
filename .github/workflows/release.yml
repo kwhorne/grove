@@ -141,3 +141,47 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" dist/*.tar.gz --clobber
+
+  # tauri-action writes api.github.com asset URLs into latest.json, which the
+  # updater downloads unauthenticated — and the GitHub API rate-limits those to
+  # 60/hour per IP, so updates intermittently fail with 403. Rewrite them to the
+  # public, un-rate-limited browser_download_url. Runs last, after every matrix
+  # job has uploaded its slice of latest.json.
+  finalize-updater:
+    name: Fix updater download URLs
+    needs: release
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Rewrite latest.json to direct download URLs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" -R "$REPO" -p latest.json -D . --clobber
+          gh api "repos/$REPO/releases/tags/$TAG" \
+            --jq '.assets[] | "\(.id)\t\(.browser_download_url)"' > assets.tsv
+          python3 - <<'PY'
+          import json, os
+          m = {}
+          for line in open('assets.tsv'):
+              line = line.strip()
+              if not line:
+                  continue
+              aid, url = line.split('\t')
+              m[aid] = url
+          d = json.load(open('latest.json'))
+          changed = False
+          for plat, info in d.get('platforms', {}).items():
+              aid = info['url'].rstrip('/').split('/')[-1]
+              if aid in m and info['url'] != m[aid]:
+                  info['url'] = m[aid]
+                  changed = True
+          json.dump(d, open('latest.json', 'w'), indent=2)
+          print('updater urls rewritten' if changed else 'no changes needed')
+          PY
+          gh release upload "$TAG" latest.json -R "$REPO" --clobber
