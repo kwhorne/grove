@@ -162,6 +162,12 @@ impl RequestLog {
             .collect()
     }
 
+    /// The timeline entry (with timing) for one request, by id.
+    pub fn entry(&self, id: u64) -> Option<RequestEntry> {
+        let q = self.inner.lock().ok()?;
+        q.iter().find(|c| c.entry.id == id).map(|c| c.entry.clone())
+    }
+
     /// Headers + body for one request, for the detail view.
     pub fn detail(&self, id: u64) -> Option<RequestDetail> {
         let q = self.inner.lock().ok()?;
@@ -238,6 +244,8 @@ mod tests {
         assert_eq!(log.snapshot(None, 1).len(), 1);
         assert_eq!(log.captured(last).unwrap().path, "/4");
         assert!(log.detail(last).is_some());
+        assert_eq!(log.entry(last).unwrap().path, "/4");
+        assert!(log.entry(9999).is_none());
     }
 
     #[test]

@@ -152,6 +152,11 @@ pub enum Request {
     RequestDetail {
         id: u64,
     },
+    /// The causal chain for one request: the entry plus the side effects (mail,
+    /// …) captured within its time window, and derived metrics.
+    RequestChain {
+        id: u64,
+    },
     /// Re-issue a captured request through the proxy pipeline.
     ReplayRequest {
         id: u64,
@@ -310,6 +315,31 @@ impl Response {
     }
 }
 
+/// Derived signals for a request's causal chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainMetrics {
+    /// How long the request took, end to end.
+    pub duration_ms: u64,
+    /// Emails captured within the request's time window.
+    pub email_count: usize,
+}
+
+/// A request plus the side effects Grove observed within its time window.
+///
+/// Correlation is by time window today (Grove sits in front of every request
+/// and captures mail centrally); SQL and other sources plug into the same shape
+/// as they become available.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestChain {
+    pub request: RequestEntry,
+    /// Inclusive epoch-ms window the request occupied.
+    pub window_start_ms: u128,
+    pub window_end_ms: u128,
+    /// Emails captured within the window (newest first).
+    pub emails: Vec<EmailSummary>,
+    pub metrics: ChainMetrics,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResponseData {
@@ -348,6 +378,8 @@ pub enum ResponseData {
     Generated(String),
     /// Captured inbound webhooks.
     Hooks(Vec<RequestEntry>),
+    /// The causal chain for one request (None if the id is unknown).
+    RequestChain(Option<RequestChain>),
     /// The active license entitlement (None = free / unlicensed).
     License(Option<LicenseClaims>),
 }

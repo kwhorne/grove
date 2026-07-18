@@ -21,6 +21,10 @@ pub struct CapturedEmail {
     pub subject: String,
     /// RFC3339 timestamp of when Grove received it.
     pub received_at: String,
+    /// Epoch milliseconds Grove received it, for correlating with the request
+    /// timeline (see `MailStore::in_window`).
+    #[serde(default)]
+    pub received_ms: u128,
     pub size: usize,
     /// Raw DATA payload (headers + body).
     pub raw: String,
@@ -38,6 +42,8 @@ pub struct EmailSummary {
     pub to: Vec<String>,
     pub subject: String,
     pub received_at: String,
+    #[serde(default)]
+    pub received_ms: u128,
     pub size: usize,
 }
 
@@ -49,6 +55,7 @@ impl From<&CapturedEmail> for EmailSummary {
             to: e.to.clone(),
             subject: e.subject.clone(),
             received_at: e.received_at.clone(),
+            received_ms: e.received_ms,
             size: e.size,
         }
     }
@@ -104,6 +111,17 @@ impl MailStore {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Summaries of emails captured within `[start_ms, end_ms]` (inclusive),
+    /// newest first. Used to correlate mail with a request's time window.
+    pub fn in_window(&self, start_ms: u128, end_ms: u128) -> Vec<EmailSummary> {
+        let buf = self.inner.lock().unwrap();
+        buf.iter()
+            .rev()
+            .filter(|e| e.received_ms >= start_ms && e.received_ms <= end_ms)
+            .map(EmailSummary::from)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -117,6 +135,7 @@ mod tests {
             to: vec!["c@d.test".into()],
             subject: subject.into(),
             received_at: "now".into(),
+            received_ms: 0,
             size: 10,
             raw: "raw".into(),
             text: None,
@@ -141,5 +160,26 @@ mod tests {
         store.push(email("x"));
         assert_eq!(store.clear(), 1);
         assert!(store.is_empty());
+    }
+
+    #[test]
+    fn in_window_filters_by_received_ms() {
+        let store = MailStore::new();
+        let mut at = |ms: u128, subj: &str| {
+            let mut e = email(subj);
+            e.received_ms = ms;
+            store.push(e)
+        };
+        at(100, "early");
+        at(150, "inside");
+        at(500, "late");
+
+        let hit = store.in_window(120, 200);
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].subject, "inside");
+
+        // Inclusive bounds.
+        assert_eq!(store.in_window(100, 100).len(), 1);
+        assert_eq!(store.in_window(200, 400).len(), 0);
     }
 }

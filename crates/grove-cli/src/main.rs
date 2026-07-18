@@ -420,6 +420,13 @@ mod mcp {
                 }, "required": ["id"]}
             },
             {
+                "name": "grove_request_chain",
+                "description": "The causal chain for one captured request (by id from grove_requests): the request plus the side effects Grove observed in its time window — e.g. emails it sent — and derived metrics (duration, side-effect counts). Great for 'this 500 also sent an email'.",
+                "inputSchema": {"type": "object", "properties": {
+                    "id": {"type": "integer"}
+                }, "required": ["id"]}
+            },
+            {
                 "name": "grove_webhooks",
                 "description": "Recently captured inbound webhooks (requests to /__grove/hooks/...).",
                 "inputSchema": {"type": "object", "properties": {
@@ -582,6 +589,14 @@ mod mcp {
                 match call(socket, Request::RequestDetail { id }).await? {
                     ResponseData::RequestDetail(Some(d)) => Ok(serde_json::to_string_pretty(&d)?),
                     ResponseData::RequestDetail(None) => anyhow::bail!("no request with id {id}"),
+                    _ => anyhow::bail!("unexpected response"),
+                }
+            }
+            "grove_request_chain" => {
+                let id = n("id").ok_or_else(|| anyhow::anyhow!("id is required"))?;
+                match call(socket, Request::RequestChain { id }).await? {
+                    ResponseData::RequestChain(Some(c)) => Ok(serde_json::to_string_pretty(&c)?),
+                    ResponseData::RequestChain(None) => anyhow::bail!("no request with id {id}"),
                     _ => anyhow::bail!("unexpected response"),
                 }
             }

@@ -213,6 +213,7 @@ pub fn print_response(resp: &Response, json: bool) {
             }
         }
         Some(ResponseData::RequestDetail(_)) => {} // GUI-only detail view
+        Some(ResponseData::RequestChain(_)) => {} // surfaced via --json / MCP
         Some(ResponseData::Generated(code)) => print!("{code}"),
         Some(ResponseData::Hooks(hooks)) => {
             if hooks.is_empty() {

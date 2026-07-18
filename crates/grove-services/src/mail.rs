@@ -158,9 +158,9 @@ fn parse_email(session: &Session, data: &str) -> CapturedEmail {
     let content_type = header("Content-Type").unwrap_or_default();
     let (text, html) = extract_bodies(&content_type, body);
 
-    let received_at = OffsetDateTime::now_utc()
-        .format(&Rfc3339)
-        .unwrap_or_default();
+    let now = OffsetDateTime::now_utc();
+    let received_at = now.format(&Rfc3339).unwrap_or_default();
+    let received_ms = (now.unix_timestamp_nanos() / 1_000_000).max(0) as u128;
 
     CapturedEmail {
         id: 0,
@@ -168,6 +168,7 @@ fn parse_email(session: &Session, data: &str) -> CapturedEmail {
         to,
         subject,
         received_at,
+        received_ms,
         size: data.len(),
         raw: data.to_string(),
         text,

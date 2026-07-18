@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Request causal chain.** A new `grove_request_chain` MCP tool (and
+  `RequestChain` IPC command) correlates a captured request with the side
+  effects Grove observed inside its time window — starting with captured mail —
+  plus derived metrics (duration, side-effect counts). Grove sits in front of
+  every request and captures mail centrally, so it can answer "this 500 also
+  sent an email" with zero app instrumentation. SQL and other sources plug into
+  the same shape as they land.
+
 - **Agent-safe MCP write tools (opt-in).** `grove mcp --allow-write` exposes
   `grove_migrate_sandboxed`, which runs `php artisan <command>` (default
   `migrate --force`) inside an automatic snapshot sandbox: Grove snapshots the

@@ -756,6 +756,26 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
         Request::RequestDetail { id } => Ok(Response::ok(ResponseData::RequestDetail(
             state.shared.log.detail(id),
         ))),
+        Request::RequestChain { id } => {
+            let chain = state.shared.log.entry(id).map(|entry| {
+                // The request occupied [completion - duration, completion].
+                let window_end_ms = entry.epoch_ms;
+                let window_start_ms = entry.epoch_ms.saturating_sub(entry.duration_ms as u128);
+                let emails = state.mail.in_window(window_start_ms, window_end_ms);
+                let metrics = grove_ipc::protocol::ChainMetrics {
+                    duration_ms: entry.duration_ms,
+                    email_count: emails.len(),
+                };
+                grove_ipc::protocol::RequestChain {
+                    request: entry,
+                    window_start_ms,
+                    window_end_ms,
+                    emails,
+                    metrics,
+                }
+            });
+            Ok(Response::ok(ResponseData::RequestChain(chain)))
+        }
         Request::RequestToTest { id, format } => {
             let Some(fmt) = grove_core::httpgen::TestFormat::parse(&format) else {
                 return Ok(Response::err(format!(
