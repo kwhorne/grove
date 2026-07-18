@@ -7,47 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [1.1.0] — 2026-07-18
 
-- **"Explain this error."** `grove explain <id>` (and the `grove_explain` MCP
-  tool) curate a debugging bundle for one request — the request (headers + body),
-  its causal chain (SQL + mail + metrics), and the matching error-log entries
-  with stacktraces — all gathered in one place and structured for an AI
-  assistant. In the desktop app, an **✨ Explain** button on each request copies
-  the bundle to the clipboard. Errors are handled gracefully when there's no
-  stacktrace. See [docs/MCP.md](docs/MCP.md).
+The AI release. Grove 1.0 opened its local environment to AI clients over MCP,
+read-only. 1.1 turns `grove mcp` into a full AI debugging companion: **safe,
+sandboxed writes** with automatic rollback, a **per-request causal chain** that
+ties each request to the SQL it ran and the mail it sent, and one-click
+**"explain this error"** bundles that gather the request, its side effects, and
+the stacktrace for your assistant. The core stays free and open source.
 
-- **Request causal chain.** A new `grove_request_chain` MCP tool (and
-  `RequestChain` IPC command) correlates a captured request with the side
-  effects Grove observed inside its time window — starting with captured mail —
-  plus derived metrics (duration, side-effect counts). Grove sits in front of
-  every request and captures mail centrally, so it can answer "this 500 also
-  sent an email" with zero app instrumentation. SQL and other sources plug into
-  the same shape as they land.
-- **SQL in the causal chain.** `grove sql-capture on` turns on MySQL's general
-  query log (written to a Grove-owned file) so each request's causal chain
-  includes the SQL it issued, correlated by time window — with a `query_count`
-  metric. `grove sql-capture off|status` toggle and report it. No app
-  instrumentation, because Grove owns the database service.
-- **Causal chain in the desktop app.** The Requests panel now expands each
-  request to show its causal chain (SQL + mail + metrics), with a toolbar toggle
-  for SQL capture.
+### Added — agent-safe MCP write tools (opt-in)
 
-- **Agent-safe MCP write tools (opt-in).** `grove mcp --allow-write` exposes
-  `grove_migrate_sandboxed`, which runs `php artisan <command>` (default
+- **`grove mcp --allow-write`.** The MCP server is read-only by default; write
+  tools appear only with this flag (and are refused otherwise). Every write is
+  recorded to an audit log at `$GROVE_HOME/logs/mcp-writes.log`.
+- **`grove_migrate_sandboxed`.** Runs `php artisan <command>` (default
   `migrate --force`) inside an automatic snapshot sandbox: Grove snapshots the
   database first, runs the migration, reports the schema diff, and
   **automatically rolls back on failure**. Pass `roll_back: true` for a pure dry
-  run. The server stays read-only unless the flag is set, and every write is
-  recorded to `$GROVE_HOME/logs/mcp-writes.log`. See [docs/MCP.md](docs/MCP.md).
-- **Sandboxed SQL over MCP.** `grove_sql_sandboxed` (also behind
-  `grove mcp --allow-write`) runs a single write statement
+  run; on success the snapshot id is returned for manual rollback.
+- **`grove_sql_sandboxed`.** Runs a single write statement
   (INSERT/UPDATE/DELETE/DDL) through the same snapshot → run → schema-diff →
   auto-rollback flow, returning `rows_affected`. Read-only statements are
   refused — use `grove_db_query` for those.
-- **SQLite in the write sandbox.** The sandboxed write tools now also cover
-  SQLite sites — snapshotted by copying the `.sqlite` file and restored the same
-  way — alongside bundled MySQL/PostgreSQL.
+- Both write tools cover bundled **MySQL/PostgreSQL** (daemon snapshot) and
+  **SQLite** (snapshotted by copying the `.sqlite` file).
+
+### Added — request causal chain
+
+- **`grove_request_chain`** MCP tool (and `RequestChain` IPC command) correlate
+  a captured request with the side effects Grove observed inside its time
+  window, plus derived metrics (duration, query count, side-effect counts).
+  Grove sits in front of every request and captures mail centrally, so it does
+  this with zero app instrumentation.
+- **`grove sql-capture on|off|status`.** Turns on MySQL's general query log
+  (written to a Grove-owned file) so each request's chain includes the SQL it
+  issued, correlated by time window — because Grove owns the database service.
+- **Desktop app.** The Requests panel expands each request to show its causal
+  chain (SQL + mail + metrics), with a toolbar toggle for SQL capture.
+
+### Added — "explain this error"
+
+- **`grove explain <id>`** and the **`grove_explain`** MCP tool curate a
+  debugging bundle for one request — the request (headers + body), its causal
+  chain (SQL + mail + metrics), and the matching error-log entries with
+  stacktraces — gathered in one place and structured for an AI assistant. Logs
+  are chased only for failures, and the absence of a stacktrace is handled
+  gracefully. In the desktop app, an **✨ Explain** button on each request copies
+  the bundle to the clipboard. See [docs/MCP.md](docs/MCP.md).
 
 ## [1.0.0] — 2026-07-11
 
