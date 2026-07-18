@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
 
-        Command::Mcp => mcp::serve(&paths).await,
+        Command::Mcp { allow_write } => mcp::serve(&paths, allow_write).await,
         Command::Gui => lifecycle::gui(&paths).await,
         Command::Start => lifecycle::start(&paths, args.json).await,
         Command::Stop => lifecycle::stop(&paths, args.json).await,
@@ -290,7 +290,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Init { .. }
         | Command::Up { .. }
         | Command::Bundle { .. }
-        | Command::Mcp
+        | Command::Mcp { .. }
         | Command::Share { .. }
         | Command::Env { .. }
         | Command::Logs { .. }
@@ -326,7 +326,7 @@ mod mcp {
     use std::path::{Path, PathBuf};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-    pub async fn serve(paths: &GrovePaths) -> anyhow::Result<()> {
+    pub async fn serve(paths: &GrovePaths, allow_write: bool) -> anyhow::Result<()> {
         let socket = paths.ipc_socket();
         let mut lines = BufReader::new(tokio::io::stdin()).lines();
         let mut out = tokio::io::stdout();
@@ -344,7 +344,7 @@ mod mcp {
             };
             let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
             let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
-            let reply = match dispatch(&socket, method, &params).await {
+            let reply = match dispatch(paths, &socket, method, &params, allow_write).await {
                 Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
                 Err(e) => json!({
                     "jsonrpc": "2.0", "id": id,
@@ -359,14 +359,20 @@ mod mcp {
         Ok(())
     }
 
-    async fn dispatch(socket: &Path, method: &str, params: &Value) -> anyhow::Result<Value> {
+    async fn dispatch(
+        paths: &GrovePaths,
+        socket: &Path,
+        method: &str,
+        params: &Value,
+        allow_write: bool,
+    ) -> anyhow::Result<Value> {
         match method {
             "initialize" => Ok(json!({
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "grove", "version": env!("CARGO_PKG_VERSION")}
             })),
-            "tools/list" => Ok(json!({"tools": tool_defs()})),
+            "tools/list" => Ok(json!({"tools": tool_defs(allow_write)})),
             "resources/list" => Ok(json!({"resources": []})),
             "prompts/list" => Ok(json!({"prompts": []})),
             "ping" => Ok(json!({})),
@@ -376,7 +382,7 @@ mod mcp {
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                match call_tool(socket, name, &args).await {
+                match call_tool(paths, socket, name, &args, allow_write).await {
                     Ok(text) => Ok(json!({
                         "content": [{"type": "text", "text": text}],
                         "isError": false
@@ -391,8 +397,8 @@ mod mcp {
         }
     }
 
-    fn tool_defs() -> Value {
-        json!([
+    fn tool_defs(allow_write: bool) -> Value {
+        let mut tools = match json!([
             {
                 "name": "grove_sites",
                 "description": "List all sites Grove serves on .test (name, host, driver, PHP/Node version, HTTPS, path).",
@@ -443,7 +449,33 @@ mod mcp {
                     "sql": {"type": "string"}
                 }, "required": ["site", "sql"]}
             }
-        ])
+        ]) {
+            Value::Array(a) => a,
+            _ => Vec::new(),
+        };
+        // Agent-safe write tools are opt-in (`grove mcp --allow-write`). The
+        // server stays read-only unless the operator turns this on.
+        if allow_write {
+            tools.push(json!({
+                "name": "grove_migrate_sandboxed",
+                "description": "Run database migrations inside an automatic snapshot sandbox. Grove takes a point-in-time snapshot first, runs `php artisan <command>` in the site, captures the schema diff, and AUTOMATICALLY ROLLS BACK if the command fails (or if roll_back=true). Returns the command output, the schema diff, the snapshot id, and whether a rollback happened. Works with MySQL, PostgreSQL and SQLite.",
+                "inputSchema": {"type": "object", "properties": {
+                    "site": {"type": "string", "description": "Site name or hostname"},
+                    "command": {"type": "string", "description": "Artisan command to run (default: 'migrate --force'). Examples: 'migrate --force', 'migrate:fresh --force', 'migrate:rollback --force'."},
+                    "roll_back": {"type": "boolean", "description": "Always roll back afterwards, even on success — a pure dry run (default false)."}
+                }, "required": ["site"]}
+            }));
+            tools.push(json!({
+                "name": "grove_sql_sandboxed",
+                "description": "Run a WRITE SQL statement (INSERT/UPDATE/DELETE/DDL) inside an automatic snapshot sandbox. Grove snapshots the database first, runs the statement, reports rows_affected and the schema diff, and AUTOMATICALLY ROLLS BACK if it fails (or if roll_back=true for a dry run). Use grove_db_query for read-only SELECTs. Works with MySQL, PostgreSQL and SQLite.",
+                "inputSchema": {"type": "object", "properties": {
+                    "site": {"type": "string", "description": "Site name or hostname"},
+                    "sql": {"type": "string", "description": "A single write statement, e.g. UPDATE users SET ..."},
+                    "roll_back": {"type": "boolean", "description": "Always roll back afterwards, even on success — a pure dry run (default false)."}
+                }, "required": ["site", "sql"]}
+            }));
+        }
+        Value::Array(tools)
     }
 
     async fn call(socket: &Path, req: Request) -> anyhow::Result<ResponseData> {
@@ -477,10 +509,38 @@ mod mcp {
         .any(|kw| s.starts_with(kw))
     }
 
-    async fn call_tool(socket: &Path, name: &str, args: &Value) -> anyhow::Result<String> {
+    async fn call_tool(
+        paths: &GrovePaths,
+        socket: &Path,
+        name: &str,
+        args: &Value,
+        allow_write: bool,
+    ) -> anyhow::Result<String> {
         let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
         let n = |k: &str| args.get(k).and_then(Value::as_u64);
         match name {
+            "grove_migrate_sandboxed" => {
+                if !allow_write {
+                    anyhow::bail!(
+                        "write tools are disabled; start the server with `grove mcp --allow-write` to enable snapshot-sandboxed migrations"
+                    );
+                }
+                let site = s("site").ok_or_else(|| anyhow::anyhow!("site is required"))?;
+                let command = s("command").unwrap_or_else(|| "migrate --force".into());
+                let roll_back = args.get("roll_back").and_then(Value::as_bool).unwrap_or(false);
+                migrate_sandboxed(paths, socket, &site, &command, roll_back).await
+            }
+            "grove_sql_sandboxed" => {
+                if !allow_write {
+                    anyhow::bail!(
+                        "write tools are disabled; start the server with `grove mcp --allow-write` to enable snapshot-sandboxed SQL"
+                    );
+                }
+                let site = s("site").ok_or_else(|| anyhow::anyhow!("site is required"))?;
+                let sql = s("sql").ok_or_else(|| anyhow::anyhow!("sql is required"))?;
+                let roll_back = args.get("roll_back").and_then(Value::as_bool).unwrap_or(false);
+                sql_sandboxed(paths, socket, &site, &sql, roll_back).await
+            }
             "grove_sites" => match call(socket, Request::ListSites).await? {
                 ResponseData::Sites(sites) => {
                     let slim: Vec<Value> = sites
@@ -596,6 +656,524 @@ mod mcp {
                 .await?
             }
             other => anyhow::bail!("unknown tool: {other}"),
+        }
+    }
+
+    // ---- agent-safe write tools -------------------------------------------
+
+    /// Table -> sorted column signatures (`name:type:null|notnull`).
+    type Schema = std::collections::BTreeMap<String, Vec<String>>;
+
+    /// Resolve a site's project path and its pinned PHP version.
+    async fn site_info(socket: &Path, name: &str) -> anyhow::Result<(PathBuf, String)> {
+        match call(socket, Request::ListSites).await? {
+            ResponseData::Sites(sites) => sites
+                .into_iter()
+                .find(|s| s.site.name == name || s.site.hostname == name)
+                .map(|s| (s.site.path, s.site.php))
+                .ok_or_else(|| anyhow::anyhow!("no site named {name:?}")),
+            _ => anyhow::bail!("unexpected response"),
+        }
+    }
+
+    /// The PHP CLI for `version`, downloading it if necessary.
+    fn resolve_php_cli(paths: &GrovePaths, version: &str) -> anyhow::Result<PathBuf> {
+        use grove_runtime::PhpRegistry;
+        let reg = PhpRegistry::load(paths);
+        if let Some(cli) = reg.get(version).and_then(|b| b.cli_binary.clone()) {
+            return Ok(cli);
+        }
+        grove_runtime::install::install_cli(paths, version, |_| {})
+            .map_err(|e| anyhow::anyhow!("could not resolve the PHP {version} CLI: {e}"))
+    }
+
+    /// A stable, comparable snapshot of a database's shape: table -> sorted
+    /// column signatures (`name:type:null|notnull`).
+    fn read_schema(cfg: &e_db::DbConfig) -> anyhow::Result<Schema> {
+        let conn = e_db::connect(cfg).map_err(|e| anyhow::anyhow!(e))?;
+        let tables = e_db::tables(&conn).map_err(|e| anyhow::anyhow!(e))?;
+        let mut map = Schema::new();
+        for t in &tables {
+            let cols = e_db::columns(&conn, t).map_err(|e| anyhow::anyhow!(e))?;
+            let mut sigs: Vec<String> = cols
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{}:{}:{}",
+                        c.name,
+                        c.data_type,
+                        if c.nullable { "null" } else { "notnull" }
+                    )
+                })
+                .collect();
+            sigs.sort();
+            map.insert(t.clone(), sigs);
+        }
+        Ok(map)
+    }
+
+    /// Structural diff between two schemas: added/removed tables and per-table
+    /// column changes.
+    fn schema_diff(before: &Schema, after: &Schema) -> Value {
+        let added_tables: Vec<&String> = after.keys().filter(|t| !before.contains_key(*t)).collect();
+        let removed_tables: Vec<&String> =
+            before.keys().filter(|t| !after.contains_key(*t)).collect();
+        let mut changed = serde_json::Map::new();
+        for (t, acols) in after {
+            if let Some(bcols) = before.get(t) {
+                let added_columns: Vec<&String> =
+                    acols.iter().filter(|c| !bcols.contains(*c)).collect();
+                let removed_columns: Vec<&String> =
+                    bcols.iter().filter(|c| !acols.contains(*c)).collect();
+                if !added_columns.is_empty() || !removed_columns.is_empty() {
+                    changed.insert(
+                        t.clone(),
+                        json!({"added_columns": added_columns, "removed_columns": removed_columns}),
+                    );
+                }
+            }
+        }
+        json!({
+            "added_tables": added_tables,
+            "removed_tables": removed_tables,
+            "changed_tables": changed,
+        })
+    }
+
+    /// The daemon reports `snapshot <id> created (...)`; pull out the id.
+    fn snapshot_id_from_msg(msg: &str) -> anyhow::Result<String> {
+        msg.split_whitespace()
+            .nth(1)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("could not parse snapshot id from response: {msg:?}"))
+    }
+
+    fn truncate(s: &str, max: usize) -> String {
+        if s.chars().count() <= max {
+            s.to_string()
+        } else {
+            let t: String = s.chars().take(max).collect();
+            format!("{t}\n... [truncated]")
+        }
+    }
+
+    /// Append an audit record for every write operation, so operators can see
+    /// exactly what an agent ran, when, and the outcome.
+    fn audit_log(paths: &GrovePaths, entry: &Value) {
+        let dir = paths.logs_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut record = entry.clone();
+        if let Value::Object(ref mut m) = record {
+            m.insert("ts".into(), json!(ts));
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("mcp-writes.log"))
+        {
+            use std::io::Write;
+            let _ = writeln!(f, "{record}");
+        }
+    }
+
+    /// Inspect a site's database and read its current schema. Bundled
+    /// MySQL/PostgreSQL are snapshotted via the daemon; SQLite is snapshotted by
+    /// copying its file (see `open_sandbox`).
+    fn inspect_db_sync(path: &Path) -> anyhow::Result<(e_db::DbConfig, Schema)> {
+        let cfg = e_db::from_env(path)
+            .ok_or_else(|| anyhow::anyhow!("no database configured in the site's .env"))?;
+        match cfg.engine.as_str() {
+            "mysql" | "postgres" => {
+                if cfg.database.is_empty() {
+                    anyhow::bail!("no DB_DATABASE set in the site's .env");
+                }
+            }
+            "sqlite" => {
+                if cfg.path.is_empty() {
+                    anyhow::bail!("no sqlite database path resolved from the site's .env");
+                }
+            }
+            other => anyhow::bail!(
+                "snapshot-sandboxed writes support MySQL, PostgreSQL and SQLite (found {other})"
+            ),
+        }
+        let before = read_schema(&cfg)?;
+        Ok((cfg, before))
+    }
+
+    /// A human-facing label for the database being sandboxed.
+    fn db_label(cfg: &e_db::DbConfig) -> String {
+        if cfg.engine == "sqlite" {
+            cfg.path.clone()
+        } else {
+            cfg.database.clone()
+        }
+    }
+
+    /// A restorable point-in-time backup, engine-appropriate.
+    enum Sandbox {
+        /// Bundled MySQL/PostgreSQL snapshot handled by the daemon.
+        Daemon { id: String },
+        /// A copy of a SQLite file, restored by copying it back.
+        Sqlite { original: PathBuf, backup: PathBuf },
+    }
+
+    impl Sandbox {
+        /// A stable identifier surfaced to the caller for manual rollback.
+        fn id(&self) -> String {
+            match self {
+                Sandbox::Daemon { id } => id.clone(),
+                Sandbox::Sqlite { backup, .. } => backup
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            }
+        }
+    }
+
+    /// Take an engine-appropriate snapshot before a write.
+    async fn open_sandbox(
+        paths: &GrovePaths,
+        socket: &Path,
+        cfg: &e_db::DbConfig,
+        note: &str,
+    ) -> anyhow::Result<Sandbox> {
+        match cfg.engine.as_str() {
+            "mysql" | "postgres" => {
+                let msg = match call(
+                    socket,
+                    Request::DbSnapshot {
+                        engine: cfg.engine.clone(),
+                        database: Some(cfg.database.clone()),
+                        note: Some(note.to_string()),
+                    },
+                )
+                .await?
+                {
+                    ResponseData::Message(m) => m,
+                    _ => anyhow::bail!("unexpected response taking snapshot"),
+                };
+                Ok(Sandbox::Daemon {
+                    id: snapshot_id_from_msg(&msg)?,
+                })
+            }
+            "sqlite" => {
+                let original = PathBuf::from(&cfg.path);
+                if !original.is_file() {
+                    anyhow::bail!("sqlite file not found: {}", original.display());
+                }
+                let dir = paths.base().join("snapshots");
+                std::fs::create_dir_all(&dir)?;
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let stem = original
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "db".into());
+                let backup = dir.join(format!("sqlite-{stem}-{ts}.sqlite"));
+                std::fs::copy(&original, &backup)?;
+                Ok(Sandbox::Sqlite { original, backup })
+            }
+            other => anyhow::bail!("cannot sandbox engine {other}"),
+        }
+    }
+
+    /// Roll back the sandbox when `should` is set; returns any error text.
+    async fn close_sandbox(socket: &Path, sandbox: Sandbox, should: bool) -> Option<String> {
+        if !should {
+            return None;
+        }
+        match sandbox {
+            Sandbox::Daemon { id } => match call(
+                socket,
+                Request::DbSnapshotRestore { id: id.clone() },
+            )
+            .await
+            {
+                Ok(ResponseData::Message(_)) => None,
+                Ok(_) => Some("unexpected response restoring snapshot".into()),
+                Err(e) => Some(e.to_string()),
+            },
+            Sandbox::Sqlite { original, backup } => {
+                std::fs::copy(&backup, &original).err().map(|e| e.to_string())
+            }
+        }
+    }
+
+    /// Run `php artisan <command>` inside an automatic snapshot sandbox: snapshot
+    /// first, run, diff the schema, and roll back on failure (or on request).
+    async fn migrate_sandboxed(
+        paths: &GrovePaths,
+        socket: &Path,
+        site: &str,
+        command: &str,
+        roll_back: bool,
+    ) -> anyhow::Result<String> {
+        let (path, php_ver) = site_info(socket, site).await?;
+
+        // 1. Inspect the site's database: engine, name, and pre-migration shape.
+        let p = path.clone();
+        let (cfg, before) = tokio::task::spawn_blocking(move || inspect_db_sync(&p)).await??;
+        let engine = cfg.engine.clone();
+        let database = db_label(&cfg);
+
+        // 2. Snapshot before touching anything.
+        let note = format!("agent-safe: before `artisan {command}` on {site}");
+        let sandbox = open_sandbox(paths, socket, &cfg, &note).await?;
+        let snapshot_id = sandbox.id();
+
+        // 3. Run the migration and capture the resulting schema.
+        let php = resolve_php_cli(paths, &php_ver)?;
+        let run_path = path.clone();
+        let run_cmd = command.to_string();
+        let (code, stdout, stderr, after) = tokio::task::spawn_blocking(
+            move || -> anyhow::Result<(i32, String, String, Schema)> {
+                let args: Vec<String> = std::iter::once("artisan".to_string())
+                    .chain(run_cmd.split_whitespace().map(str::to_string))
+                    .collect();
+                let out = std::process::Command::new(&php)
+                    .args(&args)
+                    .current_dir(&run_path)
+                    .output()
+                    .map_err(|e| anyhow::anyhow!("failed to run php artisan: {e}"))?;
+                let code = out.status.code().unwrap_or(-1);
+                let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+                let after = e_db::from_env(&run_path)
+                    .and_then(|cfg| read_schema(&cfg).ok())
+                    .unwrap_or_default();
+                Ok((code, stdout, stderr, after))
+            },
+        )
+        .await??;
+
+        let success = code == 0;
+        let should_rollback = !success || roll_back;
+
+        // 4. Roll back on failure, or when a dry run was requested.
+        let rollback_error = close_sandbox(socket, sandbox, should_rollback).await;
+        let rolled_back = should_rollback && rollback_error.is_none();
+
+        let note = if rolled_back && success {
+            "dry run: the migration succeeded and was rolled back; schema_diff shows what it WOULD change"
+        } else if rolled_back {
+            "the migration failed and was rolled back to the pre-migration snapshot"
+        } else if !success {
+            "the migration failed and was NOT rolled back; use the snapshot_id to restore manually"
+        } else {
+            "the migration succeeded and was kept; use the snapshot_id to roll back if needed"
+        };
+
+        let result = json!({
+            "site": site,
+            "engine": engine,
+            "database": database,
+            "command": format!("php artisan {command}"),
+            "snapshot_id": snapshot_id,
+            "exit_code": code,
+            "success": success,
+            "rolled_back": rolled_back,
+            "rollback_error": rollback_error,
+            "schema_diff": schema_diff(&before, &after),
+            "note": note,
+            "stdout": truncate(&stdout, 8000),
+            "stderr": truncate(&stderr, 8000),
+        });
+
+        audit_log(paths, &result);
+        Ok(serde_json::to_string_pretty(&result)?)
+    }
+
+    /// Run a single WRITE SQL statement inside an automatic snapshot sandbox:
+    /// snapshot first, run, diff the schema, and roll back on failure (or on
+    /// request). Read-only statements are refused — use `grove_db_query`.
+    async fn sql_sandboxed(
+        paths: &GrovePaths,
+        socket: &Path,
+        site: &str,
+        sql: &str,
+        roll_back: bool,
+    ) -> anyhow::Result<String> {
+        if is_readonly(sql) {
+            anyhow::bail!(
+                "that statement looks read-only; use grove_db_query for SELECT/SHOW/EXPLAIN/PRAGMA"
+            );
+        }
+        let (path, _php) = site_info(socket, site).await?;
+
+        let p = path.clone();
+        let (cfg, before) = tokio::task::spawn_blocking(move || inspect_db_sync(&p)).await??;
+        let engine = cfg.engine.clone();
+        let database = db_label(&cfg);
+
+        let note = format!("agent-safe: before SQL on {site}");
+        let sandbox = open_sandbox(paths, socket, &cfg, &note).await?;
+        let snapshot_id = sandbox.id();
+
+        let p2 = path.clone();
+        let sql_owned = sql.to_string();
+        let (success, rows_affected, run_error, after) = tokio::task::spawn_blocking(
+            move || -> (bool, Option<u64>, Option<String>, Schema) {
+                let cfg = match e_db::from_env(&p2) {
+                    Some(c) => c,
+                    None => {
+                        return (false, None, Some("no database configured".into()), Schema::new())
+                    }
+                };
+                let conn = match e_db::connect(&cfg) {
+                    Ok(c) => c,
+                    Err(e) => return (false, None, Some(e), Schema::new()),
+                };
+                let (success, rows_affected, run_error) = match e_db::query(&conn, &sql_owned, 1) {
+                    Ok(r) => (true, r.rows_affected, None),
+                    Err(e) => (false, None, Some(e)),
+                };
+                let after = read_schema(&cfg).unwrap_or_default();
+                (success, rows_affected, run_error, after)
+            },
+        )
+        .await?;
+
+        let should_rollback = !success || roll_back;
+        let rollback_error = close_sandbox(socket, sandbox, should_rollback).await;
+        let rolled_back = should_rollback && rollback_error.is_none();
+
+        let outcome_note = if rolled_back && success {
+            "dry run: the statement succeeded and was rolled back; schema_diff shows what it WOULD change"
+        } else if rolled_back {
+            "the statement failed and was rolled back to the pre-write snapshot"
+        } else if !success {
+            "the statement failed and was NOT rolled back; use the snapshot_id to restore manually"
+        } else {
+            "the statement succeeded and was kept; use the snapshot_id to roll back if needed"
+        };
+
+        let result = json!({
+            "site": site,
+            "engine": engine,
+            "database": database,
+            "sql": truncate(sql, 2000),
+            "snapshot_id": snapshot_id,
+            "success": success,
+            "rows_affected": rows_affected,
+            "error": run_error,
+            "rolled_back": rolled_back,
+            "rollback_error": rollback_error,
+            "schema_diff": schema_diff(&before, &after),
+            "note": outcome_note,
+        });
+
+        audit_log(paths, &result);
+        Ok(serde_json::to_string_pretty(&result)?)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn schema(pairs: &[(&str, &[&str])]) -> Schema {
+            pairs
+                .iter()
+                .map(|(t, cols)| (t.to_string(), cols.iter().map(|c| c.to_string()).collect()))
+                .collect()
+        }
+
+        #[test]
+        fn snapshot_id_is_parsed_from_daemon_message() {
+            let msg = "snapshot 20260718-120000 created (mysql, app, 4096 bytes)";
+            assert_eq!(snapshot_id_from_msg(msg).unwrap(), "20260718-120000");
+            assert!(snapshot_id_from_msg("").is_err());
+        }
+
+        #[test]
+        fn schema_diff_reports_added_removed_and_changed() {
+            let before = schema(&[("users", &["id:int:notnull"]), ("old", &["x:int:null"])]);
+            let after = schema(&[
+                ("users", &["id:int:notnull", "email:varchar:null"]),
+                ("invoices", &["id:int:notnull"]),
+            ]);
+            let diff = schema_diff(&before, &after);
+            assert_eq!(diff["added_tables"], serde_json::json!(["invoices"]));
+            assert_eq!(diff["removed_tables"], serde_json::json!(["old"]));
+            assert_eq!(
+                diff["changed_tables"]["users"]["added_columns"],
+                serde_json::json!(["email:varchar:null"])
+            );
+        }
+
+        #[test]
+        fn identical_schemas_have_no_diff() {
+            let s = schema(&[("users", &["id:int:notnull"])]);
+            let diff = schema_diff(&s, &s);
+            assert_eq!(diff["added_tables"], serde_json::json!([]));
+            assert_eq!(diff["removed_tables"], serde_json::json!([]));
+            assert!(diff["changed_tables"].as_object().unwrap().is_empty());
+        }
+
+        #[test]
+        fn truncate_caps_long_output() {
+            assert_eq!(truncate("short", 10), "short");
+            let out = truncate("abcdefghij", 4);
+            assert!(out.starts_with("abcd"));
+            assert!(out.contains("truncated"));
+        }
+
+        fn sqlite_cfg(path: &Path) -> e_db::DbConfig {
+            e_db::DbConfig {
+                engine: "sqlite".into(),
+                path: path.to_string_lossy().into_owned(),
+                ..Default::default()
+            }
+        }
+
+        #[tokio::test]
+        async fn sqlite_sandbox_restores_the_file_on_rollback() {
+            let tmp = std::env::temp_dir().join(format!("grove-sbx-rb-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            std::fs::create_dir_all(&tmp).unwrap();
+            let db = tmp.join("app.sqlite");
+            std::fs::write(&db, b"v1").unwrap();
+
+            let paths = GrovePaths::with_base(&tmp);
+            let socket = tmp.join("dummy.sock");
+            let sandbox = open_sandbox(&paths, &socket, &sqlite_cfg(&db), "test")
+                .await
+                .unwrap();
+
+            // Mutate after the snapshot, then roll back.
+            std::fs::write(&db, b"v2-mutated").unwrap();
+            assert!(close_sandbox(&socket, sandbox, true).await.is_none());
+            assert_eq!(std::fs::read(&db).unwrap(), b"v1");
+
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
+
+        #[tokio::test]
+        async fn sqlite_sandbox_keeps_changes_without_rollback() {
+            let tmp = std::env::temp_dir().join(format!("grove-sbx-keep-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            std::fs::create_dir_all(&tmp).unwrap();
+            let db = tmp.join("app.sqlite");
+            std::fs::write(&db, b"v1").unwrap();
+
+            let paths = GrovePaths::with_base(&tmp);
+            let socket = tmp.join("dummy.sock");
+            let sandbox = open_sandbox(&paths, &socket, &sqlite_cfg(&db), "test")
+                .await
+                .unwrap();
+
+            std::fs::write(&db, b"v2-kept").unwrap();
+            assert!(close_sandbox(&socket, sandbox, false).await.is_none());
+            assert_eq!(std::fs::read(&db).unwrap(), b"v2-kept");
+
+            let _ = std::fs::remove_dir_all(&tmp);
         }
     }
 }

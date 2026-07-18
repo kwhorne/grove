@@ -66,10 +66,57 @@ So you can ask your assistant things like:
 - "How many users signed up today?" (it runs a `SELECT` for you)
 - "What webhook did Stripe just send, and did my handler 200?"
 
+## Agent-safe write tools (opt-in)
+
+By default the server is **read-only**. Start it with `--allow-write` to expose
+tools that can change state — each one wrapped in a safety net so an agent can
+never leave your database in a broken state:
+
+```bash
+grove mcp --allow-write
+```
+
+| Tool | What it does |
+| --- | --- |
+| `grove_migrate_sandboxed` | Runs `php artisan <command>` (default `migrate --force`) inside an **automatic snapshot sandbox**. |
+| `grove_sql_sandboxed` | Runs a **write** SQL statement (INSERT/UPDATE/DELETE/DDL) inside the same snapshot sandbox. Read-only statements are refused — use `grove_db_query`. |
+
+Both support **MySQL**, **PostgreSQL** and **SQLite**.
+
+How `grove_migrate_sandboxed` works:
+
+1. Grove takes a point-in-time **snapshot** of the site's database first.
+2. It runs the migration and captures the **schema diff** (added/removed tables
+   and columns).
+3. If the command **fails**, Grove **automatically rolls back** to the snapshot —
+   your data is untouched.
+4. Pass `roll_back: true` for a pure **dry run**: it runs, reports what the
+   migration *would* change, then rolls back even on success.
+5. On success it keeps the change and returns the `snapshot_id` so you can roll
+   back manually at any time.
+
+Works with **MySQL**, **PostgreSQL** (snapshotted via Grove's daemon) and
+**SQLite** (snapshotted by copying the `.sqlite` file). Every write operation is
+appended to an audit log at `$GROVE_HOME/logs/mcp-writes.log` (what ran, when,
+the snapshot id, and the outcome).
+
+`grove_sql_sandboxed` follows the exact same snapshot → run → diff → rollback
+flow for a single write statement, returning `rows_affected` alongside the schema
+diff.
+
+So you can safely ask: *"Add the migration for the `invoices` table and apply it"*,
+*"Do a dry run of `migrate:fresh` and show me what tables it would create,"* or
+*"Backfill `users.status` to 'active' where it's null — but roll back so I can
+review first."*
+
 ## Safety
 
-- **Read-only.** `grove_db_query` refuses anything that isn't a `SELECT` /
-  `SHOW` / `EXPLAIN` / `PRAGMA`. The server never modifies your data or files.
+- **Read-only by default.** Write tools appear only with `grove mcp
+  --allow-write`, and even then the server refuses them if the flag is off.
+- **Sandboxed writes.** Every write goes through a snapshot with automatic
+  rollback on failure, plus an audit log.
+- `grove_db_query` refuses anything that isn't a `SELECT` /
+  `SHOW` / `EXPLAIN` / `PRAGMA`.
 - **Local only.** The server talks to Grove's local daemon and your local
   databases; it makes no outbound network calls.
 - Requires the Grove daemon to be running (`grove start`).

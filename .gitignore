@@ -3,6 +3,9 @@
 *.pdb
 .DS_Store
 
+# Local secrets / tooling config
+.env
+
 # Tauri / frontend build artifacts
 crates/grove-gui/ui/node_modules
 crates/grove-gui/ui/dist

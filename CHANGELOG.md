@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agent-safe MCP write tools (opt-in).** `grove mcp --allow-write` exposes
+  `grove_migrate_sandboxed`, which runs `php artisan <command>` (default
+  `migrate --force`) inside an automatic snapshot sandbox: Grove snapshots the
+  database first, runs the migration, reports the schema diff, and
+  **automatically rolls back on failure**. Pass `roll_back: true` for a pure dry
+  run. The server stays read-only unless the flag is set, and every write is
+  recorded to `$GROVE_HOME/logs/mcp-writes.log`. See [docs/MCP.md](docs/MCP.md).
+- **Sandboxed SQL over MCP.** `grove_sql_sandboxed` (also behind
+  `grove mcp --allow-write`) runs a single write statement
+  (INSERT/UPDATE/DELETE/DDL) through the same snapshot → run → schema-diff →
+  auto-rollback flow, returning `rows_affected`. Read-only statements are
+  refused — use `grove_db_query` for those.
+- **SQLite in the write sandbox.** The sandboxed write tools now also cover
+  SQLite sites — snapshotted by copying the `.sqlite` file and restored the same
+  way — alongside bundled MySQL/PostgreSQL.
+
 ## [1.0.0] — 2026-07-11
 
 Grove 1.0. A native, zero-dependency local dev environment for macOS: `*.test`

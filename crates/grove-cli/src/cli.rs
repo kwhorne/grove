@@ -234,7 +234,12 @@ pub enum Command {
     /// Run a Model Context Protocol (MCP) server over stdio, exposing your local
     /// sites, requests, webhooks, logs, and database schema to AI tools like
     /// Claude and Cursor. Configure your client to launch `grove mcp`.
-    Mcp,
+    Mcp {
+        /// Opt in to agent-safe write tools (e.g. snapshot-sandboxed migrations
+        /// with automatic rollback). Off by default — the server is read-only.
+        #[arg(long)]
+        allow_write: bool,
+    },
 
     /// Re-issue a captured request through Grove (framework-agnostic replay).
     Replay {
