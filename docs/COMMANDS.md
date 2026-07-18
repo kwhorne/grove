@@ -172,6 +172,16 @@ in the desktop app's **Requests** panel.
 | `grove requests --limit <n>` | Cap the number of entries. |
 | `grove replay <id>` | Re-issue a captured request through Grove (id from `grove requests`). |
 | `grove request <id> --as <fmt>` | Print the request as `curl`, `http`, or `pest`. |
+| `grove sql-capture on\|off\|status` | Correlate SQL queries with the timeline (MySQL). |
+
+### Causal chain
+
+With `grove sql-capture on`, Grove turns on MySQL's general query log and reads
+it back to build a per-request **causal chain**: expand a request (via the MCP
+`grove_request_chain` tool, or `grove requests --json`) to see the SQL it issued
+and the mail it sent within its time window, plus derived metrics (duration,
+query count). Grove sits in front of every request and captures mail centrally,
+so this needs zero app instrumentation.
 
 In the desktop app, click any request to see its headers and body, replay it, or
 copy it as a curl command, a `.http` file, or a Pest test — a framework-agnostic

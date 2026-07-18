@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use grove_core::site::ResolvedSite;
 use grove_core::RequestEntry;
 use grove_license::LicenseClaims;
-use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, ServiceStatus, Snapshot};
+use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, QueryEvent, ServiceStatus, Snapshot};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
 /// frontends stay in parity.
@@ -153,10 +153,16 @@ pub enum Request {
         id: u64,
     },
     /// The causal chain for one request: the entry plus the side effects (mail,
-    /// …) captured within its time window, and derived metrics.
+    /// SQL, …) captured within its time window, and derived metrics.
     RequestChain {
         id: u64,
     },
+    /// Turn SQL query capture (MySQL general log) on or off.
+    SqlCaptureSet {
+        on: bool,
+    },
+    /// Whether SQL query capture is currently on.
+    SqlCaptureStatus,
     /// Re-issue a captured request through the proxy pipeline.
     ReplayRequest {
         id: u64,
@@ -322,6 +328,15 @@ pub struct ChainMetrics {
     pub duration_ms: u64,
     /// Emails captured within the request's time window.
     pub email_count: usize,
+    /// SQL statements captured within the request's time window.
+    pub query_count: usize,
+}
+
+/// Whether SQL query capture is on, and a human note about it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SqlCaptureState {
+    pub enabled: bool,
+    pub note: String,
 }
 
 /// A request plus the side effects Grove observed within its time window.
@@ -337,6 +352,8 @@ pub struct RequestChain {
     pub window_end_ms: u128,
     /// Emails captured within the window (newest first).
     pub emails: Vec<EmailSummary>,
+    /// SQL statements captured within the window (when SQL capture is on).
+    pub queries: Vec<QueryEvent>,
     pub metrics: ChainMetrics,
 }
 
@@ -380,6 +397,8 @@ pub enum ResponseData {
     Hooks(Vec<RequestEntry>),
     /// The causal chain for one request (None if the id is unknown).
     RequestChain(Option<RequestChain>),
+    /// Current SQL-capture state.
+    SqlCapture(SqlCaptureState),
     /// The active license entitlement (None = free / unlicensed).
     License(Option<LicenseClaims>),
 }

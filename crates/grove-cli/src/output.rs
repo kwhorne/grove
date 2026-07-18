@@ -214,6 +214,13 @@ pub fn print_response(resp: &Response, json: bool) {
         }
         Some(ResponseData::RequestDetail(_)) => {} // GUI-only detail view
         Some(ResponseData::RequestChain(_)) => {} // surfaced via --json / MCP
+        Some(ResponseData::SqlCapture(s)) => {
+            println!(
+                "SQL capture: {}\n{}",
+                if s.enabled { "on" } else { "off" },
+                s.note
+            );
+        }
         Some(ResponseData::Generated(code)) => print!("{code}"),
         Some(ResponseData::Hooks(hooks)) => {
             if hooks.is_empty() {

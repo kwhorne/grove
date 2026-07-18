@@ -241,6 +241,15 @@ pub enum Command {
         allow_write: bool,
     },
 
+    /// Turn on/off correlating SQL queries with the request timeline (MySQL).
+    /// When on, each request's causal chain (see the MCP `grove_request_chain`
+    /// tool) includes the SQL it issued.
+    SqlCapture {
+        /// on | off | status
+        #[arg(value_parser = ["on", "off", "status"])]
+        action: String,
+    },
+
     /// Re-issue a captured request through Grove (framework-agnostic replay).
     Replay {
         /// Request id from `grove requests`.

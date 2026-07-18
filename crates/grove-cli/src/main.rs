@@ -256,6 +256,11 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             ServiceAction::Port { key, port } => Request::ServiceSetPort { key, port },
         },
         Command::Requests { site, limit } => Request::RequestLog { site, limit },
+        Command::SqlCapture { action } => match action.as_str() {
+            "on" => Request::SqlCaptureSet { on: true },
+            "off" => Request::SqlCaptureSet { on: false },
+            _ => Request::SqlCaptureStatus,
+        },
         Command::Replay { id } => Request::ReplayRequest { id },
         Command::Request { id, format } => Request::RequestToTest { id, format },
         Command::Hooks { limit, action } => match action {
@@ -421,7 +426,7 @@ mod mcp {
             },
             {
                 "name": "grove_request_chain",
-                "description": "The causal chain for one captured request (by id from grove_requests): the request plus the side effects Grove observed in its time window — e.g. emails it sent — and derived metrics (duration, side-effect counts). Great for 'this 500 also sent an email'.",
+                "description": "The causal chain for one captured request (by id from grove_requests): the request plus the side effects Grove observed in its time window — the SQL it issued (when `grove sql-capture on`) and emails it sent — plus derived metrics (duration, query count, side-effect counts). Great for 'this 500 also ran 20 queries and sent an email'.",
                 "inputSchema": {"type": "object", "properties": {
                     "id": {"type": "integer"}
                 }, "required": ["id"]}

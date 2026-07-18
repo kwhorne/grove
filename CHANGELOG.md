@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every request and captures mail centrally, so it can answer "this 500 also
   sent an email" with zero app instrumentation. SQL and other sources plug into
   the same shape as they land.
+- **SQL in the causal chain.** `grove sql-capture on` turns on MySQL's general
+  query log (written to a Grove-owned file) so each request's causal chain
+  includes the SQL it issued, correlated by time window — with a `query_count`
+  metric. `grove sql-capture off|status` toggle and report it. No app
+  instrumentation, because Grove owns the database service.
 
 - **Agent-safe MCP write tools (opt-in).** `grove mcp --allow-write` exposes
   `grove_migrate_sandboxed`, which runs `php artisan <command>` (default

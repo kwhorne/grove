@@ -90,6 +90,17 @@ async fn tunnel_start(
 /// Execute one request against daemon state, returning the response to send.
 /// Split a target URL into (host, path, https) without a URL crate. Defaults to
 /// https and "/" — targets are local `.test` sites.
+fn sql_capture_state(on: bool) -> grove_ipc::protocol::SqlCaptureState {
+    grove_ipc::protocol::SqlCaptureState {
+        enabled: on,
+        note: if on {
+            "capturing MySQL queries; they appear in each request's causal chain".into()
+        } else {
+            "off — enable with `grove sql-capture on` (MySQL only)".into()
+        },
+    }
+}
+
 fn parse_target(url: &str) -> (String, String, bool) {
     let (https, rest) = if let Some(r) = url.strip_prefix("https://") {
         (true, r)
@@ -757,24 +768,68 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             state.shared.log.detail(id),
         ))),
         Request::RequestChain { id } => {
-            let chain = state.shared.log.entry(id).map(|entry| {
-                // The request occupied [completion - duration, completion].
-                let window_end_ms = entry.epoch_ms;
-                let window_start_ms = entry.epoch_ms.saturating_sub(entry.duration_ms as u128);
-                let emails = state.mail.in_window(window_start_ms, window_end_ms);
-                let metrics = grove_ipc::protocol::ChainMetrics {
-                    duration_ms: entry.duration_ms,
-                    email_count: emails.len(),
-                };
-                grove_ipc::protocol::RequestChain {
-                    request: entry,
-                    window_start_ms,
-                    window_end_ms,
-                    emails,
-                    metrics,
+            let chain = match state.shared.log.entry(id) {
+                None => None,
+                Some(entry) => {
+                    // The request occupied [completion - duration, completion].
+                    let window_end_ms = entry.epoch_ms;
+                    let window_start_ms =
+                        entry.epoch_ms.saturating_sub(entry.duration_ms as u128);
+                    let emails = state.mail.in_window(window_start_ms, window_end_ms);
+                    let queries = if *state.sql_capture.lock().await {
+                        let file = state.paths.logs_dir().join("mysql-general.log");
+                        let text = tokio::fs::read_to_string(&file).await.unwrap_or_default();
+                        grove_services::parse_mysql_general(&text)
+                            .into_iter()
+                            .filter(|q| {
+                                q.epoch_ms >= window_start_ms && q.epoch_ms <= window_end_ms
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
+                    let metrics = grove_ipc::protocol::ChainMetrics {
+                        duration_ms: entry.duration_ms,
+                        email_count: emails.len(),
+                        query_count: queries.len(),
+                    };
+                    Some(grove_ipc::protocol::RequestChain {
+                        request: entry,
+                        window_start_ms,
+                        window_end_ms,
+                        emails,
+                        queries,
+                        metrics,
+                    })
                 }
-            });
+            };
             Ok(Response::ok(ResponseData::RequestChain(chain)))
+        }
+        Request::SqlCaptureSet { on } => {
+            let file = state.paths.logs_dir().join("mysql-general.log");
+            if let Some(dir) = file.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if on {
+                // Start from a clean file so window parsing stays cheap.
+                let _ = std::fs::write(&file, b"");
+            }
+            let services = state.services.clone();
+            let f = file.clone();
+            let res = tokio::task::spawn_blocking(move || services.set_mysql_general_log(on, &f))
+                .await
+                .map_err(|e| anyhow::anyhow!("sql-capture task panicked: {e}"))?;
+            match res {
+                Ok(()) => {
+                    *state.sql_capture.lock().await = on;
+                    Ok(Response::ok(ResponseData::SqlCapture(sql_capture_state(on))))
+                }
+                Err(e) => Ok(Response::err(e.to_string())),
+            }
+        }
+        Request::SqlCaptureStatus => {
+            let on = *state.sql_capture.lock().await;
+            Ok(Response::ok(ResponseData::SqlCapture(sql_capture_state(on))))
         }
         Request::RequestToTest { id, format } => {
             let Some(fmt) = grove_core::httpgen::TestFormat::parse(&format) else {

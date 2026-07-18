@@ -416,6 +416,31 @@ impl ServiceManager {
         Ok((bin, self.effective_port(spec)))
     }
 
+    /// Turn MySQL's general query log on or off. When on, statements are written
+    /// to `file` (which Grove owns and reads back to correlate SQL with the
+    /// request timeline). Requires the bundled MySQL to be running.
+    pub fn set_mysql_general_log(&self, on: bool, file: &std::path::Path) -> Result<()> {
+        let (bin, port) = self.db_ready("mysql")?;
+        let sql = if on {
+            format!(
+                "SET GLOBAL log_output='FILE'; SET GLOBAL general_log_file='{}'; SET GLOBAL general_log=1;",
+                file.display()
+            )
+        } else {
+            "SET GLOBAL general_log=0;".to_string()
+        };
+        let out = std::process::Command::new(bin.join("mysql"))
+            .args(["-h", "127.0.0.1", "-P", &port.to_string(), "-u", "root", "-e", &sql])
+            .output()?;
+        if !out.status.success() {
+            return Err(ServiceError::Init(format!(
+                "could not toggle MySQL general log: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        Ok(())
+    }
+
     /// Dump a database (or all user databases when `db` is None) from Grove's
     /// bundled MySQL to `out` as SQL.
     pub fn snapshot_mysql(&self, db: Option<&str>, out: &std::path::Path) -> Result<()> {

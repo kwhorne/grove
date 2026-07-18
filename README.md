@@ -55,6 +55,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🌍 **Public tunnels** — `grove share` exposes a local site to the internet (demos, webhooks) via a self-hostable, native Expose/ngrok alternative.
 - 📦 **Reproducible environments** — commit a `grove.toml` (PHP/Node versions, services, HTTPS, dev), and a teammate goes from `git clone` to a running, identical setup with one `grove up`. Or package the whole thing — config, `.env`, and database — into one shareable file with `grove bundle export` (no Docker).
 - ⇄ **Request timeline, replay & test-gen** — Grove is the proxy, so it records a live, framework-agnostic log of every request. Expand any request to see headers + body, **replay it** (`grove replay <id>`), or copy it as a curl/`.http`/**Pest test** — turn a failing request into a regression test in one click.
+- 🔗 **Causal chain** — turn on `grove sql-capture` and each request shows the **SQL it issued** and the **mail it sent** within its time window, plus derived metrics — "this 500 also ran 20 queries and sent an email" — with zero app instrumentation. Surfaced over MCP (`grove_request_chain`).
 - 🪝 **Local webhook hub** — capture incoming webhooks at `/__grove/hooks/<bucket>` (a local webhook.site), expose them with `grove share`, inspect each payload, and **re-deliver** them to your app while you fix the handler. Herd catches mail; Grove catches webhooks too.
 - 🤖 **AI tools (MCP)** — `grove mcp` exposes your sites, requests, webhooks, logs, and database schema to Claude/Cursor over the Model Context Protocol. Read-only, local-only — ask your assistant "what did the last 500 look like?" or "show me the `orders` schema."
 - 🛠 **Tools** — migrate MySQL from Herd, and convert whole databases between MySQL, PostgreSQL and SQLite.
@@ -117,7 +118,7 @@ no Homebrew, no Composer, no Valet.
 | Node | `node list`, `node install <version>`, `node use <site> <version>`, `node unuse <site>` |
 | Services | `service list`, `service install`, `service start`, `service stop`, `service restart` |
 | Databases | `db snapshot`, `db list`, `db restore <id>`, `db rm <id>` |
-| Observability | `requests [site]` (live request timeline) |
+| Observability | `requests [site]` (live request timeline), `sql-capture on\|off\|status` (SQL causal chain) |
 | Toolchain | `path install`, `path show`, `path uninstall` |
 | Dev | `dev start <site>`, `dev stop <site>`, `dev list` |
 | Tunnels | `share <site>` (public URL via `grove-tunnel` server) |

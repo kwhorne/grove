@@ -53,7 +53,7 @@ after editing its config.
 | `grove_sites` | Every site Grove serves (host, driver, PHP/Node, HTTPS, path). |
 | `grove_requests` | Recent requests across sites — method, path, status, duration. |
 | `grove_request` | Full headers + body of one captured request. |
-| `grove_request_chain` | The causal chain for one request — the side effects (mail so far) captured in its time window, plus derived metrics. |
+| `grove_request_chain` | The causal chain for one request — the SQL it issued (with `grove sql-capture on`) and mail it sent within its time window, plus derived metrics (duration, query count). |
 | `grove_webhooks` | Recently captured inbound webhooks. |
 | `grove_logs` | List log sources, or read recent Laravel / service log entries. |
 | `grove_db_schema` | Tables and columns for a site's database (read from its `.env`). |
@@ -64,7 +64,7 @@ So you can ask your assistant things like:
 - "What routes does `myapp` have a controller for, and what did the last 500
   error there look like?"
 - "Show me the schema for the `orders` table in `shop`."
-- "Show me the full chain for request #42 — did it send any email?"
+- "Show me the full chain for request #42 — how many queries did it run and did it send any email?" (turn on `grove sql-capture on` first for SQL)
 - "How many users signed up today?" (it runs a `SELECT` for you)
 - "What webhook did Stripe just send, and did my handler 200?"
 

@@ -21,6 +21,8 @@ pub struct DaemonState {
     pub shared: SharedState,
     /// Captured outgoing mail (mail-catcher).
     pub mail: MailStore,
+    /// Whether SQL query capture (MySQL general log) is currently on.
+    pub sql_capture: Mutex<bool>,
     /// Bundled service supervisor (PostgreSQL, …).
     pub services: Arc<ServiceManager>,
     /// Lazy PHP-FPM pool supervisor (needed to reload pools on config changes
@@ -50,6 +52,7 @@ impl DaemonState {
             config: Mutex::new(config),
             shared,
             mail,
+            sql_capture: Mutex::new(false),
             services,
             fpm,
             tunnels: Arc::new(TunnelManager::new()),
