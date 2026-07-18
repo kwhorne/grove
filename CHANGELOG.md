@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   includes the SQL it issued, correlated by time window — with a `query_count`
   metric. `grove sql-capture off|status` toggle and report it. No app
   instrumentation, because Grove owns the database service.
+- **Causal chain in the desktop app.** The Requests panel now expands each
+  request to show its causal chain (SQL + mail + metrics), with a toolbar toggle
+  for SQL capture.
 
 - **Agent-safe MCP write tools (opt-in).** `grove mcp --allow-write` exposes
   `grove_migrate_sandboxed`, which runs `php artisan <command>` (default

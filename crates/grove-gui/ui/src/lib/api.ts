@@ -18,6 +18,8 @@ import type {
   TunnelRequestEntry,
   RequestEntry,
   RequestDetail,
+  RequestChain,
+  SqlCaptureState,
   LicenseClaims,
   DbConnInfo,
   DbQueryResult,
@@ -122,6 +124,12 @@ export const api = {
     invoke("request_log", { site, limit }),
   requestDetail: (id: number): Promise<RequestDetail | null> =>
     invoke("request_detail", { id }),
+  requestChain: (id: number): Promise<RequestChain | null> =>
+    invoke("request_chain", { id }),
+  sqlCaptureSet: (on: boolean): Promise<SqlCaptureState> =>
+    invoke("sql_capture_set", { on }),
+  sqlCaptureStatus: (): Promise<SqlCaptureState> =>
+    invoke("sql_capture_status"),
   replayRequest: (id: number): Promise<[number, number]> =>
     invoke("replay_request", { id }),
   requestToTest: (id: number, format: string): Promise<string> =>

@@ -184,7 +184,34 @@ export interface EmailSummary {
   to: string[];
   subject: string;
   received_at: string;
+  received_ms?: number;
   size: number;
+}
+
+export interface QueryEvent {
+  epoch_ms: number;
+  engine: string;
+  sql: string;
+}
+
+export interface ChainMetrics {
+  duration_ms: number;
+  email_count: number;
+  query_count: number;
+}
+
+export interface RequestChain {
+  request: RequestEntry;
+  window_start_ms: number;
+  window_end_ms: number;
+  emails: EmailSummary[];
+  queries: QueryEvent[];
+  metrics: ChainMetrics;
+}
+
+export interface SqlCaptureState {
+  enabled: boolean;
+  note: string;
 }
 
 export interface CapturedEmail extends EmailSummary {

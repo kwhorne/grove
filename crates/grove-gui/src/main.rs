@@ -306,6 +306,32 @@ async fn request_detail(id: u64) -> CmdResult<Option<grove_core::reqlog::Request
 }
 
 #[tauri::command]
+async fn request_chain(
+    id: u64,
+) -> CmdResult<Option<grove_ipc::protocol::RequestChain>> {
+    match call(Request::RequestChain { id }).await? {
+        ResponseData::RequestChain(c) => Ok(c),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn sql_capture_set(on: bool) -> CmdResult<grove_ipc::protocol::SqlCaptureState> {
+    match call(Request::SqlCaptureSet { on }).await? {
+        ResponseData::SqlCapture(s) => Ok(s),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
+async fn sql_capture_status() -> CmdResult<grove_ipc::protocol::SqlCaptureState> {
+    match call(Request::SqlCaptureStatus).await? {
+        ResponseData::SqlCapture(s) => Ok(s),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
 async fn replay_request(id: u64) -> CmdResult<(u16, u64)> {
     match call(Request::ReplayRequest { id }).await? {
         ResponseData::Replayed {
@@ -971,6 +997,9 @@ fn main() {
             tunnel_requests,
             request_log,
             request_detail,
+            request_chain,
+            sql_capture_set,
+            sql_capture_status,
             replay_request,
             request_to_test,
             hook_list,

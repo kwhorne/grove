@@ -1,7 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { api } from "../lib/api";
-  import type { ResolvedSite, RequestEntry, RequestDetail } from "../lib/types";
+  import type {
+    ResolvedSite,
+    RequestEntry,
+    RequestDetail,
+    RequestChain,
+    SqlCaptureState,
+  } from "../lib/types";
 
   let { sites }: { sites: ResolvedSite[] } = $props();
 
@@ -11,6 +17,8 @@
   let timer: ReturnType<typeof setInterval> | undefined;
 
   let selected = $state<RequestDetail | null>(null);
+  let chain = $state<RequestChain | null>(null);
+  let sqlCapture = $state<SqlCaptureState | null>(null);
   let detailFor = $state<number | null>(null);
   let replaying = $state(false);
   let msg = $state("");
@@ -26,8 +34,21 @@
 
   onMount(() => {
     refresh();
+    api
+      .sqlCaptureStatus()
+      .then((s) => (sqlCapture = s))
+      .catch(() => {});
     timer = setInterval(refresh, 1000);
   });
+
+  async function toggleSql() {
+    try {
+      sqlCapture = await api.sqlCaptureSet(!sqlCapture?.enabled);
+      msg = sqlCapture.note;
+    } catch (e) {
+      msg = String(e);
+    }
+  }
   onDestroy(() => timer && clearInterval(timer));
 
   $effect(() => {
@@ -39,12 +60,15 @@
     if (detailFor === r.id) {
       detailFor = null;
       selected = null;
+      chain = null;
       return;
     }
     detailFor = r.id;
     selected = null;
+    chain = null;
     try {
       selected = await api.requestDetail(r.id);
+      chain = await api.requestChain(r.id);
     } catch (e) {
       msg = String(e);
     }
@@ -116,6 +140,15 @@
 
     {#if msg}<span class="msg">{msg}</span>{/if}
 
+    <button
+      class="btn"
+      class:primary={sqlCapture?.enabled}
+      onclick={toggleSql}
+      title={sqlCapture?.note ?? "Correlate SQL queries with requests (MySQL)"}
+    >
+      {sqlCapture?.enabled ? "◉ SQL" : "◎ SQL"}
+    </button>
+
     <button class="btn" class:primary={live} onclick={() => (live = !live)}>
       {live ? "⏸ Pause" : "▶ Live"}
     </button>
@@ -162,6 +195,38 @@
                 {#if selected.body}
                   <div class="dsec">Body{selected.body_truncated ? " (truncated)" : ""}</div>
                   <pre class="body mono">{selected.body}</pre>
+                {/if}
+                {#if chain}
+                  <div class="dsec">
+                    Causal chain
+                    <span class="chainmeta"
+                      >{chain.metrics.duration_ms}ms · {chain.metrics.query_count}
+                      queries · {chain.metrics.email_count} emails</span
+                    >
+                  </div>
+                  {#if chain.queries.length}
+                    <table class="hdrs">
+                      <tbody>
+                        {#each chain.queries as q}
+                          <tr
+                            ><td class="hk mono">{localTime(q.epoch_ms)}</td><td
+                              class="hv mono">{q.sql}</td
+                            ></tr
+                          >
+                        {/each}
+                      </tbody>
+                    </table>
+                  {/if}
+                  {#each chain.emails as m}
+                    <div class="chainmail mono">✉ {m.subject} → {m.to.join(", ")}</div>
+                  {/each}
+                  {#if !chain.queries.length && !chain.emails.length}
+                    <div class="chainempty">
+                      No side effects captured in this request's window.{sqlCapture?.enabled
+                        ? ""
+                        : " Turn on SQL capture to include queries."}
+                    </div>
+                  {/if}
                 {/if}
               </td>
             </tr>
@@ -285,6 +350,9 @@
   .dhead { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   .durl { font-size: 12px; color: var(--text); word-break: break-all; flex: 1; }
   .dsec { font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin: 8px 0 4px; }
+  .chainmeta { margin-left: 8px; text-transform: none; letter-spacing: 0; color: var(--text); font-size: 12px; }
+  .chainmail { font-size: 12px; color: var(--text); padding: 3px 0; }
+  .chainempty { font-size: 12px; color: var(--text-dim); padding: 2px 0; }
   .hdrs { border-collapse: collapse; font-size: 12px; }
   .hdrs td { padding: 2px 8px 2px 0; vertical-align: top; }
   .hk { color: var(--text-dim); white-space: nowrap; }
