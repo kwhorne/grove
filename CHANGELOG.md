@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-07-18
+
+The causal chain, closed loop. 1.1 gave sandboxed writes automatic rollback and
+gave requests a causal chain — but the two didn't meet: a rollback that can't
+tell you *what a change touched* is just a nicer undo button. 1.2.1 links them.
+Every sandboxed write now reports its own **blast radius**, so an agent (or you)
+can see exactly what a migration ran before deciding to keep it.
+
 ### Added
 
 - **Attributed blast radius for sandboxed writes.** `grove_migrate_sandboxed`
@@ -17,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent (or you) can inspect exactly what a migration touched before deciding to
   keep it. Backed by a new `ChainForWindow` IPC command that generalizes the
   request causal chain to any time window.
+
+### Fixed
+
+- **Auto-updater 403s.** The release now rewrites `latest.json` to use the
+  public `browser_download_url` for each artifact instead of the
+  rate-limited `api.github.com` asset endpoint, so in-place updates no longer
+  fail intermittently with `403 Forbidden`.
+
+### Internal
+
+- `grove-services` now declares the `time` crate's `parsing` feature explicitly,
+  so the crate builds and tests standalone (previously masked by workspace
+  feature unification).
 
 ## [1.1.0] — 2026-07-18
 
