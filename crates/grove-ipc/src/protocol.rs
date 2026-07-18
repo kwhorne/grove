@@ -161,6 +161,12 @@ pub enum Request {
     SqlCaptureSet {
         on: bool,
     },
+    /// The side effects (SQL + mail) Grove observed in an arbitrary time window.
+    /// Used to attribute a sandboxed write's blast radius to the write itself.
+    ChainForWindow {
+        start_ms: u128,
+        end_ms: u128,
+    },
     /// A curated debugging bundle for one request: the request, its causal
     /// chain, and matching error-log entries — ready to hand to an AI assistant.
     ExplainRequest {
@@ -344,6 +350,18 @@ pub struct SqlCaptureState {
     pub note: String,
 }
 
+/// The side effects Grove observed within a bare time window — the same shape as
+/// a request's causal chain, but not tied to a `RequestEntry`. This is what lets
+/// a sandboxed write report its own blast radius (the SQL it ran, mail it sent).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowChain {
+    pub window_start_ms: u128,
+    pub window_end_ms: u128,
+    pub queries: Vec<QueryEvent>,
+    pub emails: Vec<EmailSummary>,
+    pub metrics: ChainMetrics,
+}
+
 /// A curated context bundle for debugging one request — everything Grove knows,
 /// gathered in one place and structured for an AI assistant (or a human).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -421,6 +439,8 @@ pub enum ResponseData {
     RequestChain(Option<RequestChain>),
     /// Current SQL-capture state.
     SqlCapture(SqlCaptureState),
+    /// Side effects correlated to a time window (see `ChainForWindow`).
+    WindowChain(WindowChain),
     /// A curated "explain this error" bundle (None if the id is unknown).
     Explain(Option<ExplainBundle>),
     /// The active license entitlement (None = free / unlicensed).

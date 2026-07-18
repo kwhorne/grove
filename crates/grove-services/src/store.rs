@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn in_window_filters_by_received_ms() {
         let store = MailStore::new();
-        let mut at = |ms: u128, subj: &str| {
+        let at = |ms: u128, subj: &str| {
             let mut e = email(subj);
             e.received_ms = ms;
             store.push(e)

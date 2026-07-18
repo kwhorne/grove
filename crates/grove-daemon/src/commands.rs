@@ -90,6 +90,29 @@ async fn tunnel_start(
 /// Execute one request against daemon state, returning the response to send.
 /// Split a target URL into (host, path, https) without a URL crate. Defaults to
 /// https and "/" — targets are local `.test` sites.
+/// Correlate the side effects (captured SQL + mail) Grove observed within an
+/// arbitrary `[start_ms, end_ms]` window. Shared by the request causal chain and
+/// the sandboxed-write blast radius.
+async fn correlate_window(
+    state: &Arc<DaemonState>,
+    start_ms: u128,
+    end_ms: u128,
+) -> (Vec<grove_services::QueryEvent>, Vec<grove_services::EmailSummary>) {
+    let emails = state.mail.in_window(start_ms, end_ms);
+    let queries = if *state.sql_capture.lock().await {
+        let file = state.paths.logs_dir().join("mysql-general.log");
+        let text = tokio::fs::read_to_string(&file).await.unwrap_or_default();
+        grove_services::qlog::in_window(
+            grove_services::parse_mysql_general(&text),
+            start_ms,
+            end_ms,
+        )
+    } else {
+        Vec::new()
+    };
+    (queries, emails)
+}
+
 /// Build the causal chain for a request: SQL + mail in its time window, plus
 /// derived metrics.
 async fn build_chain(
@@ -99,17 +122,7 @@ async fn build_chain(
     // The request occupied [completion - duration, completion].
     let window_end_ms = entry.epoch_ms;
     let window_start_ms = entry.epoch_ms.saturating_sub(entry.duration_ms as u128);
-    let emails = state.mail.in_window(window_start_ms, window_end_ms);
-    let queries = if *state.sql_capture.lock().await {
-        let file = state.paths.logs_dir().join("mysql-general.log");
-        let text = tokio::fs::read_to_string(&file).await.unwrap_or_default();
-        grove_services::parse_mysql_general(&text)
-            .into_iter()
-            .filter(|q| q.epoch_ms >= window_start_ms && q.epoch_ms <= window_end_ms)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+    let (queries, emails) = correlate_window(state, window_start_ms, window_end_ms).await;
     let metrics = grove_ipc::protocol::ChainMetrics {
         duration_ms: entry.duration_ms,
         email_count: emails.len(),
@@ -920,6 +933,23 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
         Request::SqlCaptureStatus => {
             let on = *state.sql_capture.lock().await;
             Ok(Response::ok(ResponseData::SqlCapture(sql_capture_state(on))))
+        }
+        Request::ChainForWindow { start_ms, end_ms } => {
+            let (queries, emails) = correlate_window(state, start_ms, end_ms).await;
+            let metrics = grove_ipc::protocol::ChainMetrics {
+                duration_ms: end_ms.saturating_sub(start_ms) as u64,
+                email_count: emails.len(),
+                query_count: queries.len(),
+            };
+            Ok(Response::ok(ResponseData::WindowChain(
+                grove_ipc::protocol::WindowChain {
+                    window_start_ms: start_ms,
+                    window_end_ms: end_ms,
+                    queries,
+                    emails,
+                    metrics,
+                },
+            )))
         }
         Request::RequestToTest { id, format } => {
             let Some(fmt) = grove_core::httpgen::TestFormat::parse(&format) else {

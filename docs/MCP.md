@@ -108,6 +108,13 @@ the snapshot id, and the outcome).
 flow for a single write statement, returning `rows_affected` alongside the schema
 diff.
 
+Both sandboxed write tools also return a **`chain`** — the SQL the operation
+actually ran and any mail it sent, correlated to the operation's time window
+(the same causal-chain shape used for requests). This is the *blast radius*: you
+can see everything a migration touched before deciding to keep it. Grove turns
+on SQL capture for the duration of the operation automatically (MySQL) and
+restores your previous capture setting afterwards.
+
 So you can safely ask: *"Add the migration for the `invoices` table and apply it"*,
 *"Do a dry run of `migrate:fresh` and show me what tables it would create,"* or
 *"Backfill `users.status` to 'active' where it's null — but roll back so I can

@@ -214,6 +214,7 @@ pub fn print_response(resp: &Response, json: bool) {
         }
         Some(ResponseData::RequestDetail(_)) => {} // GUI-only detail view
         Some(ResponseData::RequestChain(_)) => {} // surfaced via --json / MCP
+        Some(ResponseData::WindowChain(_)) => {} // folded into sandbox tool results
         Some(ResponseData::Explain(None)) => println!("no request with that id"),
         Some(ResponseData::Explain(Some(b))) => {
             println!("{}", b.summary);

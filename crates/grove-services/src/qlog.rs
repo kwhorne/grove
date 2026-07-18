@@ -51,6 +51,15 @@ pub fn parse_mysql_general(text: &str) -> Vec<QueryEvent> {
     events
 }
 
+/// Keep only the events whose timestamp falls within `[start_ms, end_ms]`
+/// (inclusive) — used to attribute captured SQL to a request or sandboxed op.
+pub fn in_window(events: Vec<QueryEvent>, start_ms: u128, end_ms: u128) -> Vec<QueryEvent> {
+    events
+        .into_iter()
+        .filter(|q| q.epoch_ms >= start_ms && q.epoch_ms <= end_ms)
+        .collect()
+}
+
 /// If `line` begins with an ISO-8601 timestamp followed by a tab, return the
 /// epoch-ms and the remainder after the tab.
 fn split_timestamp(line: &str) -> Option<(u128, &str)> {
@@ -136,6 +145,20 @@ FROM users
         let events = parse_mysql_general(log);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].sql, "SELECT 1");
+    }
+
+    #[test]
+    fn in_window_filters_inclusively() {
+        let ev = |ms: u128| QueryEvent {
+            epoch_ms: ms,
+            engine: "mysql".into(),
+            sql: format!("SELECT {ms}"),
+        };
+        let events = vec![ev(100), ev(150), ev(200), ev(500)];
+        let hit = in_window(events, 150, 200);
+        assert_eq!(hit.len(), 2);
+        assert_eq!(hit[0].sql, "SELECT 150");
+        assert_eq!(hit[1].sql, "SELECT 200");
     }
 
     #[test]

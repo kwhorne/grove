@@ -478,7 +478,7 @@ mod mcp {
         if allow_write {
             tools.push(json!({
                 "name": "grove_migrate_sandboxed",
-                "description": "Run database migrations inside an automatic snapshot sandbox. Grove takes a point-in-time snapshot first, runs `php artisan <command>` in the site, captures the schema diff, and AUTOMATICALLY ROLLS BACK if the command fails (or if roll_back=true). Returns the command output, the schema diff, the snapshot id, and whether a rollback happened. Works with MySQL, PostgreSQL and SQLite.",
+                "description": "Run database migrations inside an automatic snapshot sandbox. Grove takes a point-in-time snapshot first, runs `php artisan <command>` in the site, captures the schema diff, and AUTOMATICALLY ROLLS BACK if the command fails (or if roll_back=true). Returns the command output, the schema diff, a `chain` (the SQL the migration actually ran + any mail it sent, so you can inspect its blast radius before keeping it), the snapshot id, and whether a rollback happened. Works with MySQL, PostgreSQL and SQLite.",
                 "inputSchema": {"type": "object", "properties": {
                     "site": {"type": "string", "description": "Site name or hostname"},
                     "command": {"type": "string", "description": "Artisan command to run (default: 'migrate --force'). Examples: 'migrate --force', 'migrate:fresh --force', 'migrate:rollback --force'."},
@@ -487,7 +487,7 @@ mod mcp {
             }));
             tools.push(json!({
                 "name": "grove_sql_sandboxed",
-                "description": "Run a WRITE SQL statement (INSERT/UPDATE/DELETE/DDL) inside an automatic snapshot sandbox. Grove snapshots the database first, runs the statement, reports rows_affected and the schema diff, and AUTOMATICALLY ROLLS BACK if it fails (or if roll_back=true for a dry run). Use grove_db_query for read-only SELECTs. Works with MySQL, PostgreSQL and SQLite.",
+                "description": "Run a WRITE SQL statement (INSERT/UPDATE/DELETE/DDL) inside an automatic snapshot sandbox. Grove snapshots the database first, runs the statement, reports rows_affected, the schema diff, and a `chain` (the SQL actually executed + any mail sent, i.e. the blast radius), and AUTOMATICALLY ROLLS BACK if it fails (or if roll_back=true for a dry run). Use grove_db_query for read-only SELECTs. Works with MySQL, PostgreSQL and SQLite.",
                 "inputSchema": {"type": "object", "properties": {
                     "site": {"type": "string", "description": "Site name or hostname"},
                     "sql": {"type": "string", "description": "A single write statement, e.g. UPDATE users SET ..."},
@@ -943,6 +943,33 @@ mod mcp {
         }
     }
 
+    fn now_ms() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    }
+
+    async fn sql_capture_enabled(socket: &Path) -> bool {
+        matches!(
+            call(socket, Request::SqlCaptureStatus).await,
+            Ok(ResponseData::SqlCapture(s)) if s.enabled
+        )
+    }
+
+    async fn set_sql_capture(socket: &Path, on: bool) {
+        let _ = call(socket, Request::SqlCaptureSet { on }).await;
+    }
+
+    /// The blast radius (SQL + mail + metrics) Grove observed while a sandboxed
+    /// op ran, as a JSON value ready to fold into the tool's result.
+    async fn op_chain(socket: &Path, start_ms: u128, end_ms: u128) -> Value {
+        match call(socket, Request::ChainForWindow { start_ms, end_ms }).await {
+            Ok(ResponseData::WindowChain(wc)) => serde_json::to_value(wc).unwrap_or(Value::Null),
+            _ => Value::Null,
+        }
+    }
+
     /// Run `php artisan <command>` inside an automatic snapshot sandbox: snapshot
     /// first, run, diff the schema, and roll back on failure (or on request).
     async fn migrate_sandboxed(
@@ -965,10 +992,18 @@ mod mcp {
         let sandbox = open_sandbox(paths, socket, &cfg, &note).await?;
         let snapshot_id = sandbox.id();
 
-        // 3. Run the migration and capture the resulting schema.
+        // 3. Run the migration and capture the resulting schema + blast radius.
         let php = resolve_php_cli(paths, &php_ver)?;
+        // Capture SQL for the operation's window so it reports its own blast
+        // radius; restore the prior capture state afterwards.
+        let capture_was_on = sql_capture_enabled(socket).await;
+        let we_enabled = engine == "mysql" && !capture_was_on;
+        if we_enabled {
+            set_sql_capture(socket, true).await;
+        }
         let run_path = path.clone();
         let run_cmd = command.to_string();
+        let start_ms = now_ms();
         let (code, stdout, stderr, after) = tokio::task::spawn_blocking(
             move || -> anyhow::Result<(i32, String, String, Schema)> {
                 let args: Vec<String> = std::iter::once("artisan".to_string())
@@ -989,6 +1024,11 @@ mod mcp {
             },
         )
         .await??;
+        let end_ms = now_ms();
+        let chain = op_chain(socket, start_ms, end_ms).await;
+        if we_enabled {
+            set_sql_capture(socket, false).await;
+        }
 
         let success = code == 0;
         let should_rollback = !success || roll_back;
@@ -1018,6 +1058,7 @@ mod mcp {
             "rolled_back": rolled_back,
             "rollback_error": rollback_error,
             "schema_diff": schema_diff(&before, &after),
+            "chain": chain,
             "note": note,
             "stdout": truncate(&stdout, 8000),
             "stderr": truncate(&stderr, 8000),
@@ -1053,8 +1094,14 @@ mod mcp {
         let sandbox = open_sandbox(paths, socket, &cfg, &note).await?;
         let snapshot_id = sandbox.id();
 
+        let capture_was_on = sql_capture_enabled(socket).await;
+        let we_enabled = engine == "mysql" && !capture_was_on;
+        if we_enabled {
+            set_sql_capture(socket, true).await;
+        }
         let p2 = path.clone();
         let sql_owned = sql.to_string();
+        let start_ms = now_ms();
         let (success, rows_affected, run_error, after) = tokio::task::spawn_blocking(
             move || -> (bool, Option<u64>, Option<String>, Schema) {
                 let cfg = match e_db::from_env(&p2) {
@@ -1076,6 +1123,11 @@ mod mcp {
             },
         )
         .await?;
+        let end_ms = now_ms();
+        let chain = op_chain(socket, start_ms, end_ms).await;
+        if we_enabled {
+            set_sql_capture(socket, false).await;
+        }
 
         let should_rollback = !success || roll_back;
         let rollback_error = close_sandbox(socket, sandbox, should_rollback).await;
@@ -1103,6 +1155,7 @@ mod mcp {
             "rolled_back": rolled_back,
             "rollback_error": rollback_error,
             "schema_diff": schema_diff(&before, &after),
+            "chain": chain,
             "note": outcome_note,
         });
 

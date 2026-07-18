@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Attributed blast radius for sandboxed writes.** `grove_migrate_sandboxed`
+  and `grove_sql_sandboxed` now return a `chain` alongside the schema diff — the
+  SQL the operation actually ran and any mail it sent, correlated to the
+  operation's time window. Grove enables SQL capture for the duration
+  automatically (MySQL) and restores your previous setting afterwards, so an
+  agent (or you) can inspect exactly what a migration touched before deciding to
+  keep it. Backed by a new `ChainForWindow` IPC command that generalizes the
+  request causal chain to any time window.
+
 ## [1.1.0] — 2026-07-18
 
 The AI release. Grove 1.0 opened its local environment to AI clients over MCP,
