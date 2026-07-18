@@ -90,6 +90,120 @@ async fn tunnel_start(
 /// Execute one request against daemon state, returning the response to send.
 /// Split a target URL into (host, path, https) without a URL crate. Defaults to
 /// https and "/" — targets are local `.test` sites.
+/// Build the causal chain for a request: SQL + mail in its time window, plus
+/// derived metrics.
+async fn build_chain(
+    state: &Arc<DaemonState>,
+    entry: grove_core::RequestEntry,
+) -> grove_ipc::protocol::RequestChain {
+    // The request occupied [completion - duration, completion].
+    let window_end_ms = entry.epoch_ms;
+    let window_start_ms = entry.epoch_ms.saturating_sub(entry.duration_ms as u128);
+    let emails = state.mail.in_window(window_start_ms, window_end_ms);
+    let queries = if *state.sql_capture.lock().await {
+        let file = state.paths.logs_dir().join("mysql-general.log");
+        let text = tokio::fs::read_to_string(&file).await.unwrap_or_default();
+        grove_services::parse_mysql_general(&text)
+            .into_iter()
+            .filter(|q| q.epoch_ms >= window_start_ms && q.epoch_ms <= window_end_ms)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let metrics = grove_ipc::protocol::ChainMetrics {
+        duration_ms: entry.duration_ms,
+        email_count: emails.len(),
+        query_count: queries.len(),
+    };
+    grove_ipc::protocol::RequestChain {
+        request: entry,
+        window_start_ms,
+        window_end_ms,
+        emails,
+        queries,
+        metrics,
+    }
+}
+
+/// Recent error-level entries from a site's Laravel log (newest first, capped).
+async fn recent_error_logs(
+    state: &Arc<DaemonState>,
+    site: &str,
+    limit: usize,
+) -> Vec<grove_ipc::protocol::LogEntry> {
+    let path = {
+        let registry = state.shared.registry.read().await;
+        registry.get(site).map(|s| s.path.join("storage/logs/laravel.log"))
+    };
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    let entries = tokio::task::spawn_blocking(move || {
+        crate::logs::read_entries(&path, "laravel", 500).unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
+    entries
+        .into_iter()
+        .filter(|e| {
+            matches!(
+                e.level.as_str(),
+                "ERROR" | "CRITICAL" | "ALERT" | "EMERGENCY"
+            )
+        })
+        .take(limit)
+        .collect()
+}
+
+/// Assemble the curated "explain this error" bundle for a request.
+async fn build_explain(
+    state: &Arc<DaemonState>,
+    entry: grove_core::RequestEntry,
+) -> grove_ipc::protocol::ExplainBundle {
+    let id = entry.id;
+    let site = entry.site.clone();
+    let status = entry.status;
+    let is_error = status == 0 || status >= 400;
+    let chain = build_chain(state, entry).await;
+    let detail = state.shared.log.detail(id).unwrap_or_else(|| {
+        grove_core::reqlog::RequestDetail {
+            id,
+            method: chain.request.method.clone(),
+            host: String::new(),
+            path: chain.request.path.clone(),
+            https: chain.request.https,
+            status,
+            headers: Vec::new(),
+            body: String::new(),
+            body_truncated: false,
+        }
+    });
+    // Only chase down logs for failures; success needs no stacktrace.
+    let logs = if is_error {
+        recent_error_logs(state, &site, 3).await
+    } else {
+        Vec::new()
+    };
+    let summary = format!(
+        "{} {} → {} on {} · {} queries, {} emails · {} error log entr{}",
+        detail.method,
+        detail.path,
+        if status == 0 { "ERR".to_string() } else { status.to_string() },
+        site,
+        chain.metrics.query_count,
+        chain.metrics.email_count,
+        logs.len(),
+        if logs.len() == 1 { "y" } else { "ies" },
+    );
+    grove_ipc::protocol::ExplainBundle {
+        summary,
+        is_error,
+        request: detail,
+        chain,
+        logs,
+    }
+}
+
 fn sql_capture_state(on: bool) -> grove_ipc::protocol::SqlCaptureState {
     grove_ipc::protocol::SqlCaptureState {
         enabled: on,
@@ -770,40 +884,16 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
         Request::RequestChain { id } => {
             let chain = match state.shared.log.entry(id) {
                 None => None,
-                Some(entry) => {
-                    // The request occupied [completion - duration, completion].
-                    let window_end_ms = entry.epoch_ms;
-                    let window_start_ms =
-                        entry.epoch_ms.saturating_sub(entry.duration_ms as u128);
-                    let emails = state.mail.in_window(window_start_ms, window_end_ms);
-                    let queries = if *state.sql_capture.lock().await {
-                        let file = state.paths.logs_dir().join("mysql-general.log");
-                        let text = tokio::fs::read_to_string(&file).await.unwrap_or_default();
-                        grove_services::parse_mysql_general(&text)
-                            .into_iter()
-                            .filter(|q| {
-                                q.epoch_ms >= window_start_ms && q.epoch_ms <= window_end_ms
-                            })
-                            .collect::<Vec<_>>()
-                    } else {
-                        Vec::new()
-                    };
-                    let metrics = grove_ipc::protocol::ChainMetrics {
-                        duration_ms: entry.duration_ms,
-                        email_count: emails.len(),
-                        query_count: queries.len(),
-                    };
-                    Some(grove_ipc::protocol::RequestChain {
-                        request: entry,
-                        window_start_ms,
-                        window_end_ms,
-                        emails,
-                        queries,
-                        metrics,
-                    })
-                }
+                Some(entry) => Some(build_chain(state, entry).await),
             };
             Ok(Response::ok(ResponseData::RequestChain(chain)))
+        }
+        Request::ExplainRequest { id } => {
+            let bundle = match state.shared.log.entry(id) {
+                None => None,
+                Some(entry) => Some(build_explain(state, entry).await),
+            };
+            Ok(Response::ok(ResponseData::Explain(bundle)))
         }
         Request::SqlCaptureSet { on } => {
             let file = state.paths.logs_dir().join("mysql-general.log");

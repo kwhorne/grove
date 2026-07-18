@@ -214,6 +214,38 @@ pub fn print_response(resp: &Response, json: bool) {
         }
         Some(ResponseData::RequestDetail(_)) => {} // GUI-only detail view
         Some(ResponseData::RequestChain(_)) => {} // surfaced via --json / MCP
+        Some(ResponseData::Explain(None)) => println!("no request with that id"),
+        Some(ResponseData::Explain(Some(b))) => {
+            println!("{}", b.summary);
+            if !b.chain.queries.is_empty() {
+                println!("\nQueries ({}):", b.chain.queries.len());
+                for q in &b.chain.queries {
+                    println!("  {}", q.sql);
+                }
+            }
+            if !b.chain.emails.is_empty() {
+                println!("\nMail ({}):", b.chain.emails.len());
+                for m in &b.chain.emails {
+                    println!("  ✉ {} → {}", m.subject, m.to.join(", "));
+                }
+            }
+            if b.logs.is_empty() {
+                if b.is_error {
+                    println!("\nNo matching error-log entries found.");
+                }
+            } else {
+                println!("\nError log:");
+                for e in &b.logs {
+                    println!("  [{}] {}: {}", e.datetime, e.level, e.message);
+                    if let Some(ctx) = &e.context {
+                        for line in ctx.lines().take(8) {
+                            println!("    {line}");
+                        }
+                    }
+                }
+            }
+            println!("\nTip: `grove explain {} --json` for the full bundle (pipe to your AI).", b.request.id);
+        }
         Some(ResponseData::SqlCapture(s)) => {
             println!(
                 "SQL capture: {}\n{}",

@@ -214,6 +214,14 @@ export interface SqlCaptureState {
   note: string;
 }
 
+export interface ExplainBundle {
+  summary: string;
+  is_error: boolean;
+  request: RequestDetail;
+  chain: RequestChain;
+  logs: LogEntry[];
+}
+
 export interface CapturedEmail extends EmailSummary {
   raw: string;
   text?: string;

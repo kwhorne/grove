@@ -20,6 +20,7 @@ import type {
   RequestDetail,
   RequestChain,
   SqlCaptureState,
+  ExplainBundle,
   LicenseClaims,
   DbConnInfo,
   DbQueryResult,
@@ -126,6 +127,8 @@ export const api = {
     invoke("request_detail", { id }),
   requestChain: (id: number): Promise<RequestChain | null> =>
     invoke("request_chain", { id }),
+  explainRequest: (id: number): Promise<ExplainBundle | null> =>
+    invoke("explain_request", { id }),
   sqlCaptureSet: (on: boolean): Promise<SqlCaptureState> =>
     invoke("sql_capture_set", { on }),
   sqlCaptureStatus: (): Promise<SqlCaptureState> =>

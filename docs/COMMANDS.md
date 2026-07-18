@@ -172,6 +172,7 @@ in the desktop app's **Requests** panel.
 | `grove requests --limit <n>` | Cap the number of entries. |
 | `grove replay <id>` | Re-issue a captured request through Grove (id from `grove requests`). |
 | `grove request <id> --as <fmt>` | Print the request as `curl`, `http`, or `pest`. |
+| `grove explain <id>` | Curate a debugging bundle (request + causal chain + error log) for an AI assistant. |
 | `grove sql-capture on\|off\|status` | Correlate SQL queries with the timeline (MySQL). |
 
 ### Causal chain

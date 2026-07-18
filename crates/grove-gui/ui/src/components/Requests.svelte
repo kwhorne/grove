@@ -86,6 +86,47 @@
     replaying = false;
   }
 
+  async function explain(id: number) {
+    try {
+      const b = await api.explainRequest(id);
+      if (!b) {
+        msg = "No request with that id";
+        return;
+      }
+      const lines: string[] = [`# Explain request #${id}`, "", b.summary, ""];
+      lines.push(
+        `**Request:** ${b.request.method} ${b.request.https ? "https://" : "http://"}${b.request.host}${b.request.path} → ${b.request.status}`,
+      );
+      if (b.chain.queries.length) {
+        lines.push("", `## SQL (${b.chain.queries.length})`, "```sql");
+        for (const q of b.chain.queries) lines.push(q.sql);
+        lines.push("```");
+      }
+      if (b.chain.emails.length) {
+        lines.push("", `## Mail (${b.chain.emails.length})`);
+        for (const m of b.chain.emails)
+          lines.push(`- ${m.subject} → ${m.to.join(", ")}`);
+      }
+      if (b.request.body) {
+        lines.push("", "## Request body", "```", b.request.body, "```");
+      }
+      if (b.logs.length) {
+        lines.push("", "## Error log");
+        for (const e of b.logs) {
+          lines.push("```", `[${e.datetime}] ${e.level}: ${e.message}`);
+          if (e.context) lines.push(e.context.trimEnd());
+          lines.push("```");
+        }
+      } else if (b.is_error) {
+        lines.push("", "_No matching error-log entries found._");
+      }
+      await navigator.clipboard.writeText(lines.join("\n"));
+      msg = "Copied debugging bundle — paste it into your AI assistant";
+    } catch (e) {
+      msg = String(e);
+    }
+  }
+
   async function copyAs(id: number, format: string) {
     try {
       const code = await api.requestToTest(id, format);
@@ -178,6 +219,7 @@
                 <div class="dhead">
                   <span class="durl mono">{selected.method} {selected.https ? "https://" : "http://"}{selected.host}{selected.path}</span>
                   <button class="btn sm" onclick={(e) => { e.stopPropagation(); replay(r.id); }} disabled={replaying}>↻ Replay</button>
+                  <button class="btn sm" onclick={(e) => { e.stopPropagation(); explain(r.id); }} title="Copy a debugging bundle for your AI assistant">✨ Explain</button>
                   <button class="btn sm" onclick={(e) => { e.stopPropagation(); copyAs(r.id, "curl"); }} title="Copy as curl">curl</button>
                   <button class="btn sm" onclick={(e) => { e.stopPropagation(); copyAs(r.id, "http"); }} title="Copy as .http">.http</button>
                   <button class="btn sm" onclick={(e) => { e.stopPropagation(); copyAs(r.id, "pest"); }} title="Copy as Pest test">Pest</button>

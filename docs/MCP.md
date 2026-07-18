@@ -54,6 +54,7 @@ after editing its config.
 | `grove_requests` | Recent requests across sites — method, path, status, duration. |
 | `grove_request` | Full headers + body of one captured request. |
 | `grove_request_chain` | The causal chain for one request — the SQL it issued (with `grove sql-capture on`) and mail it sent within its time window, plus derived metrics (duration, query count). |
+| `grove_explain` | A curated debugging bundle for one request — the request (headers + body), its causal chain, and matching error-log entries with stacktraces. Everything needed to explain a failing request. |
 | `grove_webhooks` | Recently captured inbound webhooks. |
 | `grove_logs` | List log sources, or read recent Laravel / service log entries. |
 | `grove_db_schema` | Tables and columns for a site's database (read from its `.env`). |
@@ -65,6 +66,7 @@ So you can ask your assistant things like:
   error there look like?"
 - "Show me the schema for the `orders` table in `shop`."
 - "Show me the full chain for request #42 — how many queries did it run and did it send any email?" (turn on `grove sql-capture on` first for SQL)
+- "Explain request #42 — why did it 500?" (uses `grove_explain` to pull the request, its queries, and the stacktrace together)
 - "How many users signed up today?" (it runs a `SELECT` for you)
 - "What webhook did Stripe just send, and did my handler 200?"
 

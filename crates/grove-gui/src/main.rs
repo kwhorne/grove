@@ -332,6 +332,16 @@ async fn sql_capture_status() -> CmdResult<grove_ipc::protocol::SqlCaptureState>
 }
 
 #[tauri::command]
+async fn explain_request(
+    id: u64,
+) -> CmdResult<Option<grove_ipc::protocol::ExplainBundle>> {
+    match call(Request::ExplainRequest { id }).await? {
+        ResponseData::Explain(b) => Ok(b),
+        _ => Err("unexpected response".into()),
+    }
+}
+
+#[tauri::command]
 async fn replay_request(id: u64) -> CmdResult<(u16, u64)> {
     match call(Request::ReplayRequest { id }).await? {
         ResponseData::Replayed {
@@ -998,6 +1008,7 @@ fn main() {
             request_log,
             request_detail,
             request_chain,
+            explain_request,
             sql_capture_set,
             sql_capture_status,
             replay_request,

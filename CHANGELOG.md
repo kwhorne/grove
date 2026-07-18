@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **"Explain this error."** `grove explain <id>` (and the `grove_explain` MCP
+  tool) curate a debugging bundle for one request — the request (headers + body),
+  its causal chain (SQL + mail + metrics), and the matching error-log entries
+  with stacktraces — all gathered in one place and structured for an AI
+  assistant. In the desktop app, an **✨ Explain** button on each request copies
+  the bundle to the clipboard. Errors are handled gracefully when there's no
+  stacktrace. See [docs/MCP.md](docs/MCP.md).
+
 - **Request causal chain.** A new `grove_request_chain` MCP tool (and
   `RequestChain` IPC command) correlates a captured request with the side
   effects Grove observed inside its time window — starting with captured mail —

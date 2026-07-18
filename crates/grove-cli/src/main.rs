@@ -261,6 +261,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             "off" => Request::SqlCaptureSet { on: false },
             _ => Request::SqlCaptureStatus,
         },
+        Command::Explain { id } => Request::ExplainRequest { id },
         Command::Replay { id } => Request::ReplayRequest { id },
         Command::Request { id, format } => Request::RequestToTest { id, format },
         Command::Hooks { limit, action } => match action {
@@ -427,6 +428,13 @@ mod mcp {
             {
                 "name": "grove_request_chain",
                 "description": "The causal chain for one captured request (by id from grove_requests): the request plus the side effects Grove observed in its time window — the SQL it issued (when `grove sql-capture on`) and emails it sent — plus derived metrics (duration, query count, side-effect counts). Great for 'this 500 also ran 20 queries and sent an email'.",
+                "inputSchema": {"type": "object", "properties": {
+                    "id": {"type": "integer"}
+                }, "required": ["id"]}
+            },
+            {
+                "name": "grove_explain",
+                "description": "Curate a debugging bundle for one request (by id from grove_requests): the request (headers + body), its causal chain (the SQL it issued when sql-capture is on, mail it sent, and metrics), and the matching error-log entries with stacktraces from the site's Laravel log. Everything you need to explain a failing request, gathered in one place.",
                 "inputSchema": {"type": "object", "properties": {
                     "id": {"type": "integer"}
                 }, "required": ["id"]}
@@ -602,6 +610,14 @@ mod mcp {
                 match call(socket, Request::RequestChain { id }).await? {
                     ResponseData::RequestChain(Some(c)) => Ok(serde_json::to_string_pretty(&c)?),
                     ResponseData::RequestChain(None) => anyhow::bail!("no request with id {id}"),
+                    _ => anyhow::bail!("unexpected response"),
+                }
+            }
+            "grove_explain" => {
+                let id = n("id").ok_or_else(|| anyhow::anyhow!("id is required"))?;
+                match call(socket, Request::ExplainRequest { id }).await? {
+                    ResponseData::Explain(Some(b)) => Ok(serde_json::to_string_pretty(&b)?),
+                    ResponseData::Explain(None) => anyhow::bail!("no request with id {id}"),
                     _ => anyhow::bail!("unexpected response"),
                 }
             }

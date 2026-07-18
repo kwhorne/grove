@@ -250,6 +250,14 @@ pub enum Command {
         action: String,
     },
 
+    /// Curate a debugging bundle for a request — the request, its causal chain
+    /// (SQL + mail + metrics), and matching error-log entries — ready to hand to
+    /// an AI assistant. Use `--json` for the full structured bundle.
+    Explain {
+        /// Request id from `grove requests`.
+        id: u64,
+    },
+
     /// Re-issue a captured request through Grove (framework-agnostic replay).
     Replay {
         /// Request id from `grove requests`.

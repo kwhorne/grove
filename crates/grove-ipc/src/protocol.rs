@@ -161,6 +161,11 @@ pub enum Request {
     SqlCaptureSet {
         on: bool,
     },
+    /// A curated debugging bundle for one request: the request, its causal
+    /// chain, and matching error-log entries — ready to hand to an AI assistant.
+    ExplainRequest {
+        id: u64,
+    },
     /// Whether SQL query capture is currently on.
     SqlCaptureStatus,
     /// Re-issue a captured request through the proxy pipeline.
@@ -339,6 +344,23 @@ pub struct SqlCaptureState {
     pub note: String,
 }
 
+/// A curated context bundle for debugging one request — everything Grove knows,
+/// gathered in one place and structured for an AI assistant (or a human).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplainBundle {
+    /// One-line human summary (method, path, status, side-effect counts).
+    pub summary: String,
+    /// Whether the request looks like a failure (status 0 or >= 400).
+    pub is_error: bool,
+    /// The full request: headers + body.
+    pub request: grove_core::reqlog::RequestDetail,
+    /// The causal chain: SQL, mail, and derived metrics for the time window.
+    pub chain: RequestChain,
+    /// Matching error-log entries from the site's Laravel log (with stacktraces
+    /// in each entry's context). Empty when none were found.
+    pub logs: Vec<LogEntry>,
+}
+
 /// A request plus the side effects Grove observed within its time window.
 ///
 /// Correlation is by time window today (Grove sits in front of every request
@@ -399,6 +421,8 @@ pub enum ResponseData {
     RequestChain(Option<RequestChain>),
     /// Current SQL-capture state.
     SqlCapture(SqlCaptureState),
+    /// A curated "explain this error" bundle (None if the id is unknown).
+    Explain(Option<ExplainBundle>),
     /// The active license entitlement (None = free / unlicensed).
     License(Option<LicenseClaims>),
 }
