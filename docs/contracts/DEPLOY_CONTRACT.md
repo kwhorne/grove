@@ -17,6 +17,20 @@ Step 2 is excellent and already shipped: workers roll one at a time, each draini
 in flight, and `--canary` rolls a single worker first and **aborts the reload** if
 it looks unhealthy — the rest keep serving the old code.
 
+Since Askr **1.2.0** that gate is sharper, and this contract depends on the
+difference:
+
+- The canary is judged **against the rest of the fleet** from per-worker counters
+  in shared memory (`canary_max_error_rate` is points *above* the fleet), not an
+  absolute 5xx count. Before 1.2.0 a site with any error baseline aborted every
+  reload while a canary serving no traffic passed.
+- A failed canary is **drained and its slot quarantined**, so it does not keep
+  serving a broken build from 1/N of the fleet.
+- The outcome is readable from `/api/status` as `rollout`:
+  `rolling` | `ok` | `aborted` | `inconclusive`.
+- `inconclusive` means the canary saw fewer than `canary_min_requests`. Askr rolls
+  on with a warning — **so `grove deploy` must not treat it as success**. See below.
+
 Step 1 is a parenthesis. It is the only place in the ecosystem where the answer is
 "do it yourself, somehow". This contract makes step 1 a product.
 
@@ -70,7 +84,7 @@ contract rather than by the first implementation.
 | 4 | **Link shared** — symlink `shared/.env` and `shared/storage` into the release | Abort; remove the release directory |
 | 5 | **Migrate** — `php artisan migrate --force` | **Abort. See below.** |
 | 6 | **Swap** — atomic `rename` of `current` | Abort; previous `current` is untouched |
-| 7 | **Reload** — Askr canary reload | Canary abort → **auto-rollback** (step 8) |
+| 7 | **Reload** — Askr canary reload, then read `rollout` from `/api/status` | `aborted` → **auto-rollback** (step 8). `inconclusive` → continue to verify, and say so in the record |
 | 8 | **Verify** — health endpoint returns 200 through the real listener | Failure → auto-rollback |
 | 9 | **Prune** — keep the last N releases (default 5) | Never fails the deploy |
 
@@ -110,6 +124,19 @@ drift apart.
 Rollback is **code only**. If a deploy migrated, the operator is told so
 explicitly in the rollback output rather than left to discover it.
 
+### What a canary abort actually protects, per mode
+
+Askr documents this honestly and so must we:
+
+| Askr mode | On abort |
+| --- | --- |
+| **Worker mode** | Surviving workers hold the previous app *in memory*, so old code really does keep serving. Repointing `current` makes that permanent. |
+| **Per-request mode** | Every worker reads current files from disk. The gate detects and drains the canary, but cannot roll back code that is no longer on disk — **only the symlink swap can**. |
+
+So in per-request mode the symlink is the rollback, and `grove deploy` owning it is
+not a convenience: it is the mechanism. This is the strongest argument for the
+immutable-release layout above.
+
 ## Secrets
 
 The `.env` lives at `shared/.env` and is never part of a release, never printed,
@@ -141,6 +168,7 @@ writes one JSON record to `shared/deploys/<id>.json`, appended-to as it runs:
   "started_at": "2026-07-26T09:30:00Z",
   "finished_at": "2026-07-26T09:30:47Z",
   "outcome": "succeeded",
+  "rollout": "ok",
   "rolled_back_from": null,
   "migrations": ["2026_07_20_120000_add_domains_to_licenses"],
   "steps": [
@@ -153,9 +181,12 @@ writes one JSON record to `shared/deploys/<id>.json`, appended-to as it runs:
 }
 ```
 
-Normative: `outcome` is one of `succeeded`, `failed`, `rolled_back`. A record is
-written even when preflight fails, so a failed deploy is visible rather than
-absent. Records are pruned with their releases.
+Normative: `outcome` is one of `succeeded`, `failed`, `rolled_back`. `rollout`
+mirrors Askr's own value (`ok`, `aborted`, `inconclusive`) so the cockpit can show
+"deployed, but the canary saw too little traffic to judge" — which is neither a
+success worth trusting nor a failure worth waking up for. A record is written even
+when preflight fails, so a failed deploy is visible rather than absent. Records are
+pruned with their releases.
 
 This is a file, not a database, so a deploy never depends on the app's database
 being reachable — which is exactly the situation you are in when you most need to
