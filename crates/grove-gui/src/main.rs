@@ -306,9 +306,7 @@ async fn request_detail(id: u64) -> CmdResult<Option<grove_core::reqlog::Request
 }
 
 #[tauri::command]
-async fn request_chain(
-    id: u64,
-) -> CmdResult<Option<grove_ipc::protocol::RequestChain>> {
+async fn request_chain(id: u64) -> CmdResult<Option<grove_ipc::protocol::RequestChain>> {
     match call(Request::RequestChain { id }).await? {
         ResponseData::RequestChain(c) => Ok(c),
         _ => Err("unexpected response".into()),
@@ -332,9 +330,7 @@ async fn sql_capture_status() -> CmdResult<grove_ipc::protocol::SqlCaptureState>
 }
 
 #[tauri::command]
-async fn explain_request(
-    id: u64,
-) -> CmdResult<Option<grove_ipc::protocol::ExplainBundle>> {
+async fn explain_request(id: u64) -> CmdResult<Option<grove_ipc::protocol::ExplainBundle>> {
     match call(Request::ExplainRequest { id }).await? {
         ResponseData::Explain(b) => Ok(b),
         _ => Err("unexpected response".into()),

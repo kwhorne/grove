@@ -16,7 +16,7 @@ pub mod store;
 pub use catalog::{ServiceKind, ServiceSpec, CATALOG};
 pub use convert::{convert as convert_database, DbConnSpec};
 pub use mail::serve_smtp;
-pub use qlog::{parse_mysql_general, QueryEvent};
 pub use manager::{ServiceManager, ServiceStatus};
+pub use qlog::{parse_mysql_general, QueryEvent};
 pub use snapshot::{Snapshot, SnapshotStore};
 pub use store::{CapturedEmail, EmailSummary, MailStore};

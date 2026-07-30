@@ -573,7 +573,10 @@ mod mcp {
                 }
                 let site = s("site").ok_or_else(|| anyhow::anyhow!("site is required"))?;
                 let command = s("command").unwrap_or_else(|| "migrate --force".into());
-                let roll_back = args.get("roll_back").and_then(Value::as_bool).unwrap_or(false);
+                let roll_back = args
+                    .get("roll_back")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 migrate_sandboxed(paths, socket, &site, &command, roll_back).await
             }
             "grove_sql_sandboxed" => {
@@ -584,7 +587,10 @@ mod mcp {
                 }
                 let site = s("site").ok_or_else(|| anyhow::anyhow!("site is required"))?;
                 let sql = s("sql").ok_or_else(|| anyhow::anyhow!("sql is required"))?;
-                let roll_back = args.get("roll_back").and_then(Value::as_bool).unwrap_or(false);
+                let roll_back = args
+                    .get("roll_back")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 sql_sandboxed(paths, socket, &site, &sql, roll_back).await
             }
             "grove_sites" => match call(socket, Request::ListSites).await? {
@@ -777,7 +783,8 @@ mod mcp {
     /// Structural diff between two schemas: added/removed tables and per-table
     /// column changes.
     fn schema_diff(before: &Schema, after: &Schema) -> Value {
-        let added_tables: Vec<&String> = after.keys().filter(|t| !before.contains_key(*t)).collect();
+        let added_tables: Vec<&String> =
+            after.keys().filter(|t| !before.contains_key(*t)).collect();
         let removed_tables: Vec<&String> =
             before.keys().filter(|t| !after.contains_key(*t)).collect();
         let mut changed = serde_json::Map::new();
@@ -953,19 +960,16 @@ mod mcp {
             return None;
         }
         match sandbox {
-            Sandbox::Daemon { id } => match call(
-                socket,
-                Request::DbSnapshotRestore { id: id.clone() },
-            )
-            .await
-            {
-                Ok(ResponseData::Message(_)) => None,
-                Ok(_) => Some("unexpected response restoring snapshot".into()),
-                Err(e) => Some(e.to_string()),
-            },
-            Sandbox::Sqlite { original, backup } => {
-                std::fs::copy(&backup, &original).err().map(|e| e.to_string())
+            Sandbox::Daemon { id } => {
+                match call(socket, Request::DbSnapshotRestore { id: id.clone() }).await {
+                    Ok(ResponseData::Message(_)) => None,
+                    Ok(_) => Some("unexpected response restoring snapshot".into()),
+                    Err(e) => Some(e.to_string()),
+                }
             }
+            Sandbox::Sqlite { original, backup } => std::fs::copy(&backup, &original)
+                .err()
+                .map(|e| e.to_string()),
         }
     }
 
@@ -1128,12 +1132,17 @@ mod mcp {
         let p2 = path.clone();
         let sql_owned = sql.to_string();
         let start_ms = now_ms();
-        let (success, rows_affected, run_error, after) = tokio::task::spawn_blocking(
-            move || -> (bool, Option<u64>, Option<String>, Schema) {
+        let (success, rows_affected, run_error, after) =
+            tokio::task::spawn_blocking(move || -> (bool, Option<u64>, Option<String>, Schema) {
                 let cfg = match e_db::from_env(&p2) {
                     Some(c) => c,
                     None => {
-                        return (false, None, Some("no database configured".into()), Schema::new())
+                        return (
+                            false,
+                            None,
+                            Some("no database configured".into()),
+                            Schema::new(),
+                        )
                     }
                 };
                 let conn = match e_db::connect(&cfg) {
@@ -1146,9 +1155,8 @@ mod mcp {
                 };
                 let after = read_schema(&cfg).unwrap_or_default();
                 (success, rows_affected, run_error, after)
-            },
-        )
-        .await?;
+            })
+            .await?;
         let end_ms = now_ms();
         let chain = op_chain(socket, start_ms, end_ms).await;
         if we_enabled {

@@ -97,7 +97,10 @@ async fn correlate_window(
     state: &Arc<DaemonState>,
     start_ms: u128,
     end_ms: u128,
-) -> (Vec<grove_services::QueryEvent>, Vec<grove_services::EmailSummary>) {
+) -> (
+    Vec<grove_services::QueryEvent>,
+    Vec<grove_services::EmailSummary>,
+) {
     let emails = state.mail.in_window(start_ms, end_ms);
     let queries = if *state.sql_capture.lock().await {
         let file = state.paths.logs_dir().join("mysql-general.log");
@@ -146,7 +149,9 @@ async fn recent_error_logs(
 ) -> Vec<grove_ipc::protocol::LogEntry> {
     let path = {
         let registry = state.shared.registry.read().await;
-        registry.get(site).map(|s| s.path.join("storage/logs/laravel.log"))
+        registry
+            .get(site)
+            .map(|s| s.path.join("storage/logs/laravel.log"))
     };
     let Some(path) = path else {
         return Vec::new();
@@ -178,8 +183,11 @@ async fn build_explain(
     let status = entry.status;
     let is_error = status == 0 || status >= 400;
     let chain = build_chain(state, entry).await;
-    let detail = state.shared.log.detail(id).unwrap_or_else(|| {
-        grove_core::reqlog::RequestDetail {
+    let detail = state
+        .shared
+        .log
+        .detail(id)
+        .unwrap_or_else(|| grove_core::reqlog::RequestDetail {
             id,
             method: chain.request.method.clone(),
             host: String::new(),
@@ -189,8 +197,7 @@ async fn build_explain(
             headers: Vec::new(),
             body: String::new(),
             body_truncated: false,
-        }
-    });
+        });
     // Only chase down logs for failures; success needs no stacktrace.
     let logs = if is_error {
         recent_error_logs(state, &site, 3).await
@@ -201,7 +208,11 @@ async fn build_explain(
         "{} {} → {} on {} · {} queries, {} emails · {} error log entr{}",
         detail.method,
         detail.path,
-        if status == 0 { "ERR".to_string() } else { status.to_string() },
+        if status == 0 {
+            "ERR".to_string()
+        } else {
+            status.to_string()
+        },
         site,
         chain.metrics.query_count,
         chain.metrics.email_count,
@@ -925,14 +936,18 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             match res {
                 Ok(()) => {
                     *state.sql_capture.lock().await = on;
-                    Ok(Response::ok(ResponseData::SqlCapture(sql_capture_state(on))))
+                    Ok(Response::ok(ResponseData::SqlCapture(sql_capture_state(
+                        on,
+                    ))))
                 }
                 Err(e) => Ok(Response::err(e.to_string())),
             }
         }
         Request::SqlCaptureStatus => {
             let on = *state.sql_capture.lock().await;
-            Ok(Response::ok(ResponseData::SqlCapture(sql_capture_state(on))))
+            Ok(Response::ok(ResponseData::SqlCapture(sql_capture_state(
+                on,
+            ))))
         }
         Request::ChainForWindow { start_ms, end_ms } => {
             let (queries, emails) = correlate_window(state, start_ms, end_ms).await;

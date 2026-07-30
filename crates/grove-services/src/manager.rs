@@ -430,7 +430,16 @@ impl ServiceManager {
             "SET GLOBAL general_log=0;".to_string()
         };
         let out = std::process::Command::new(bin.join("mysql"))
-            .args(["-h", "127.0.0.1", "-P", &port.to_string(), "-u", "root", "-e", &sql])
+            .args([
+                "-h",
+                "127.0.0.1",
+                "-P",
+                &port.to_string(),
+                "-u",
+                "root",
+                "-e",
+                &sql,
+            ])
             .output()?;
         if !out.status.success() {
             return Err(ServiceError::Init(format!(
@@ -710,7 +719,7 @@ impl ServiceManager {
 impl Drop for ServiceManager {
     fn drop(&mut self) {
         let mut procs = self.procs.lock().unwrap();
-        for (_, child) in procs.iter_mut() {
+        for child in procs.values_mut() {
             let _ = child.kill();
             let _ = child.wait();
         }

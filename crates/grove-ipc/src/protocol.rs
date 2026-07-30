@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use grove_core::site::ResolvedSite;
 use grove_core::RequestEntry;
 use grove_license::LicenseClaims;
-use grove_services::{CapturedEmail, DbConnSpec, EmailSummary, QueryEvent, ServiceStatus, Snapshot};
+use grove_services::{
+    CapturedEmail, DbConnSpec, EmailSummary, QueryEvent, ServiceStatus, Snapshot,
+};
 
 /// Commands the daemon understands. Mirrors the CLI/GUI action surface so both
 /// frontends stay in parity.
