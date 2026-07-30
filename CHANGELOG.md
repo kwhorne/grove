@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-07-30
+
+The application decides. Laravel 13.16 moved dev-process configuration out of
+`composer.json` and into the application itself, via `DevCommands`. Grove used to
+guess — a Vite server and a queue worker, hardcoded — which meant it was blind to
+Reverb, Horizon or `stripe listen`, and assumed `npm` even in a bun project. Now
+Grove asks: it reads `artisan dev:list` and supervises exactly what the app
+declares, minus the processes Grove already *is*. The app owns the list; Grove
+owns the supervision — no open terminal, per-process logs, autostart at boot.
+
 ### Added
 
 - **`grove dev` now runs the processes your app declares.** On Laravel 13.16+,
@@ -45,6 +55,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kept holding port 5173 — breaking the next `grove dev start`. Each dev process
   now runs in its own process group and is stopped group-wide (`SIGTERM`, then
   `SIGKILL`).
+
+### Notes
+
+- **Intel macOS is no longer shipped.** Notarization on GitHub's `macos-13`
+  runner routinely hangs, so the release workflow builds Apple Silicon and Linux
+  only. Intel Macs can still build from source with `cargo build --release`. This
+  took effect after 1.2.1; 1.3.0 is the first release to state it.
+- **`grove dev` replaces `php artisan dev`** rather than complementing it.
+  Running both doubles every process; `grove dev start` now warns when it sees a
+  competing `php artisan dev`.
+- On Laravel 13.16+, `grove dev start` boots the application once to read
+  `dev:list`, which adds a moment of startup latency. If the app cannot boot,
+  Grove falls back to the previous heuristic rather than failing.
 
 ## [1.2.1] — 2026-07-18
 

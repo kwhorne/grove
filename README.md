@@ -251,6 +251,10 @@ by Apple**, so it opens normally — download the `.dmg`, drag Grove to
 To actually serve `*.test` (which needs ports 53/80/443), install the background
 service once: `sudo grove install`. The GUI is a dashboard over that daemon.
 
+> **Apple Silicon only.** Prebuilt macOS releases target `aarch64` — notarizing
+> the Intel build on GitHub's `macos-13` runner routinely hangs, so it isn't
+> shipped. On an Intel Mac, build from source: `cargo build --release`.
+
 ## Grove Pro
 
 Everything above is **free and open source, forever** — the core is never gated.
