@@ -63,7 +63,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - ⏱️ **Database snapshots** — `grove db snapshot` takes a point-in-time SQL snapshot of the bundled MySQL/PostgreSQL and `grove db restore` rolls it back, so risky migrations are fearless.
 - 🔀 **Toolchain on your PATH** — `grove path install` puts the bundled `php`, `composer`, `node`, `npm` and `laravel` on your PATH, auto-switching to each project's pinned version — so you can drop Herd/Valet entirely.
 - 🐳 **Docker / OrbStack aware** — auto-discovers containers and serves them as `<name>.test` with trusted local HTTPS, next to native sites.
-- ⚡ **Runs your dev processes** — `grove dev` supervises `npm run dev` (Vite HMR) + a queue worker per site; no `artisan serve` needed.
+- ⚡ **Runs your dev processes** — `grove dev` reads the processes your app declares via Laravel's `DevCommands` (`artisan dev:list`) and supervises them per site — Vite HMR, queue worker, and your own additions like Reverb or `stripe listen`. It skips `serve` (Grove *is* the server) and `pail` (the Logs panel), needs no open terminal, and falls back to Vite + a queue worker on older Laravel or non-Laravel sites. Use it **instead of** `php artisan dev`, not alongside it.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
 - 🌱 **Create / import sites** — scaffold a new Laravel or static project, or link existing ones.
 - 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon, plus a macOS menu-bar icon.
@@ -121,7 +121,7 @@ no Homebrew, no Composer, no Valet.
 | Databases | `db snapshot`, `db list`, `db restore <id>`, `db rm <id>` |
 | Observability | `requests [site]` (live request timeline), `sql-capture on\|off\|status` (SQL causal chain) |
 | Toolchain | `path install`, `path show`, `path uninstall` |
-| Dev | `dev start <site>`, `dev stop <site>`, `dev list` |
+| Dev | `dev start [site]`, `dev stop [site]`, `dev list` |
 | Tunnels | `share <site>` (public URL via `grove-tunnel` server) |
 | Mail | `mail`, `mail show <id>`, `mail clear` |
 | Logs | `logs` (list sources), `logs <site>` (view entries) |

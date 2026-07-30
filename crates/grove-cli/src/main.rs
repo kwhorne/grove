@@ -165,6 +165,28 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// The site name for the current directory, resolved the same way `grove up`
+/// does: an explicit `name` in `grove.toml`, else the directory's own name.
+/// Lets `grove dev start` work with no arguments from inside a project, like
+/// `grove link` and `grove secure` already do.
+fn site_in_cwd() -> anyhow::Result<String> {
+    use grove_core::ProjectFile;
+
+    let dir = std::env::current_dir().context("resolving current directory")?;
+    let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+    // A missing or unreadable grove.toml is fine here — fall back to the
+    // directory name, which is the parked-site convention.
+    let name = match ProjectFile::load(&dir) {
+        Ok(Some(pf)) => pf.site_name(&dir),
+        _ => dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string)
+            .context("no site given and the current directory has no name")?,
+    };
+    Ok(name)
+}
+
 /// Translate a CLI command into an IPC request.
 fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
     let cwd = || {
@@ -235,8 +257,12 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             },
         },
         Command::Dev { action } => match action {
-            DevAction::Start { site } => Request::DevStart { site },
-            DevAction::Stop { site } => Request::DevStop { site },
+            DevAction::Start { site } => Request::DevStart {
+                site: site.map(Ok).unwrap_or_else(site_in_cwd)?,
+            },
+            DevAction::Stop { site } => Request::DevStop {
+                site: site.map(Ok).unwrap_or_else(site_in_cwd)?,
+            },
             DevAction::List => Request::DevList,
         },
         Command::Debug { action } => match action {
@@ -2281,6 +2307,7 @@ mod local {
                         std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
                     }
                 }
+                install_cli_shim(&shims, &grove_bin)?;
                 print_path_instructions(&shims, true, json);
             }
             PathAction::Uninstall => {
@@ -2303,6 +2330,7 @@ mod local {
                             "shims_dir": shims.display().to_string(),
                             "on_path": path_contains(&shims),
                             "tools": SHIM_TOOLS,
+                            "cli_installed": shims.join("grove").exists(),
                         })
                     );
                 } else if installed {
@@ -2311,6 +2339,36 @@ mod local {
                     println!("Grove shims are not installed. Run `grove path install`.");
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Put the `grove` CLI itself on the PATH, next to the toolchain shims.
+    ///
+    /// This can't go through `SHIM_TOOLS`: those shims exec
+    /// `grove resolve <tool>`, which only makes sense for the *bundled*
+    /// toolchain. The CLI needs a plain pass-through instead. Without this, a
+    /// user who installs the app and runs `grove path install` still has no
+    /// `grove` on their PATH — the binary only exists inside the .app bundle.
+    fn install_cli_shim(shims: &Path, grove_bin: &Path) -> anyhow::Result<()> {
+        let dest = shims.join("grove");
+        let resolved = std::fs::canonicalize(grove_bin).unwrap_or_else(|_| grove_bin.to_path_buf());
+        // Never let the shim exec itself. This would otherwise happen when
+        // `path install` is invoked through an already-installed shim, or
+        // through a symlink pointing at one.
+        let current = std::fs::canonicalize(&dest).unwrap_or_else(|_| dest.clone());
+        if resolved == current {
+            return Ok(());
+        }
+        let script = format!(
+            "#!/bin/sh\n# Managed by `grove path` — the Grove CLI itself.\nexec \"{}\" \"$@\"\n",
+            resolved.display(),
+        );
+        std::fs::write(&dest, script)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o755))?;
         }
         Ok(())
     }
@@ -2327,11 +2385,15 @@ mod local {
         }
         let dir = shims.display();
         if just_installed {
-            println!("✓ Installed shims for {}.\n", SHIM_TOOLS.join(", "));
+            println!(
+                "✓ Installed shims for {}, plus the grove CLI itself.\n",
+                SHIM_TOOLS.join(", ")
+            );
         }
         if path_contains(shims) {
             println!("Grove's toolchain is on your PATH ({dir}).");
-            println!("php, composer, node, npm, npx and laravel now resolve to the version each project pins.");
+            println!("php, composer, node, npm, npx and laravel now resolve to the version each project pins,");
+            println!("and `grove` itself is on your PATH.");
             return;
         }
         let shell = std::env::var("SHELL").unwrap_or_default();

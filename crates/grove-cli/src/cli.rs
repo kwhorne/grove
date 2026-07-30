@@ -186,7 +186,8 @@ pub enum Command {
         action: DebugAction,
     },
 
-    /// Run a site's dev processes (Vite dev server + queue worker).
+    /// Run a site's dev processes — the ones the app declares via Laravel's
+    /// `DevCommands` (`artisan dev:list`), else Vite + a queue worker.
     Dev {
         #[command(subcommand)]
         action: DevAction,
@@ -452,10 +453,10 @@ pub enum NodeAction {
 
 #[derive(Subcommand, Debug)]
 pub enum DevAction {
-    /// Start dev processes for a site.
-    Start { site: String },
-    /// Stop dev processes for a site.
-    Stop { site: String },
+    /// Start dev processes for a site. Defaults to the site in the current directory.
+    Start { site: Option<String> },
+    /// Stop dev processes for a site. Defaults to the site in the current directory.
+    Stop { site: Option<String> },
     /// List sites with dev processes running.
     List,
 }

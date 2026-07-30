@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`grove dev` now runs the processes your app declares.** On Laravel 13.16+,
+  Grove reads `php artisan dev:list --json --except-vendor` and supervises that
+  list instead of guessing, so userland processes registered through
+  `DevCommands` — Reverb, Horizon, `stripe listen` — are started alongside Vite
+  and the queue worker, each with its own `dev-<site>-<name>.log`. `server` and
+  `logs` are skipped: Grove already serves the site over FPM, and `grove logs`
+  already tails the app log. Vendor-registered processes are excluded so a
+  Composer package can't start processes inside the daemon. Non-Laravel sites and
+  older Laravel versions keep the previous behaviour (Vite + queue worker).
+  Because Grove reuses Laravel's `NodePackageManager` detection by way of the
+  declared command, `pnpm`, `yarn` and `bun` projects now work without special
+  casing. Run `grove dev` *instead of* `php artisan dev`, not alongside it.
+- **`grove path install` puts the `grove` CLI itself on your `PATH`,** next to
+  the `php` / `composer` / `node` / `npm` / `npx` / `laravel` shims. Previously a
+  user who installed the macOS app and ran `grove path install` still had no
+  `grove` command, because the binary only existed inside the `.app` bundle.
+  `grove path show --json` reports this as `cli_installed`.
+- **`grove dev start` warns about a competing `php artisan dev`.** Both supervise
+  the same processes, so running both silently doubles them. The check cannot
+  tell which project the other process belongs to, so it is reported as a
+  warning alongside the started processes rather than as an error.
+
+### Changed
+
+- **`grove dev start` / `grove dev stop` take an optional site argument,**
+  defaulting to the site in the current directory (resolved from `grove.toml`'s
+  `name`, else the directory name) — matching `grove link`, `grove secure` and
+  `grove up`.
+
+### Fixed
+
+- **`grove dev stop` no longer orphans processes.** Dev processes were killed
+  directly, but `npm run dev` spawns Vite as a *grandchild*, which survived and
+  kept holding port 5173 — breaking the next `grove dev start`. Each dev process
+  now runs in its own process group and is stopped group-wide (`SIGTERM`, then
+  `SIGKILL`).
+
 ## [1.2.1] — 2026-07-18
 
 The causal chain, closed loop. 1.1 gave sandboxed writes automatic rollback and

@@ -41,17 +41,47 @@ grove <command> [args] [--json]
 
 ## Dev processes
 
-Grove runs a site's long-running dev processes for you — the **Vite dev server**
-(`npm run dev`, HMR) and, for a non-`sync` queue, a **queue worker** — with the
-site's own Node/PHP. No `artisan serve` needed (Grove already serves). Output
-goes to the Logs panel (`dev-<site>-*.log`). In the GUI it's the ⚡ toggle per
-site.
+Grove runs a site's long-running dev processes for you — typically the **Vite dev
+server** (HMR) and a **queue worker**, plus anything else the application
+declares — with the site's own Node/PHP. No `artisan serve` needed (Grove already
+serves). Output goes to the Logs panel (`dev-<site>-*.log`). In the GUI it's the
+⚡ toggle per site.
 
 | Command | Description |
 | --- | --- |
-| `grove dev start <site>` | Start the site's dev processes (Vite + queue worker). |
-| `grove dev stop <site>` | Stop them. |
+| `grove dev start [site]` | Start the site's dev processes. Defaults to the site in the current directory. |
+| `grove dev stop [site]` | Stop them, including anything they spawned. Defaults to the current directory. |
 | `grove dev list` | List sites with dev processes running. |
+
+On Laravel 13.16+, Grove asks the application what to run via
+`php artisan dev:list --json --except-vendor`, so processes you register with
+`DevCommands` are supervised too:
+
+```php
+use Illuminate\Foundation\Console\DevCommands;
+
+DevCommands::artisan('reverb:start', 'reverb')->orange();
+DevCommands::register('stripe listen --forward-to '.config('app.url'))->green();
+```
+
+Two entries are deliberately skipped: `server` (Grove already serves the site
+over FPM on its `.test` domain) and `logs` (`grove logs` tails the app log
+already). Vendor-registered processes are excluded so an arbitrary Composer
+package can't start processes inside the daemon.
+
+Each process writes to `dev-<site>-<name>.log` in Grove's log directory, listed
+by `grove logs`. `php` and the Node package manager are resolved to the versions
+the site pins, not whatever is on your `PATH`.
+
+Grove falls back to a Vite dev server plus a queue worker for non-Laravel sites
+and Laravel versions without `dev:list`.
+
+> **Run `grove dev` instead of `php artisan dev`, not alongside it.** Both
+> supervise the same processes, so running both gives you two Vite servers
+> fighting over port 5173 and two queue workers competing for the same jobs.
+> `grove dev start` warns when it sees a `php artisan dev` process running. The
+> check can't tell which project that process belongs to, so it is a warning
+> rather than an error.
 
 ## Debugging (Xdebug)
 

@@ -1102,10 +1102,13 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 return Ok(Response::err(format!("no site named {site}")));
             };
             match state.dev.start(&resolved, &state.paths).await {
-                Ok(names) => Ok(Response::ok(ResponseData::Message(format!(
-                    "dev started for {site}: {}",
-                    names.join(", ")
-                )))),
+                Ok(report) => {
+                    let mut msg = format!("dev started for {site}: {}", report.names.join(", "));
+                    for warning in &report.warnings {
+                        msg.push_str(&format!("\n  ! {warning}"));
+                    }
+                    Ok(Response::ok(ResponseData::Message(msg)))
+                }
                 Err(e) => Ok(Response::err(e.to_string())),
             }
         }
