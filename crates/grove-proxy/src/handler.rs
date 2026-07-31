@@ -34,6 +34,175 @@ fn full(bytes: impl Into<Bytes>) -> BoxBody {
         .boxed()
 }
 
+/// A body with no declared length is read into memory up to this much before it
+/// spills to disk. Matches the timeline's own cap, so the bytes the timeline
+/// keeps are exactly the bytes held in memory.
+const SPOOL_THRESHOLD: usize = reqlog::MAX_BODY;
+
+/// Hard ceiling on a single request body. Without one, an unbounded chunked
+/// upload is a disk-filling vector, since CGI forces Grove to know the length
+/// before it can forward anything.
+const MAX_REQUEST_BODY: u64 = 2 * 1024 * 1024 * 1024;
+
+/// A spooled body file, removed when the body that reads it is dropped.
+///
+/// Deletion is tied to `Drop` rather than to the end of the happy path, so an
+/// error or a client disconnect cannot leave upload contents on disk.
+struct SpoolFile(PathBuf);
+
+impl Drop for SpoolFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// A private, user-owned directory for spooled bodies.
+///
+/// Not the shared temp root directly: on Linux `/tmp` is world-readable and an
+/// upload can contain anything. The directory is `0700` and the files `0600`.
+fn spool_dir() -> std::io::Result<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("grove-spool-{}", current_uid()));
+    match std::fs::create_dir(&dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(dir)
+}
+
+fn current_uid() -> u32 {
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn geteuid() -> u32;
+        }
+        unsafe { geteuid() }
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+/// Create a spool file that no other user can read.
+async fn create_spool_file() -> std::io::Result<(tokio::fs::File, SpoolFile)> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    let dir = spool_dir()?;
+    let name = format!(
+        "body-{}-{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let path = dir.join(name);
+
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        // tokio's OpenOptions exposes `mode` inherently on unix.
+        opts.mode(0o600);
+    }
+    let file = opts.open(&path).await?;
+    Ok((file, SpoolFile(path)))
+}
+
+/// The outcome of reading a body whose length was not declared.
+enum Unsized {
+    /// Small enough to keep in memory, so it behaves like any other body.
+    Buffered(Bytes),
+    /// Spilled to disk; `len` is the measured length for `CONTENT_LENGTH`.
+    Spooled {
+        file: SpoolFile,
+        len: u64,
+        prefix: Vec<u8>,
+    },
+    /// Beyond [`MAX_REQUEST_BODY`].
+    TooLarge,
+}
+
+/// Read a body of unknown length, measuring it so CGI can be told the length.
+///
+/// Chunked requests do not declare a length, but `CONTENT_LENGTH` must be sent
+/// before the body. Refusing them with `411` would make Grove the reason a valid
+/// request fails — nginx and Apache spool instead — so Grove spools too, keeping
+/// small bodies in memory and only touching disk when it must.
+async fn read_unsized_body(mut body: Incoming) -> std::io::Result<Unsized> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut buffered: Vec<u8> = Vec::new();
+    let mut spool: Option<(tokio::fs::File, SpoolFile)> = None;
+    let mut total: u64 = 0;
+
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(std::io::Error::other)?;
+        let Some(data) = frame.data_ref() else {
+            continue;
+        };
+        total += data.len() as u64;
+        if total > MAX_REQUEST_BODY {
+            return Ok(Unsized::TooLarge);
+        }
+
+        match &mut spool {
+            Some((file, _)) => file.write_all(data).await?,
+            None if buffered.len() + data.len() > SPOOL_THRESHOLD => {
+                // Crossed the threshold: open the file and flush what we held.
+                let (mut file, guard) = create_spool_file().await?;
+                file.write_all(&buffered).await?;
+                file.write_all(data).await?;
+                spool = Some((file, guard));
+            }
+            None => buffered.extend_from_slice(data),
+        }
+    }
+
+    match spool {
+        None => Ok(Unsized::Buffered(Bytes::from(buffered))),
+        Some((mut file, guard)) => {
+            file.flush().await?;
+            // The prefix is what the timeline keeps; it is already in memory.
+            buffered.truncate(reqlog::MAX_BODY);
+            Ok(Unsized::Spooled {
+                file: guard,
+                len: total,
+                prefix: buffered,
+            })
+        }
+    }
+}
+
+/// Stream a spooled body from disk, deleting the file when the body is dropped.
+async fn spooled_body(file: SpoolFile) -> std::io::Result<BoxBody> {
+    use futures::StreamExt;
+    use tokio::io::AsyncReadExt;
+
+    let handle = tokio::fs::File::open(&file.0).await?;
+    let state = Some((handle, file, vec![0u8; 64 * 1024]));
+
+    let stream = futures::stream::unfold(state, |state| async move {
+        let (mut handle, guard, mut buf) = state?;
+        match handle.read(&mut buf).await {
+            // EOF: dropping `guard` here removes the file.
+            Ok(0) => None,
+            Ok(n) => {
+                let chunk = Bytes::copy_from_slice(&buf[..n]);
+                Some((Ok(chunk), Some((handle, guard, buf))))
+            }
+            Err(e) => Some((Err(e), None)),
+        }
+    })
+    .map(|chunk| chunk.map(hyper::body::Frame::data));
+
+    Ok(BodyExt::boxed(http_body_util::StreamBody::new(stream)))
+}
+
 /// Captures the leading bytes of a request body for the timeline while the rest
 /// streams through untouched.
 ///
@@ -153,22 +322,64 @@ pub async fn handle(
     // request. Only uploads larger than the timeline's own cap stream through —
     // where a truncated capture is already what the timeline would have kept.
     let exact = body.size_hint().exact();
-    let streams = exact.is_some_and(|n| n > reqlog::MAX_BODY as u64);
 
-    let (tap, body_len, forwarded) = if streams {
-        let tap = BodyTap::default();
-        let len = exact.unwrap_or_default();
-        (tap.clone(), len, tapped_body(body, tap))
-    } else {
-        let bytes = body
-            .collect()
-            .await
-            .map(|b| b.to_bytes())
-            .unwrap_or_default();
-        let len = bytes.len() as u64;
+    let buffered = |bytes: Bytes| {
         let tap = BodyTap::default();
         tap.push(&bytes);
+        let len = bytes.len() as u64;
         (tap, len, full(bytes))
+    };
+
+    let (tap, body_len, forwarded) = match exact {
+        // Declared and larger than the timeline could keep: stream it.
+        Some(n) if n > reqlog::MAX_BODY as u64 => {
+            let tap = BodyTap::default();
+            (tap.clone(), n, tapped_body(body, tap))
+        }
+        // Declared and small: unchanged from before.
+        Some(_) => {
+            let bytes = body
+                .collect()
+                .await
+                .map(|b| b.to_bytes())
+                .unwrap_or_default();
+            buffered(bytes)
+        }
+        // No declared length (chunked). CGI needs the number up front, so the
+        // body has to be measured before it can be forwarded.
+        None => match read_unsized_body(body).await {
+            Ok(Unsized::Buffered(bytes)) => buffered(bytes),
+            Ok(Unsized::Spooled { file, len, prefix }) => match spooled_body(file).await {
+                Ok(body) => {
+                    let tap = BodyTap::default();
+                    tap.push(&prefix);
+                    (tap, len, body)
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "reading spooled request body failed");
+                    return Ok(text_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Grove: could not read the spooled request body",
+                    ));
+                }
+            },
+            Ok(Unsized::TooLarge) => {
+                return Ok(text_response(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    &format!(
+                        "Grove: request body exceeds the {} MiB limit",
+                        MAX_REQUEST_BODY / (1024 * 1024)
+                    ),
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "reading request body failed");
+                return Ok(text_response(
+                    StatusCode::BAD_REQUEST,
+                    "Grove: could not read the request body",
+                ));
+            }
+        },
     };
     let req = Request::from_parts(parts, forwarded);
 
