@@ -9,11 +9,11 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::body::Incoming;
+use hyper::body::{Body as _, Incoming};
 use hyper::{Request, Response, StatusCode};
 
 use grove_core::driver::Driver;
-use grove_core::reqlog::{CapturedRequest, Record};
+use grove_core::reqlog::{self, CapturedRequest, Record};
 use grove_core::site::ResolvedSite;
 
 use crate::fastcgi::{self, FpmAddr};
@@ -32,6 +32,49 @@ fn full(bytes: impl Into<Bytes>) -> BoxBody {
     Full::new(bytes.into())
         .map_err(|never| match never {})
         .boxed()
+}
+
+/// Captures the leading bytes of a request body for the timeline while the rest
+/// streams through untouched.
+///
+/// The timeline already caps what it stores at [`reqlog::MAX_BODY`] and flags the
+/// entry as truncated, so keeping only a prefix is the behaviour it expects — it
+/// just used to arrive by buffering everything first and cutting afterwards.
+#[derive(Clone, Default)]
+struct BodyTap(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl BodyTap {
+    fn push(&self, chunk: &[u8]) {
+        let Ok(mut buf) = self.0.lock() else { return };
+        let room = reqlog::MAX_BODY.saturating_sub(buf.len());
+        if room > 0 {
+            buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        }
+    }
+
+    fn take(&self) -> Vec<u8> {
+        self.0.lock().map(|b| b.clone()).unwrap_or_default()
+    }
+}
+
+/// Pass a request body through, copying its first bytes into `tap`.
+fn tapped_body(body: Incoming, tap: BodyTap) -> BoxBody {
+    use futures::StreamExt;
+
+    let stream = futures::stream::unfold(body, |mut body| async move {
+        body.frame().await.map(|frame| (frame, body))
+    })
+    .map(move |frame| {
+        frame
+            .inspect(|frame| {
+                if let Some(data) = frame.data_ref() {
+                    tap.push(data);
+                }
+            })
+            .map_err(std::io::Error::other)
+    });
+
+    BodyExt::boxed(http_body_util::StreamBody::new(stream))
 }
 
 /// Wrap a stream of chunks as a [`BoxBody`], one HTTP chunk per item.
@@ -104,12 +147,30 @@ pub async fn handle(
         .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.to_string(), s.to_string())))
         .collect();
     let (parts, body) = req.into_parts();
-    let req_body = body
-        .collect()
-        .await
-        .map(|b| b.to_bytes())
-        .unwrap_or_default();
-    let req = Request::from_parts(parts, Full::new(req_body.clone()));
+
+    // Bodies the timeline could store in full are still collected, so `replay`
+    // and the curl/.http/Pest export are unchanged for what is almost every
+    // request. Only uploads larger than the timeline's own cap stream through —
+    // where a truncated capture is already what the timeline would have kept.
+    let exact = body.size_hint().exact();
+    let streams = exact.is_some_and(|n| n > reqlog::MAX_BODY as u64);
+
+    let (tap, body_len, forwarded) = if streams {
+        let tap = BodyTap::default();
+        let len = exact.unwrap_or_default();
+        (tap.clone(), len, tapped_body(body, tap))
+    } else {
+        let bytes = body
+            .collect()
+            .await
+            .map(|b| b.to_bytes())
+            .unwrap_or_default();
+        let len = bytes.len() as u64;
+        let tap = BodyTap::default();
+        tap.push(&bytes);
+        (tap, len, full(bytes))
+    };
+    let req = Request::from_parts(parts, forwarded);
 
     // Webhook capture: any request to `/__grove/hooks[/bucket]` is recorded and
     // acknowledged with 200 (never dispatched to the app). Expose it publicly
@@ -131,7 +192,7 @@ pub async fn handle(
             duration_ms: 0,
             https,
             headers: req_headers,
-            body: req_body.to_vec(),
+            body: tap.take(),
         });
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -155,7 +216,7 @@ pub async fn handle(
             duration_ms: start.elapsed().as_millis() as u64,
             https,
             headers: req_headers,
-            body: req_body.to_vec(),
+            body: tap.take(),
         });
         return Ok(text_response(
             StatusCode::NOT_FOUND,
@@ -173,7 +234,7 @@ pub async fn handle(
             duration_ms: start.elapsed().as_millis() as u64,
             https,
             headers: req_headers,
-            body: req_body.to_vec(),
+            body: tap.take(),
         });
         return Ok(text_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -191,7 +252,7 @@ pub async fn handle(
         Ok(text_response(StatusCode::NOT_FOUND, "Grove: not found"))
     } else {
         match site.driver {
-            Driver::Proxy => serve_proxy(req, &site).await,
+            Driver::Proxy => serve_proxy(req, &site, body_len).await,
             Driver::Static => serve_static(req, &site).await,
             d if d.is_php() => {
                 // try_files: serve an existing static file (e.g. built Vite assets
@@ -205,12 +266,12 @@ pub async fn handle(
                         // disclose source (`/index.php` leaked the front controller)
                         // and would break any app that addresses scripts directly,
                         // such as WordPress's wp-login.php and wp-admin/*.php.
-                        serve_php(req, &site, fpm.as_ref(), https, Some(rel)).await
+                        serve_php(req, &site, fpm.as_ref(), https, Some(rel), body_len).await
                     } else {
                         serve_static(req, &site).await
                     }
                 } else {
-                    serve_php(req, &site, fpm.as_ref(), https, None).await
+                    serve_php(req, &site, fpm.as_ref(), https, None, body_len).await
                 }
             }
             _ => serve_static(req, &site).await,
@@ -230,7 +291,7 @@ pub async fn handle(
         duration_ms: start.elapsed().as_millis() as u64,
         https,
         headers: req_headers,
-        body: req_body.to_vec(),
+        body: tap.take(),
     });
     Ok(response)
 }
@@ -281,7 +342,7 @@ pub async fn replay_to(
 
 /// Serve a static file from the document root, with a directory-index fallback.
 async fn serve_static(
-    req: Request<Full<Bytes>>,
+    req: Request<BoxBody>,
     site: &ResolvedSite,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
     let rel = sanitize_path(req.uri().path());
@@ -353,11 +414,12 @@ fn is_php_script(rel: &Path) -> bool {
 /// `direct` names a document-root-relative script to execute on its own;
 /// `None` routes the request through the site's front controller.
 async fn serve_php(
-    req: Request<Full<Bytes>>,
+    req: Request<BoxBody>,
     site: &ResolvedSite,
     fpm: &dyn FpmLocator,
     https: bool,
     direct: Option<PathBuf>,
+    body_len: u64,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
     let Some(addr) = fpm.locate(&site.php) else {
         return Ok(text_response(
@@ -380,21 +442,23 @@ async fn serve_php(
     let script = site.document_root.join(&script_name);
 
     let (parts, body) = req.into_parts();
-    let body_bytes = body.collect().await?.to_bytes();
 
+    // CONTENT_LENGTH must match the bytes actually streamed into STDIN: too high
+    // and PHP-FPM waits forever for bytes that never come, too low and the body
+    // is silently truncated.
     let params = build_fcgi_params(
         &parts,
         site,
         &script,
         &script_name,
         path_info,
-        &body_bytes,
+        body_len,
         https,
     );
     // Streaming: the headers come back as soon as PHP flushes them, and the body
     // follows as chunks. stderr is logged by the FastCGI layer, since once the
     // headers are on the wire it can no longer become a 500.
-    let (headers, body_rx) = fastcgi::request_streaming(&addr, &params, &body_bytes).await?;
+    let (headers, body_rx) = fastcgi::request_streaming(&addr, &params, body).await?;
 
     let mut builder = Response::builder();
     let mut status = StatusCode::OK;
@@ -415,8 +479,9 @@ async fn serve_php(
 
 /// Forward to an upstream dev server (Vite/Node) proxy driver.
 async fn serve_proxy(
-    req: Request<Full<Bytes>>,
+    req: Request<BoxBody>,
     site: &ResolvedSite,
+    body_len: u64,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
     use hyper_util::client::legacy::Client;
     use hyper_util::rt::TokioExecutor;
@@ -428,6 +493,9 @@ async fn serve_proxy(
         ));
     };
 
+    // The upstream sees the body as a stream; the length is only of interest to
+    // the FastCGI path.
+    let _ = body_len;
     let path_q = req
         .uri()
         .path_and_query()
@@ -459,10 +527,12 @@ async fn serve_proxy(
         "x-forwarded-proto",
         hyper::header::HeaderValue::from_static("https"),
     );
-    let body_bytes = body.collect().await?.to_bytes();
-    let forwarded = Request::from_parts(parts, Full::new(body_bytes));
+    // Nothing here needs the length up front — CGI's CONTENT_LENGTH requirement
+    // does not apply to an HTTP upstream — so the body is forwarded as it
+    // arrives, whatever its transfer encoding.
+    let forwarded = Request::from_parts(parts, body);
 
-    let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+    let client: Client<_, BoxBody> = Client::builder(TokioExecutor::new()).build_http();
     let resp = client.request(forwarded).await?;
     let (parts, body) = resp.into_parts();
     // Pass the upstream body through without collecting it, so a Vite HMR stream
@@ -478,7 +548,7 @@ fn build_fcgi_params(
     script: &Path,
     script_name: &Path,
     path_info: bool,
-    body: &[u8],
+    content_length: u64,
     https: bool,
 ) -> HashMap<String, String> {
     let mut p = HashMap::new();
@@ -522,7 +592,7 @@ fn build_fcgi_params(
         "REQUEST_SCHEME".into(),
         if https { "https".into() } else { "http".into() },
     );
-    p.insert("CONTENT_LENGTH".into(), body.len().to_string());
+    p.insert("CONTENT_LENGTH".into(), content_length.to_string());
 
     if let Some(ct) = parts.headers.get(hyper::header::CONTENT_TYPE) {
         if let Ok(v) = ct.to_str() {

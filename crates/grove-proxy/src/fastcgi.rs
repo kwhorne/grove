@@ -23,6 +23,9 @@ const FCGI_KEEP_CONN: u8 = 0; // we open a fresh connection per request
 
 const REQUEST_ID: u16 = 1;
 
+/// FastCGI caps one record's content at 65535 bytes.
+const MAX_RECORD: usize = 65535;
+
 #[derive(Debug, thiserror::Error)]
 pub enum FastCgiError {
     #[error("io: {0}")]
@@ -52,6 +55,9 @@ pub enum FpmAddr {
 
 /// A stream of response body chunks, one per FastCGI `STDOUT` record.
 pub type BodyStream = tokio::sync::mpsc::Receiver<Result<bytes::Bytes, std::io::Error>>;
+
+/// A request body that may be streamed into `STDIN` rather than buffered.
+pub type ReqBody = http_body_util::combinators::BoxBody<bytes::Bytes, std::io::Error>;
 
 /// How many body chunks may sit in the channel before the reader task waits.
 /// Small on purpose: it bounds memory for a fast producer and a slow client,
@@ -90,7 +96,7 @@ pub async fn request(
 pub async fn request_streaming(
     addr: &FpmAddr,
     params: &HashMap<String, String>,
-    body: &[u8],
+    body: ReqBody,
 ) -> Result<(CgiHeaders, BodyStream), FastCgiError> {
     match addr {
         FpmAddr::Unix(path) => {
@@ -105,14 +111,26 @@ pub async fn request_streaming(
 }
 
 async fn exchange_streaming<S>(
-    mut stream: S,
+    stream: S,
     params: &HashMap<String, String>,
-    body: &[u8],
+    body: ReqBody,
 ) -> Result<(CgiHeaders, BodyStream), FastCgiError>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
 {
-    write_request(&mut stream, params, body).await?;
+    // Read and write concurrently on split halves. Writing the whole body before
+    // reading anything would deadlock on a large upload that PHP rejects early:
+    // Grove blocks writing STDIN while PHP blocks writing its response, each
+    // waiting for the other's socket buffer to drain.
+    let (read_half, mut write_half) = tokio::io::split(stream);
+    let mut stream = read_half;
+
+    let head = encode_head(params);
+    tokio::spawn(async move {
+        if let Err(e) = write_stdin_streaming(&mut write_half, &head, body).await {
+            tracing::debug!(error = %e, "writing FastCGI request body failed");
+        }
+    });
 
     // Phase 1: read records until the CGI header block is complete. Only the
     // headers are buffered; the body never is.
@@ -210,18 +228,10 @@ where
     Ok(resp)
 }
 
-/// Write BEGIN_REQUEST + PARAMS + STDIN for one responder request.
-async fn write_request<S>(
-    stream: &mut S,
-    params: &HashMap<String, String>,
-    body: &[u8],
-) -> Result<(), FastCgiError>
-where
-    S: AsyncWriteExt + Unpin,
-{
+/// Encode BEGIN_REQUEST + PARAMS. The body follows as STDIN records.
+fn encode_head(params: &HashMap<String, String>) -> BytesMut {
     let mut out = BytesMut::new();
 
-    // BEGIN_REQUEST
     let mut begin = BytesMut::new();
     begin.put_u16(FCGI_RESPONDER as u16);
     begin.put_u8(FCGI_KEEP_CONN);
@@ -235,17 +245,65 @@ where
     }
     write_record(&mut out, FCGI_PARAMS, &param_buf);
     write_record(&mut out, FCGI_PARAMS, &[]); // empty = end of params
+    out
+}
+
+/// Write BEGIN_REQUEST + PARAMS + a fully buffered STDIN.
+async fn write_request<S>(
+    stream: &mut S,
+    params: &HashMap<String, String>,
+    body: &[u8],
+) -> Result<(), FastCgiError>
+where
+    S: AsyncWriteExt + Unpin,
+{
+    let mut out = encode_head(params);
 
     // STDIN (request body), terminated by an empty STDIN record.
     if !body.is_empty() {
         // FastCGI content length per record is max 65535.
-        for chunk in body.chunks(65535) {
+        for chunk in body.chunks(MAX_RECORD) {
             write_record(&mut out, FCGI_STDIN, chunk);
         }
     }
     write_record(&mut out, FCGI_STDIN, &[]);
 
     stream.write_all(&out).await?;
+    stream.flush().await?;
+    Ok(())
+}
+
+/// Write the head, then stream the body into STDIN records as chunks arrive, so
+/// a large upload is never held in memory.
+async fn write_stdin_streaming<S>(
+    stream: &mut S,
+    head: &[u8],
+    mut body: ReqBody,
+) -> Result<(), FastCgiError>
+where
+    S: AsyncWriteExt + Unpin,
+{
+    use http_body_util::BodyExt;
+
+    stream.write_all(head).await?;
+    stream.flush().await?;
+
+    while let Some(frame) = body.frame().await {
+        let frame = frame.map_err(FastCgiError::Io)?;
+        let Ok(data) = frame.into_data() else {
+            continue; // trailers carry nothing CGI can express
+        };
+        for chunk in data.chunks(MAX_RECORD) {
+            let mut out = BytesMut::new();
+            write_record(&mut out, FCGI_STDIN, chunk);
+            stream.write_all(&out).await?;
+        }
+        stream.flush().await?;
+    }
+
+    let mut end = BytesMut::new();
+    write_record(&mut end, FCGI_STDIN, &[]);
+    stream.write_all(&end).await?;
     stream.flush().await?;
     Ok(())
 }
@@ -452,10 +510,15 @@ mod tests {
         let (go_tx, go_rx) = tokio::sync::oneshot::channel::<()>();
 
         tokio::spawn(async move {
-            let (mut sock, _) = listener.accept().await.unwrap();
-            // Drain the request; its contents don't matter here.
-            let mut scratch = vec![0u8; 8192];
-            let _ = sock.read(&mut scratch).await;
+            let (sock, _) = listener.accept().await.unwrap();
+            // Keep draining the request. Closing a socket that still has unread
+            // data queued makes the OS send RST instead of FIN, which would
+            // surface as a spurious ConnectionReset instead of a clean end.
+            let (mut read_half, mut sock) = tokio::io::split(sock);
+            tokio::spawn(async move {
+                let mut scratch = vec![0u8; 8192];
+                while read_half.read(&mut scratch).await.unwrap_or(0) > 0 {}
+            });
 
             // Headers and the first event share one record, the awkward case.
             send_record(
@@ -471,9 +534,10 @@ mod tests {
             send_record(&mut sock, FCGI_END_REQUEST, &[0u8; 8]).await;
         });
 
-        let (headers, mut rx) = request_streaming(&FpmAddr::Tcp(addr), &HashMap::new(), b"")
-            .await
-            .expect("request starts");
+        let (headers, mut rx) =
+            request_streaming(&FpmAddr::Tcp(addr), &HashMap::new(), empty_body())
+                .await
+                .expect("request starts");
 
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0, "Content-Type");
@@ -491,10 +555,89 @@ mod tests {
         let second = recv_chunk(&mut rx).await.expect("second chunk").unwrap();
         assert_eq!(&second[..], b"data: 2\n\n");
 
+        let extra = recv_chunk(&mut rx).await;
         assert!(
-            recv_chunk(&mut rx).await.is_none(),
-            "END_REQUEST must close the stream"
+            extra.is_none(),
+            "END_REQUEST must close the stream, got {:?}",
+            extra.map(|r| r.map(|b| String::from_utf8_lossy(&b).into_owned()))
         );
+    }
+
+    /// A large body must reach FPM as many STDIN records without ever being held
+    /// whole, and the bytes must arrive intact and in order.
+    #[tokio::test]
+    async fn streams_a_large_request_body_into_stdin_records() {
+        use http_body_util::BodyExt;
+        use tokio::net::TcpListener;
+
+        // Two records' worth plus a remainder, so chunking is actually exercised.
+        let payload: Vec<u8> = (0..(MAX_RECORD * 2 + 1234))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let expected = payload.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<(Vec<u8>, usize)>();
+
+        tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            let (mut read_half, mut write_half) = tokio::io::split(sock);
+
+            // Reassemble STDIN from the records, counting them.
+            let mut stdin = Vec::new();
+            let mut records = 0usize;
+            loop {
+                match read_record(&mut read_half).await {
+                    Ok(Some((FCGI_STDIN, content))) => {
+                        if content.is_empty() {
+                            break; // empty STDIN record ends the body
+                        }
+                        records += 1;
+                        stdin.extend_from_slice(&content);
+                    }
+                    Ok(Some(_)) => {}
+                    Ok(None) | Err(_) => break,
+                }
+            }
+
+            send_record(
+                &mut write_half,
+                FCGI_STDOUT,
+                b"Content-Type: text/plain\r\n\r\nok",
+            )
+            .await;
+            send_record(&mut write_half, FCGI_END_REQUEST, &[0u8; 8]).await;
+            let _ = done_tx.send((stdin, records));
+        });
+
+        let body = http_body_util::Full::new(bytes::Bytes::from(payload))
+            .map_err(|never| match never {})
+            .boxed();
+        let (_headers, mut rx) = request_streaming(&FpmAddr::Tcp(addr), &HashMap::new(), body)
+            .await
+            .expect("request starts");
+        while recv_chunk(&mut rx).await.is_some() {}
+
+        let (stdin, records) = tokio::time::timeout(std::time::Duration::from_secs(10), done_rx)
+            .await
+            .expect("server finishes")
+            .expect("server reports");
+
+        assert_eq!(stdin.len(), expected.len(), "whole body must arrive");
+        assert_eq!(stdin, expected, "bytes must be intact and in order");
+        assert!(
+            records >= 3,
+            "body should be split across records, got {records}"
+        );
+    }
+
+    /// An empty request body, for tests that only exercise the response side.
+    fn empty_body() -> ReqBody {
+        use http_body_util::BodyExt;
+        http_body_util::Empty::<bytes::Bytes>::new()
+            .map_err(|never| match never {})
+            .boxed()
     }
 
     /// Receive one chunk, failing instead of hanging if the client buffers.
@@ -514,9 +657,12 @@ mod tests {
         let (closed_tx, closed_rx) = tokio::sync::oneshot::channel::<()>();
 
         tokio::spawn(async move {
-            let (mut sock, _) = listener.accept().await.unwrap();
-            let mut scratch = vec![0u8; 8192];
-            let _ = sock.read(&mut scratch).await;
+            let (sock, _) = listener.accept().await.unwrap();
+            let (mut read_half, mut sock) = tokio::io::split(sock);
+            tokio::spawn(async move {
+                let mut scratch = vec![0u8; 8192];
+                while read_half.read(&mut scratch).await.unwrap_or(0) > 0 {}
+            });
 
             send_record(&mut sock, FCGI_STDOUT, b"Content-Type: text/plain\r\n\r\n").await;
 
@@ -533,7 +679,7 @@ mod tests {
             let _ = closed_tx.send(());
         });
 
-        let (_headers, rx) = request_streaming(&FpmAddr::Tcp(addr), &HashMap::new(), b"")
+        let (_headers, rx) = request_streaming(&FpmAddr::Tcp(addr), &HashMap::new(), empty_body())
             .await
             .expect("request starts");
 
