@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-07-31
+
+Streaming, and two disclosures found while testing it. Grove's proxy buffered
+every response whole, so a Server-Sent Events endpoint delivered nothing until
+PHP closed the request. Fixing that meant looking closely at the request path,
+which turned up a `.php` file being served as source and a `.env` being served
+at all. If you use `grove share`, both were reachable from outside.
+
+### Fixed
+
+- **Responses stream instead of being buffered whole.** The FastCGI client
+  accumulated every `STDOUT` record and returned only on `END_REQUEST`, and
+  `Full<Bytes>` could not express a stream in any case. Grove now returns the
+  headers as soon as PHP flushes them and forwards each FastCGI record as an
+  HTTP chunk, so SSE arrives live and a large download is no longer held in
+  memory — a 2 GB download used to mean 2 GB of RSS. The proxy driver passes the
+  upstream body through for the same reason, so Vite HMR and Node SSE endpoints
+  behave too. This is deliberately not conditional on `text/event-stream`: the
+  problem was general.
+- **`.php` files are executed, not served as source.** With a PHP driver, any
+  existing `.php` file in the document root was handed back as text — so
+  `/index.php` disclosed the front controller on every PHP site. It also meant
+  WordPress could not work at all, since `wp-login.php` and `wp-admin/*.php`
+  must execute. Such requests now go to PHP-FPM with `SCRIPT_FILENAME` pointing
+  at the file, matching what nginx and Apache do. Matched case-insensitively,
+  because a case-insensitive filesystem resolves `/INDEX.PHP` to the same file.
+- **Dot-prefixed paths are refused.** A plain PHP project's document root is the
+  project root, so `/.env` returned `APP_KEY` in full. Any path with a
+  dot-prefixed component is now a 404, never served and never executed.
+  `.well-known/` is exempt, so ACME HTTP-01 challenges keep working.
+
+### Notes
+
+- `duration_ms` in the request timeline now measures time to headers rather than
+  total time, for streaming responses. A 16-second SSE stream used to log 16 s
+  and now logs a few milliseconds. That is closer to time-to-first-byte than to
+  duration; the Requests panel labels it as duration and will be revisited.
+- Request *bodies* are still buffered whole, so a large upload still costs
+  memory. Fixing that needs a decision about `CONTENT_LENGTH` for chunked
+  requests and about what the request timeline promises when a body is too large
+  to capture, so it is deliberately not in a patch release.
+
 ## [1.3.0] — 2026-07-30
 
 The application decides. Laravel 13.16 moved dev-process configuration out of
