@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] — 2026-07-31
+
+The other direction. 1.3.1 stopped buffering responses; this stops buffering
+uploads. A 400 MB upload used to cost Grove **1.2 GB of RSS** — three copies of
+the body: one to collect it, one cloned for the request that gets forwarded, one
+for the timeline. The same upload now costs about 3 MB.
+
+### Fixed
+
+- **Request bodies stream instead of being buffered whole.** The body was
+  collected at the top of dispatch, before Grove had even resolved which site the
+  request belonged to, so every upload was held in memory in triplicate.
+  - The **proxy driver** (Vite, Node) now forwards the body as it arrives,
+    whatever its transfer encoding. CGI's `CONTENT_LENGTH` requirement does not
+    apply to an HTTP upstream, so there was nothing to decide here.
+  - The **FastCGI path** branches on the body's exact size. When the length is
+    known — essentially every browser form post and API upload — the body is
+    streamed into `STDIN` records with `CONTENT_LENGTH` set from it.
+  - **Chunked requests** declare no length, but CGI must be told one before the
+    body is sent. Grove keeps such a body in memory up to 1 MiB and spills to a
+    private spool file beyond that, measuring it as it goes. Refusing them with
+    `411` would have made Grove the reason a valid request fails; nginx and
+    Apache spool, so Grove spools too. Spool files are `0600` inside a `0700`
+    directory and are removed when the body is dropped — tied to `Drop`, so
+    neither an error nor a client disconnect can leave upload contents on disk.
+  - Bodies small enough for the timeline to store in full are still collected, so
+    `grove replay` and the curl / `.http` / Pest export are byte-for-byte
+    unchanged for what is almost every request. Only uploads larger than the
+    timeline's own 1 MiB cap take the streaming path, where a truncated capture
+    is already what the timeline would have kept.
+- **A request body is now bounded.** Because CGI forces Grove to measure an
+  undeclared body before it can forward anything, an unbounded chunked upload was
+  a disk-filling vector. Bodies beyond 2 GiB are refused with `413`.
+- **FastCGI reads and writes concurrently.** Writing the whole body before
+  reading any response would deadlock on a large upload that PHP rejects early:
+  Grove blocking on `STDIN` while PHP blocks on its response, each waiting for
+  the other's socket buffer to drain. Harmless when bodies were capped by memory;
+  a real hazard now that they are not.
+- **The curl / `.http` / Pest export says when a body was truncated.** The
+  timeline keeps at most 1 MiB of a request body, and the generator ignored the
+  flag that recorded it — so an export of a large upload looked complete and
+  quietly sent a partial body, which then surfaced as a puzzling response from the
+  app rather than as Grove's own limit. Every format now warns first, and a
+  truncated JSON body is reported as truncated instead of as invalid JSON, which
+  had blamed the application for Grove's capture limit.
+- **A truncated capture is recorded as truncated.** The timeline inferred
+  truncation from the stored body being longer than the cap, which stopped being
+  true once bodies were captured *as they streamed*: the capture ends at exactly
+  the cap, indistinguishable from a body that happened to fit. `Record` now
+  carries the fact explicitly.
+
 ## [1.3.1] — 2026-07-31
 
 Streaming, and two disclosures found while testing it. Grove's proxy buffered

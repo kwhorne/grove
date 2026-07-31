@@ -56,6 +56,44 @@ local Unix-socket JSON-RPC.
    FPM pool for the site's PHP version; static → serve files; proxy → forward
    to the upstream dev server.
 
+### Bodies are streamed, not buffered
+
+Neither direction is held whole in memory:
+
+- **Responses** are forwarded as they arrive. Grove returns the headers as soon
+  as PHP flushes them and turns each FastCGI record into an HTTP chunk, so
+  Server-Sent Events and other long-lived streams work, and a large download
+  costs no memory. PHP sets no `Content-Length` on a streamed response, so hyper
+  selects `Transfer-Encoding: chunked`.
+- **Request bodies** are streamed into `STDIN` when the length is known. Because
+  CGI must be told `CONTENT_LENGTH` before the body, a chunked request — which
+  declares no length — is measured first: kept in memory up to 1 MiB, and spilled
+  to a private `0600` spool file beyond that, removed as soon as the body is
+  dropped. Bodies beyond 2 GiB are refused with `413`.
+- Reads and writes on the FastCGI connection proceed concurrently. Writing a
+  whole body before reading any response would deadlock on a large upload that
+  PHP rejects early.
+
+The request timeline stores up to 1 MiB of a request body and flags the entry as
+truncated beyond that, so `grove replay` and the curl / `.http` / Pest export see
+smaller bodies in full.
+
+### What the PHP drivers serve
+
+For a PHP site, an existing file under the document root is served directly (so
+built assets under `/build/` do not go through PHP), with two rules:
+
+- **`.php` and `.phtml` files are executed, never served.** Handing them back as
+  text would disclose source, and WordPress addresses scripts directly —
+  `wp-login.php`, `wp-admin/*.php`. The extension is matched case-insensitively,
+  since a case-insensitive filesystem resolves `/INDEX.PHP` to the same file.
+- **Dot-prefixed paths are refused with 404.** A plain PHP project's document
+  root is the project root, so `/.env` would otherwise be readable. `.well-known/`
+  is exempt so ACME HTTP-01 challenges keep working.
+
+Anything else falls through to the site's front controller, which receives the
+request path as `PATH_INFO`.
+
 ## Beyond native sites
 
 - **Docker / OrbStack** — `grove-daemon` polls the Docker socket and merges
