@@ -210,19 +210,38 @@ async fn spooled_body(file: SpoolFile) -> std::io::Result<BoxBody> {
 /// entry as truncated, so keeping only a prefix is the behaviour it expects — it
 /// just used to arrive by buffering everything first and cutting afterwards.
 #[derive(Clone, Default)]
-struct BodyTap(Arc<std::sync::Mutex<Vec<u8>>>);
+struct BodyTap(Arc<std::sync::Mutex<(Vec<u8>, bool)>>);
 
 impl BodyTap {
     fn push(&self, chunk: &[u8]) {
-        let Ok(mut buf) = self.0.lock() else { return };
+        let Ok(mut state) = self.0.lock() else { return };
+        let (buf, truncated) = &mut *state;
         let room = reqlog::MAX_BODY.saturating_sub(buf.len());
+        if chunk.len() > room {
+            // Remember that bytes were dropped. The timeline cannot infer it: the
+            // capture stops at exactly MAX_BODY, which is indistinguishable from a
+            // body that happened to be that size.
+            *truncated = true;
+        }
         if room > 0 {
             buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
         }
     }
 
+    /// Mark the capture as incomplete without adding bytes — for a body that was
+    /// spooled, where only the in-memory prefix was kept.
+    fn mark_truncated(&self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.1 = true;
+        }
+    }
+
     fn take(&self) -> Vec<u8> {
-        self.0.lock().map(|b| b.clone()).unwrap_or_default()
+        self.0.lock().map(|s| s.0.clone()).unwrap_or_default()
+    }
+
+    fn truncated(&self) -> bool {
+        self.0.lock().map(|s| s.1).unwrap_or(false)
     }
 }
 
@@ -353,6 +372,9 @@ pub async fn handle(
                 Ok(body) => {
                     let tap = BodyTap::default();
                     tap.push(&prefix);
+                    if len > prefix.len() as u64 {
+                        tap.mark_truncated();
+                    }
                     (tap, len, body)
                 }
                 Err(e) => {
@@ -404,6 +426,7 @@ pub async fn handle(
             https,
             headers: req_headers,
             body: tap.take(),
+            body_truncated: tap.truncated(),
         });
         return Ok(Response::builder()
             .status(StatusCode::OK)
@@ -428,6 +451,7 @@ pub async fn handle(
             https,
             headers: req_headers,
             body: tap.take(),
+            body_truncated: tap.truncated(),
         });
         return Ok(text_response(
             StatusCode::NOT_FOUND,
@@ -446,6 +470,7 @@ pub async fn handle(
             https,
             headers: req_headers,
             body: tap.take(),
+            body_truncated: tap.truncated(),
         });
         return Ok(text_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -503,6 +528,7 @@ pub async fn handle(
         https,
         headers: req_headers,
         body: tap.take(),
+        body_truncated: tap.truncated(),
     });
     Ok(response)
 }

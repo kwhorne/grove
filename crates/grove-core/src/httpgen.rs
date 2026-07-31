@@ -38,6 +38,31 @@ fn url(d: &RequestDetail) -> String {
     format!("{scheme}://{}{}", d.host, d.path)
 }
 
+/// Why a generated artifact may not reproduce the original request.
+///
+/// The timeline stores only the first [`crate::reqlog::MAX_BODY`] bytes of a
+/// request body. Without saying so, an export of a large upload looks complete
+/// and silently sends a partial body — which is worse than refusing to generate
+/// one, because the failure surfaces as a puzzling response from the app.
+fn truncation_lines() -> [String; 2] {
+    let mib = crate::reqlog::MAX_BODY / (1024 * 1024);
+    [
+        format!("WARNING: Grove captured only the first {mib} MiB of this request body,"),
+        "so the body below is incomplete and this will not reproduce the original request.".into(),
+    ]
+}
+
+/// Prefix `out` with the truncation warning, one line per `comment` marker.
+fn note_if_truncated(d: &RequestDetail, comment: &str) -> String {
+    if !d.body_truncated {
+        return String::new();
+    }
+    truncation_lines()
+        .iter()
+        .map(|line| format!("{comment} {line}\n"))
+        .collect()
+}
+
 pub fn generate(d: &RequestDetail, fmt: TestFormat) -> String {
     match fmt {
         TestFormat::Curl => curl(d),
@@ -47,7 +72,8 @@ pub fn generate(d: &RequestDetail, fmt: TestFormat) -> String {
 }
 
 fn curl(d: &RequestDetail) -> String {
-    let mut out = format!("curl -X {} '{}'", d.method, url(d));
+    let mut out = note_if_truncated(d, "#");
+    out.push_str(&format!("curl -X {} '{}'", d.method, url(d)));
     for (k, v) in &d.headers {
         if skip_header(k) {
             continue;
@@ -65,7 +91,8 @@ fn curl(d: &RequestDetail) -> String {
 }
 
 fn http_file(d: &RequestDetail) -> String {
-    let mut out = format!("{} {}\n", d.method, url(d));
+    let mut out = note_if_truncated(d, "#");
+    out.push_str(&format!("{} {}\n", d.method, url(d)));
     for (k, v) in &d.headers {
         if skip_header(k) {
             continue;
@@ -99,6 +126,18 @@ fn pest(d: &RequestDetail) -> String {
 
     let body_arg = if d.body.is_empty() || method == "get" {
         String::new()
+    } else if d.body_truncated {
+        // Don't try to parse a prefix: a truncated JSON body always fails to
+        // parse, and reporting that as "not valid JSON" would blame the app.
+        format!(
+            ", [\n        // truncated body ({} bytes captured):\n        // {}\n    ]",
+            d.body.len(),
+            d.body
+                .chars()
+                .take(200)
+                .collect::<String>()
+                .replace('\n', " ")
+        )
     } else if is_json {
         match serde_json::from_str::<serde_json::Value>(&d.body) {
             Ok(v) => format!(", {}", json_to_php(&v, 1)),
@@ -115,14 +154,15 @@ fn pest(d: &RequestDetail) -> String {
     };
 
     let title = format!("{} {}", d.method, path);
+    let note = note_if_truncated(d, "//");
     if helper == "json" {
         return format!(
-            "<?php\n\nit('{title} responds', function () {{\n    $response = $this->json('{}', '{path}'{body_arg});\n\n    $response->assertStatus({});\n}});\n",
+            "<?php\n\n{note}it('{title} responds', function () {{\n    $response = $this->json('{}', '{path}'{body_arg});\n\n    $response->assertStatus({});\n}});\n",
             d.method, d.status
         );
     }
     format!(
-        "<?php\n\nit('{title} responds', function () {{\n    $response = $this->{helper}('{path}'{body_arg});\n\n    $response->assertStatus({});\n}});\n",
+        "<?php\n\n{note}it('{title} responds', function () {{\n    $response = $this->{helper}('{path}'{body_arg});\n\n    $response->assertStatus({});\n}});\n",
         d.status
     )
 }
@@ -185,6 +225,53 @@ mod tests {
             body: r#"{"sku":"A1","qty":2}"#.into(),
             body_truncated: false,
         }
+    }
+
+    /// A truncated body must be flagged in every format. Silently emitting a
+    /// partial body produces an artifact that looks right and reproduces nothing,
+    /// and the failure then looks like the app's fault.
+    #[test]
+    fn every_format_flags_a_truncated_body() {
+        let mut d = detail();
+        d.body_truncated = true;
+
+        let c = curl(&d);
+        assert!(c.starts_with("# WARNING:"), "curl warns first: {c}");
+        assert!(c.contains("will not reproduce"));
+
+        let h = http_file(&d);
+        assert!(h.starts_with("# WARNING:"), "http file warns first: {h}");
+
+        let p = pest(&d);
+        assert!(p.contains("// WARNING:"), "pest warns: {p}");
+        // The warning must sit inside the PHP file, not before the opening tag.
+        assert!(p.starts_with("<?php"));
+        assert!(
+            p.find("// WARNING:") < p.find("it('"),
+            "warning belongs above the test: {p}"
+        );
+    }
+
+    /// Nothing changes for a body captured in full.
+    #[test]
+    fn complete_bodies_carry_no_warning() {
+        let d = detail();
+        assert!(!curl(&d).contains("WARNING"));
+        assert!(!http_file(&d).contains("WARNING"));
+        assert!(!pest(&d).contains("WARNING"));
+    }
+
+    /// A truncated JSON body always fails to parse. Reporting that as invalid
+    /// JSON would blame the application for Grove's own capture limit.
+    #[test]
+    fn truncated_json_is_not_called_invalid() {
+        let mut d = detail();
+        d.body = r#"{"sku":"A1","qty":"#.into(); // cut mid-value
+        d.body_truncated = true;
+
+        let p = pest(&d);
+        assert!(p.contains("truncated body"), "{p}");
+        assert!(!p.contains("not valid JSON"), "must not blame the app: {p}");
     }
 
     #[test]

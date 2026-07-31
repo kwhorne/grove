@@ -77,6 +77,13 @@ pub struct Record<'a> {
     pub https: bool,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// Set when the caller already dropped part of the body.
+    ///
+    /// A streamed body is captured up to [`MAX_BODY`] as it passes, so what
+    /// arrives here is *exactly* that long — which the length check in
+    /// [`RequestLog::record`] cannot tell apart from a body that happened to fit.
+    /// The caller has to say.
+    pub body_truncated: bool,
 }
 
 struct Captured {
@@ -112,7 +119,7 @@ impl RequestLog {
         let (body, truncated) = if rec.body.len() > MAX_BODY {
             (rec.body[..MAX_BODY].to_vec(), true)
         } else {
-            (rec.body, false)
+            (rec.body, rec.body_truncated)
         };
         let entry = RequestEntry {
             id,
@@ -221,6 +228,7 @@ mod tests {
             https: true,
             headers: vec![],
             body: vec![],
+            body_truncated: false,
         }
     }
 
@@ -248,6 +256,52 @@ mod tests {
         assert!(log.entry(9999).is_none());
     }
 
+    /// Regression: a body captured *as it streamed* stops at exactly `MAX_BODY`,
+    /// so the length check alone cannot tell it apart from a body that fit. The
+    /// caller's flag has to survive, or every export of a large upload silently
+    /// claims to be complete.
+    #[test]
+    fn caller_reported_truncation_is_kept() {
+        let log = RequestLog::new(2);
+        let exactly_at_cap = vec![b'x'; MAX_BODY];
+        let id = log.record(Record {
+            site: "a",
+            host: "h.test",
+            method: "POST",
+            path: "/",
+            status: 200,
+            duration_ms: 1,
+            https: false,
+            headers: vec![],
+            body: exactly_at_cap,
+            body_truncated: true,
+        });
+        let d = log.detail(id).unwrap();
+        assert!(
+            d.body_truncated,
+            "a capture that stopped at the cap is still truncated"
+        );
+        assert_eq!(d.body.len(), MAX_BODY);
+    }
+
+    #[test]
+    fn a_body_that_fits_is_not_truncated() {
+        let log = RequestLog::new(2);
+        let id = log.record(Record {
+            site: "a",
+            host: "h.test",
+            method: "POST",
+            path: "/",
+            status: 200,
+            duration_ms: 1,
+            https: false,
+            headers: vec![],
+            body: b"small".to_vec(),
+            body_truncated: false,
+        });
+        assert!(!log.detail(id).unwrap().body_truncated);
+    }
+
     #[test]
     fn body_is_bounded() {
         let log = RequestLog::new(2);
@@ -262,6 +316,7 @@ mod tests {
             https: false,
             headers: vec![],
             body: big,
+            body_truncated: false,
         });
         let d = log.detail(id).unwrap();
         assert!(d.body_truncated);
