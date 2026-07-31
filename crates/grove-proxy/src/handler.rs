@@ -186,22 +186,35 @@ pub async fn handle(
 
     tracing::debug!(host, site = %site.name, driver = %site.driver, %peer, "dispatch");
 
-    let result = match site.driver {
-        Driver::Proxy => serve_proxy(req, &site).await,
-        Driver::Static => serve_static(req, &site).await,
-        d if d.is_php() => {
-            // try_files: serve an existing static file (e.g. built Vite assets
-            // under /build/) directly, otherwise hand off to the front
-            // controller (index.php).
-            let rel = sanitize_path(req.uri().path());
-            let candidate = site.document_root.join(&rel);
-            if !rel.as_os_str().is_empty() && candidate.is_file() {
-                serve_static(req, &site).await
-            } else {
-                serve_php(req, &site, fpm.as_ref(), https).await
+    let result = if is_hidden_path(&sanitize_path(req.uri().path())) {
+        // `.env`, `.git/config`, editor backups: never served, never executed.
+        Ok(text_response(StatusCode::NOT_FOUND, "Grove: not found"))
+    } else {
+        match site.driver {
+            Driver::Proxy => serve_proxy(req, &site).await,
+            Driver::Static => serve_static(req, &site).await,
+            d if d.is_php() => {
+                // try_files: serve an existing static file (e.g. built Vite assets
+                // under /build/) directly, otherwise hand off to the front
+                // controller (index.php).
+                let rel = sanitize_path(req.uri().path());
+                let candidate = site.document_root.join(&rel);
+                if !rel.as_os_str().is_empty() && candidate.is_file() {
+                    if is_php_script(&rel) {
+                        // Execute it, never serve it. Reading it out as text would
+                        // disclose source (`/index.php` leaked the front controller)
+                        // and would break any app that addresses scripts directly,
+                        // such as WordPress's wp-login.php and wp-admin/*.php.
+                        serve_php(req, &site, fpm.as_ref(), https, Some(rel)).await
+                    } else {
+                        serve_static(req, &site).await
+                    }
+                } else {
+                    serve_php(req, &site, fpm.as_ref(), https, None).await
+                }
             }
+            _ => serve_static(req, &site).await,
         }
-        _ => serve_static(req, &site).await,
     };
 
     let response = result.unwrap_or_else(|e| {
@@ -300,11 +313,51 @@ async fn serve_static(
 }
 
 /// Dispatch a request to PHP-FPM over FastCGI.
+/// True for paths containing a dot-prefixed component, which must never be
+/// served or executed.
+///
+/// A plain PHP project's document root *is* the project root, so `/.env` handed
+/// back `APP_KEY` in full — and publicly, for a site exposed with `grove share`.
+///
+/// `.well-known/` is deliberately exempt: it is a standard public path, and
+/// blocking it would break ACME HTTP-01 challenges.
+fn is_hidden_path(rel: &Path) -> bool {
+    if rel
+        .components()
+        .next()
+        .is_some_and(|first| first.as_os_str() == ".well-known")
+    {
+        return false;
+    }
+    rel.components()
+        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+}
+
+/// True for paths PHP-FPM must execute rather than Grove serve as bytes.
+///
+/// Compared case-insensitively: macOS filesystems are case-insensitive by
+/// default, so `/INDEX.PHP` resolves to the same file and must not slip through
+/// as a static download.
+fn is_php_script(rel: &Path) -> bool {
+    rel.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            let e = e.to_ascii_lowercase();
+            e == "php" || e == "phtml"
+        })
+        .unwrap_or(false)
+}
+
+/// Serve a request through PHP-FPM.
+///
+/// `direct` names a document-root-relative script to execute on its own;
+/// `None` routes the request through the site's front controller.
 async fn serve_php(
     req: Request<Full<Bytes>>,
     site: &ResolvedSite,
     fpm: &dyn FpmLocator,
     https: bool,
+    direct: Option<PathBuf>,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
     let Some(addr) = fpm.locate(&site.php) else {
         return Ok(text_response(
@@ -317,12 +370,27 @@ async fn serve_php(
         .front_controller
         .clone()
         .unwrap_or_else(|| PathBuf::from("index.php"));
-    let script = site.document_root.join(&front);
+    // A directly addressed script is its own SCRIPT_NAME; the front controller
+    // additionally receives the request path as PATH_INFO, which is how a router
+    // sees the URL it should dispatch.
+    let (script_name, path_info) = match &direct {
+        Some(rel) => (rel.clone(), false),
+        None => (front, true),
+    };
+    let script = site.document_root.join(&script_name);
 
     let (parts, body) = req.into_parts();
     let body_bytes = body.collect().await?.to_bytes();
 
-    let params = build_fcgi_params(&parts, site, &script, &front, &body_bytes, https);
+    let params = build_fcgi_params(
+        &parts,
+        site,
+        &script,
+        &script_name,
+        path_info,
+        &body_bytes,
+        https,
+    );
     // Streaming: the headers come back as soon as PHP flushes them, and the body
     // follows as chunks. stderr is logged by the FastCGI layer, since once the
     // headers are on the wire it can no longer become a 500.
@@ -408,7 +476,8 @@ fn build_fcgi_params(
     parts: &hyper::http::request::Parts,
     site: &ResolvedSite,
     script: &Path,
-    front: &Path,
+    script_name: &Path,
+    path_info: bool,
     body: &[u8],
     https: bool,
 ) -> HashMap<String, String> {
@@ -421,7 +490,7 @@ fn build_fcgi_params(
     p.insert("SERVER_SOFTWARE".into(), "Grove".into());
     p.insert("REQUEST_METHOD".into(), parts.method.to_string());
     p.insert("SCRIPT_FILENAME".into(), script.to_string_lossy().into());
-    p.insert("SCRIPT_NAME".into(), format!("/{}", front.display()));
+    p.insert("SCRIPT_NAME".into(), format!("/{}", script_name.display()));
     p.insert(
         "DOCUMENT_ROOT".into(),
         site.document_root.to_string_lossy().into(),
@@ -433,7 +502,11 @@ fn build_fcgi_params(
             format!("{path}?{query}")
         }
     });
-    p.insert("PATH_INFO".into(), path.clone());
+    // Only meaningful for a front controller. Setting it for a directly executed
+    // script would claim the script's own path is extra path information.
+    if path_info {
+        p.insert("PATH_INFO".into(), path.clone());
+    }
     p.insert("QUERY_STRING".into(), query);
     p.insert("SERVER_NAME".into(), site.hostname.clone());
     p.insert(
@@ -513,6 +586,63 @@ fn text_response(status: StatusCode, msg: &str) -> Response<BoxBody> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_paths_are_refused() {
+        // Regression: a plain PHP project's document root is the project root, so
+        // these returned real secrets in full.
+        assert!(is_hidden_path(Path::new(".env")));
+        assert!(is_hidden_path(Path::new(".env.production")));
+        assert!(is_hidden_path(Path::new(".git/config")));
+        assert!(is_hidden_path(Path::new("storage/.env.backup")));
+        assert!(is_hidden_path(Path::new("nested/.ssh/id_rsa")));
+    }
+
+    #[test]
+    fn well_known_stays_reachable() {
+        // ACME HTTP-01 would break otherwise.
+        assert!(!is_hidden_path(Path::new(
+            ".well-known/acme-challenge/token"
+        )));
+        assert!(!is_hidden_path(Path::new(".well-known/security.txt")));
+        // Only as the *first* component, so this is still hidden.
+        assert!(is_hidden_path(Path::new("public/.well-known/x")));
+    }
+
+    #[test]
+    fn ordinary_paths_are_unaffected() {
+        assert!(!is_hidden_path(Path::new("")));
+        assert!(!is_hidden_path(Path::new("index.php")));
+        assert!(!is_hidden_path(Path::new("build/app.css")));
+        assert!(!is_hidden_path(Path::new("img/logo.svg")));
+    }
+
+    #[test]
+    fn php_scripts_are_executed_not_served() {
+        // Regression: `/index.php` used to be served as text, disclosing the
+        // front controller's source on every PHP site — and reachable publicly
+        // through `grove share`.
+        assert!(is_php_script(Path::new("index.php")));
+        assert!(is_php_script(Path::new("wp-login.php")));
+        assert!(is_php_script(Path::new("wp-admin/admin-ajax.php")));
+        assert!(is_php_script(Path::new("legacy/install.phtml")));
+        // Case-insensitive filesystems resolve these to the same file.
+        assert!(is_php_script(Path::new("INDEX.PHP")));
+        assert!(is_php_script(Path::new("Index.Php")));
+    }
+
+    #[test]
+    fn assets_are_still_served_statically() {
+        assert!(!is_php_script(Path::new("build/app.css")));
+        assert!(!is_php_script(Path::new("img/logo.svg")));
+        assert!(!is_php_script(Path::new("favicon.ico")));
+        // No extension at all, e.g. a pretty URL that happens to exist as a file.
+        assert!(!is_php_script(Path::new("robots")));
+        // Not an executable script: the extension is what matters, and these
+        // must not be handed to FPM.
+        assert!(!is_php_script(Path::new("archive.phar")));
+        assert!(!is_php_script(Path::new("notes.php.txt")));
+    }
 
     #[test]
     fn sanitize_blocks_traversal() {
