@@ -19,7 +19,33 @@ use grove_core::site::ResolvedSite;
 use crate::fastcgi::{self, FpmAddr};
 use crate::state::SharedState;
 
-type BoxBody = Full<Bytes>;
+/// A response body that may be either one complete buffer or a live stream.
+///
+/// `Full<Bytes>` cannot represent a stream, so every response had to be fully
+/// buffered before a single byte reached the client — which made Server-Sent
+/// Events arrive all at once when PHP closed the request, and held a large
+/// download entirely in memory.
+type BoxBody = http_body_util::combinators::BoxBody<Bytes, std::io::Error>;
+
+/// Wrap a complete buffer as a [`BoxBody`].
+fn full(bytes: impl Into<Bytes>) -> BoxBody {
+    Full::new(bytes.into())
+        .map_err(|never| match never {})
+        .boxed()
+}
+
+/// Wrap a stream of chunks as a [`BoxBody`], one HTTP chunk per item.
+fn streaming(rx: fastcgi::BodyStream) -> BoxBody {
+    use futures::StreamExt;
+
+    let stream = futures::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|chunk| (chunk, rx))
+    })
+    .map(|chunk| chunk.map(hyper::body::Frame::data));
+
+    // Disambiguated: `boxed` exists on both BodyExt and StreamExt.
+    BodyExt::boxed(http_body_util::StreamBody::new(stream))
+}
 
 /// Locate the FastCGI pool for a given PHP version. Implemented by grove-runtime.
 pub trait FpmLocator: Send + Sync {
@@ -110,7 +136,7 @@ pub async fn handle(
         return Ok(Response::builder()
             .status(StatusCode::OK)
             .header(hyper::header::CONTENT_TYPE, "application/json")
-            .body(Full::new(Bytes::from_static(b"{\"grove\":\"captured\"}")))
+            .body(full(Bytes::from_static(b"{\"grove\":\"captured\"}")))
             .expect("static hook ack"));
     }
 
@@ -269,7 +295,7 @@ async fn serve_static(
     let resp = Response::builder()
         .status(StatusCode::OK)
         .header(hyper::header::CONTENT_TYPE, mime)
-        .body(Full::new(Bytes::from(bytes)))?;
+        .body(full(bytes))?;
     Ok(resp)
 }
 
@@ -297,13 +323,11 @@ async fn serve_php(
     let body_bytes = body.collect().await?.to_bytes();
 
     let params = build_fcgi_params(&parts, site, &script, &front, &body_bytes, https);
-    let resp = fastcgi::request(&addr, &params, &body_bytes).await?;
+    // Streaming: the headers come back as soon as PHP flushes them, and the body
+    // follows as chunks. stderr is logged by the FastCGI layer, since once the
+    // headers are on the wire it can no longer become a 500.
+    let (headers, body_rx) = fastcgi::request_streaming(&addr, &params, &body_bytes).await?;
 
-    if !resp.stderr.is_empty() {
-        tracing::warn!(site = %site.name, stderr = %String::from_utf8_lossy(&resp.stderr));
-    }
-
-    let (headers, php_body) = fastcgi::split_headers(&resp.stdout);
     let mut builder = Response::builder();
     let mut status = StatusCode::OK;
     for (name, value) in &headers {
@@ -315,9 +339,9 @@ async fn serve_php(
         }
         builder = builder.header(name, value);
     }
-    let resp = builder
-        .status(status)
-        .body(Full::new(Bytes::from(php_body)))?;
+    // PHP sets no Content-Length on a streamed response, so hyper picks
+    // Transfer-Encoding: chunked by itself.
+    let resp = builder.status(status).body(streaming(body_rx))?;
     Ok(resp)
 }
 
@@ -373,8 +397,10 @@ async fn serve_proxy(
     let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
     let resp = client.request(forwarded).await?;
     let (parts, body) = resp.into_parts();
-    let collected = body.collect().await?.to_bytes();
-    Ok(Response::from_parts(parts, Full::new(collected)))
+    // Pass the upstream body through without collecting it, so a Vite HMR stream
+    // or a Node SSE endpoint reaches the client as it arrives.
+    let body = body.map_err(std::io::Error::other).boxed();
+    Ok(Response::from_parts(parts, body))
 }
 
 /// Build the CGI/1.1 environment FastCGI expects.
@@ -480,7 +506,7 @@ fn text_response(status: StatusCode, msg: &str) -> Response<BoxBody> {
     Response::builder()
         .status(status)
         .header(hyper::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(Full::new(Bytes::from(msg.to_string())))
+        .body(full(msg.to_string()))
         .expect("static response builds")
 }
 
