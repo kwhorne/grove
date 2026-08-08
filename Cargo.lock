@@ -2354,6 +2354,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "once_cell",
  "rustls",
  "rustls-pemfile",
  "thiserror 1.0.69",

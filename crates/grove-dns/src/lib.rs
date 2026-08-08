@@ -24,6 +24,15 @@ pub enum DnsError {
     Proto(#[from] hickory_proto::error::ProtoError),
 }
 
+/// How long a resolver may cache a `*.<tld>` answer.
+///
+/// A TTL of `0` forbids caching, so the system resolver asked Grove again for
+/// every single connection — and on macOS `mDNSResponder` sits in that path,
+/// adding a round trip to the first byte of every request. The answer is always
+/// loopback and never changes, so there is nothing to keep fresh; sites
+/// added or removed do not change what this returns.
+const RECORD_TTL: u32 = 300;
+
 /// Handler that maps every name ending in `.<tld>` to loopback.
 #[derive(Clone)]
 pub struct GroveResolver {
@@ -40,7 +49,13 @@ impl GroveResolver {
     fn owns(&self, name: &Name) -> bool {
         let lower = name.to_lowercase().to_utf8();
         let host = lower.trim_end_matches('.');
-        host == self.tld || host.ends_with(&format!(".{}", self.tld))
+        // No `format!` here: this runs on every DNS query, and the allocation was
+        // only ever needed to prepend a dot.
+        match host.strip_suffix(&self.tld) {
+            Some("") => true,
+            Some(rest) => rest.ends_with('.'),
+            None => false,
+        }
     }
 }
 
@@ -70,12 +85,12 @@ impl RequestHandler for GroveResolver {
         let records: Vec<Record> = match query.query_type() {
             RecordType::A => vec![Record::from_rdata(
                 fqdn.clone(),
-                0,
+                RECORD_TTL,
                 RData::A(A(Ipv4Addr::LOCALHOST)),
             )],
             RecordType::AAAA => vec![Record::from_rdata(
                 fqdn.clone(),
-                0,
+                RECORD_TTL,
                 RData::AAAA(AAAA(Ipv6Addr::LOCALHOST)),
             )],
             // For everything else (e.g. MX, TXT) answer with an empty NOERROR so
@@ -139,5 +154,10 @@ mod tests {
         assert!(r.owns(&Name::from_str("api.myapp.test.").unwrap()));
         assert!(!r.owns(&Name::from_str("example.com.").unwrap()));
         assert!(!r.owns(&Name::from_str("nottest.").unwrap()));
+        // The allocation-free suffix check must not accept a name that merely
+        // ends in the TLD's letters.
+        assert!(!r.owns(&Name::from_str("mytest.").unwrap()));
+        assert!(!r.owns(&Name::from_str("foo.latest.").unwrap()));
+        assert!(r.owns(&Name::from_str("MyApp.TEST.").unwrap()));
     }
 }

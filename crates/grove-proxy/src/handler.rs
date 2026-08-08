@@ -283,6 +283,33 @@ pub trait FpmLocator: Send + Sync {
     fn locate(&self, php_version: &str) -> Option<FpmAddr>;
 }
 
+/// The one HTTP client Grove uses to talk to upstreams (`Driver::Proxy`) and to
+/// itself when replaying.
+///
+/// Built once, on purpose. A `Client` *is* the connection pool, so constructing
+/// one per request threw the pool away every time: every proxied request paid a
+/// fresh TCP handshake, and a Vite dev server saw a new connection per asset
+/// instead of a handful of kept-alive ones. On a page with a hundred module
+/// requests that is a hundred avoidable handshakes.
+fn shared_client() -> &'static hyper_util::client::legacy::Client<
+    hyper_util::client::legacy::connect::HttpConnector,
+    BoxBody,
+> {
+    use hyper_util::client::legacy::{connect::HttpConnector, Client};
+    use hyper_util::rt::TokioExecutor;
+
+    static CLIENT: once_cell::sync::Lazy<Client<HttpConnector, BoxBody>> =
+        once_cell::sync::Lazy::new(|| {
+            let mut connector = HttpConnector::new();
+            connector.set_nodelay(true);
+            Client::builder(TokioExecutor::new())
+                .pool_idle_timeout(std::time::Duration::from_secs(30))
+                .pool_max_idle_per_host(32)
+                .build(connector)
+        });
+    &CLIENT
+}
+
 /// Handle one incoming request end to end. Never panics — every error path
 /// becomes an HTTP status so one bad site can't take down the daemon.
 pub async fn handle(
@@ -496,18 +523,24 @@ pub async fn handle(
                 // controller (index.php).
                 let rel = sanitize_path(req.uri().path());
                 let candidate = site.document_root.join(&rel);
-                if !rel.as_os_str().is_empty() && candidate.is_file() {
+                // Async stat: `Path::is_file` blocks the runtime worker, and this
+                // one runs on *every* request to a PHP site.
+                let is_file = !rel.as_os_str().is_empty()
+                    && tokio::fs::metadata(&candidate)
+                        .await
+                        .is_ok_and(|m| m.is_file());
+                if is_file {
                     if is_php_script(&rel) {
                         // Execute it, never serve it. Reading it out as text would
                         // disclose source (`/index.php` leaked the front controller)
                         // and would break any app that addresses scripts directly,
                         // such as WordPress's wp-login.php and wp-admin/*.php.
-                        serve_php(req, &site, fpm.as_ref(), https, Some(rel), body_len).await
+                        serve_php(req, &site, &fpm, https, Some(rel), body_len).await
                     } else {
                         serve_static(req, &site).await
                     }
                 } else {
-                    serve_php(req, &site, fpm.as_ref(), https, None, body_len).await
+                    serve_php(req, &site, &fpm, https, None, body_len).await
                 }
             }
             _ => serve_static(req, &site).await,
@@ -537,9 +570,6 @@ pub async fn handle(
 /// the full proxy pipeline again (and is logged as a fresh entry). Routing is by
 /// the original `Host` header. Returns `(status, duration_ms)`.
 pub async fn replay(http_port: u16, cap: &CapturedRequest) -> anyhow::Result<(u16, u64)> {
-    use hyper_util::client::legacy::Client;
-    use hyper_util::rt::TokioExecutor;
-
     let uri: hyper::Uri = format!("http://127.0.0.1:{}{}", http_port, cap.path).parse()?;
     let mut builder = Request::builder().method(cap.method.as_str()).uri(uri);
     for (k, v) in &cap.headers {
@@ -552,11 +582,10 @@ pub async fn replay(http_port: u16, cap: &CapturedRequest) -> anyhow::Result<(u1
     if cap.https {
         builder = builder.header("x-forwarded-proto", "https");
     }
-    let request = builder.body(Full::new(Bytes::from(cap.body.clone())))?;
+    let request = builder.body(full(cap.body.clone()))?;
 
-    let client: Client<_, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
     let start = std::time::Instant::now();
-    let resp = client.request(request).await?;
+    let resp = shared_client().request(request).await?;
     Ok((resp.status().as_u16(), start.elapsed().as_millis() as u64))
 }
 
@@ -577,6 +606,23 @@ pub async fn replay_to(
     replay(http_port, &c).await
 }
 
+/// Above this, a static file is streamed from disk instead of read into memory.
+///
+/// A 200 MB video or sourcemap in `public/` used to be held in RAM in full,
+/// per concurrent request, before the first byte reached the browser.
+const STATIC_STREAM_THRESHOLD: u64 = 256 * 1024;
+
+/// A weak validator built from the facts a `stat` already gives us: size and
+/// mtime. Cheap (no hashing, no second read) and exactly what nginx does.
+fn etag_for(meta: &std::fs::Metadata) -> Option<String> {
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some(format!("\"{:x}-{:x}\"", mtime.as_secs(), meta.len()))
+}
+
 /// Serve a static file from the document root, with a directory-index fallback.
 async fn serve_static(
     req: Request<BoxBody>,
@@ -585,29 +631,92 @@ async fn serve_static(
     let rel = sanitize_path(req.uri().path());
     let mut target = site.document_root.join(&rel);
 
-    if target.is_dir() {
+    // `tokio::fs::metadata`, not `Path::is_dir`/`exists`: those are blocking
+    // syscalls issued straight from the async task, so a cold cache or a slow
+    // volume (a network share, a Docker bind mount) stalls the whole runtime
+    // worker and with it every other site's requests.
+    let mut meta = tokio::fs::metadata(&target).await.ok();
+    if meta.as_ref().is_some_and(|m| m.is_dir()) {
         target = target.join("index.html");
+        meta = tokio::fs::metadata(&target).await.ok();
     }
-    if !target.exists() {
-        // SPA-style fallback to a root index if present.
-        let fallback = site.document_root.join("index.html");
-        if fallback.exists() {
-            target = fallback;
-        } else {
-            return Ok(text_response(
-                StatusCode::NOT_FOUND,
-                "Grove: file not found",
-            ));
+    let meta = match meta {
+        Some(m) => m,
+        None => {
+            // SPA-style fallback to a root index if present.
+            let fallback = site.document_root.join("index.html");
+            match tokio::fs::metadata(&fallback).await {
+                Ok(m) => {
+                    target = fallback;
+                    m
+                }
+                Err(_) => {
+                    return Ok(text_response(
+                        StatusCode::NOT_FOUND,
+                        "Grove: file not found",
+                    ))
+                }
+            }
+        }
+    };
+
+    let etag = etag_for(&meta);
+    // A dev site reloads the same unchanged assets constantly. Without a
+    // validator the browser cannot ask "has this changed?", so every reload
+    // re-read and re-sent every byte; with one, unchanged files cost a 304.
+    if let Some(etag) = &etag {
+        let matches = req
+            .headers()
+            .get(hyper::header::IF_NONE_MATCH)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.split(',').any(|c| c.trim() == etag.as_str()));
+        if matches {
+            return Ok(Response::builder()
+                .status(StatusCode::NOT_MODIFIED)
+                .header(hyper::header::ETAG, etag)
+                .body(full(Bytes::new()))?);
         }
     }
 
-    let bytes = tokio::fs::read(&target).await?;
-    let mime = mime_for(&target);
-    let resp = Response::builder()
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
-        .header(hyper::header::CONTENT_TYPE, mime)
-        .body(full(bytes))?;
-    Ok(resp)
+        .header(hyper::header::CONTENT_TYPE, mime_for(&target))
+        .header(hyper::header::CONTENT_LENGTH, meta.len())
+        // Local development: never let a stale asset outlive an edit. The
+        // validator above is what makes repeat loads cheap, not a max-age.
+        .header(hyper::header::CACHE_CONTROL, "no-cache");
+    if let Some(etag) = etag {
+        builder = builder.header(hyper::header::ETAG, etag);
+    }
+
+    if meta.len() > STATIC_STREAM_THRESHOLD {
+        let file = tokio::fs::File::open(&target).await?;
+        return Ok(builder.body(file_body(file))?);
+    }
+
+    let bytes = tokio::fs::read(&target).await?;
+    Ok(builder.body(full(bytes))?)
+}
+
+/// Stream a file as a response body in fixed-size chunks.
+fn file_body(file: tokio::fs::File) -> BoxBody {
+    use futures::StreamExt;
+    use tokio::io::AsyncReadExt;
+
+    let stream = futures::stream::unfold(Some((file, vec![0u8; 64 * 1024])), |state| async move {
+        let (mut file, mut buf) = state?;
+        match file.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                let chunk = Bytes::copy_from_slice(&buf[..n]);
+                Some((Ok(chunk), Some((file, buf))))
+            }
+            Err(e) => Some((Err(e), None)),
+        }
+    })
+    .map(|chunk| chunk.map(hyper::body::Frame::data));
+
+    BodyExt::boxed(http_body_util::StreamBody::new(stream))
 }
 
 /// Dispatch a request to PHP-FPM over FastCGI.
@@ -653,12 +762,24 @@ fn is_php_script(rel: &Path) -> bool {
 async fn serve_php(
     req: Request<BoxBody>,
     site: &ResolvedSite,
-    fpm: &dyn FpmLocator,
+    fpm: &Arc<dyn FpmLocator>,
     https: bool,
     direct: Option<PathBuf>,
     body_len: u64,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
-    let Some(addr) = fpm.locate(&site.php) else {
+    // `locate` is synchronous and, when a pool has to be spawned, genuinely
+    // blocking: it forks php-fpm and then polls for its socket to appear for up
+    // to a second. Called directly, that parks a runtime worker for the whole
+    // wait — stalling every other site's requests that happen to be scheduled on
+    // it — so it belongs on the blocking pool.
+    let addr = {
+        let fpm = fpm.clone();
+        let version = site.php.clone();
+        tokio::task::spawn_blocking(move || fpm.locate(&version))
+            .await
+            .unwrap_or(None)
+    };
+    let Some(addr) = addr else {
         return Ok(text_response(
             StatusCode::SERVICE_UNAVAILABLE,
             &format!("Grove: no PHP-FPM pool for php@{}", site.php),
@@ -720,9 +841,6 @@ async fn serve_proxy(
     site: &ResolvedSite,
     body_len: u64,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
-    use hyper_util::client::legacy::Client;
-    use hyper_util::rt::TokioExecutor;
-
     let Some(upstream) = &site.proxy_to else {
         return Ok(text_response(
             StatusCode::BAD_GATEWAY,
@@ -769,8 +887,7 @@ async fn serve_proxy(
     // arrives, whatever its transfer encoding.
     let forwarded = Request::from_parts(parts, body);
 
-    let client: Client<_, BoxBody> = Client::builder(TokioExecutor::new()).build_http();
-    let resp = client.request(forwarded).await?;
+    let resp = shared_client().request(forwarded).await?;
     let (parts, body) = resp.into_parts();
     // Pass the upstream body through without collecting it, so a Vite HMR stream
     // or a Node SSE endpoint reaches the client as it arrives.
@@ -949,6 +1066,77 @@ mod tests {
         // must not be handed to FPM.
         assert!(!is_php_script(Path::new("archive.phar")));
         assert!(!is_php_script(Path::new("notes.php.txt")));
+    }
+
+    fn static_site(root: PathBuf) -> ResolvedSite {
+        ResolvedSite {
+            name: "t".into(),
+            hostname: "t.test".into(),
+            path: root.clone(),
+            document_root: root,
+            driver: Driver::Static,
+            php: "8.3".into(),
+            node: None,
+            secure: false,
+            kind: grove_core::site::SiteKind::Linked,
+            proxy_to: None,
+            front_controller: None,
+            docker: false,
+            docker_id: None,
+            docker_running: false,
+        }
+    }
+
+    fn get(path: &str, etag: Option<&str>) -> Request<BoxBody> {
+        let mut b = Request::builder().uri(path);
+        if let Some(e) = etag {
+            b = b.header(hyper::header::IF_NONE_MATCH, e);
+        }
+        b.body(full(Bytes::new())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn unchanged_assets_answer_304_on_revalidation() {
+        // Regression: without a validator, every reload of an unchanged asset
+        // re-read the file and re-sent every byte.
+        let dir = std::env::temp_dir().join(format!("grove-static-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.css"), b"body{}").unwrap();
+        let site = static_site(dir.clone());
+
+        let first = serve_static(get("/app.css", None), &site).await.unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let etag = first
+            .headers()
+            .get(hyper::header::ETAG)
+            .expect("etag is set")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let second = serve_static(get("/app.css", Some(&etag)), &site)
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::NOT_MODIFIED);
+
+        // A changed file must not be served from the browser's copy.
+        std::fs::write(dir.join("app.css"), b"body{color:red}").unwrap();
+        let third = serve_static(get("/app.css", Some(&etag)), &site)
+            .await
+            .unwrap();
+        assert_eq!(third.status(), StatusCode::OK);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn missing_files_are_still_404() {
+        let dir = std::env::temp_dir().join(format!("grove-static-404-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let site = static_site(dir.clone());
+        let resp = serve_static(get("/nope.css", None), &site).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

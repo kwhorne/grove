@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A panic no longer takes the whole daemon down.** The release profile built
+  with `panic = "abort"`, so one unwrap on a poisoned mutex anywhere — in a
+  single request, for a single site — aborted the process and with it DNS, TLS
+  and every other site. Panics now unwind, which keeps the failure inside the
+  tokio task that caused it.
+- **The accept loop no longer spins a core when it runs out of file
+  descriptors.** `accept` failing was answered with a bare `continue`; under
+  `EMFILE` that fails again immediately and forever, so the listener burned 100%
+  of a core and never recovered. Failures now back off exponentially (5 ms to
+  1 s), which also gives descriptors time to be released.
+- **Half-open connections are no longer held forever.** Neither the TLS
+  handshake nor the wait for request headers had a deadline, so a peer that
+  connected and went quiet — a crashed browser, a port scanner — kept a task and
+  a descriptor indefinitely. Handshakes now time out after 10 s and headers
+  after 30 s.
+- **Blocking filesystem calls off the async path.** `Path::is_file`/`is_dir`/
+  `exists` were called on every request to a PHP or static site straight from the
+  request task; on a slow volume (a network share, a Docker bind mount) that
+  stalls a runtime worker and every other request scheduled on it. They are now
+  async stats.
+- **Starting a PHP-FPM pool no longer stalls unrelated requests.** Pool lookup
+  forks php-fpm and then polls for its socket for up to a second, synchronously.
+  It now runs on the blocking pool.
+
+### Changed
+
+- **Proxied requests reuse connections.** A new `hyper` client was constructed
+  per request, and a client *is* the connection pool — so every proxied request
+  paid a fresh TCP handshake and a Vite dev server saw one connection per asset
+  instead of a few kept alive. One shared pooled client now serves the proxy
+  driver and replay.
+- **Static files revalidate instead of re-transferring.** Responses carry an
+  `ETag` (from size + mtime, so no extra read) and answer `If-None-Match` with
+  `304`, so reloading a dev site with unchanged assets no longer re-reads and
+  re-sends every byte. `Cache-Control: no-cache` keeps an edit from ever serving
+  stale.
+- **Static files over 256 KiB stream from disk.** A large asset — a video, a
+  sourcemap — was read into memory in full, per concurrent request, before the
+  first byte reached the browser.
+- **DNS answers are cacheable.** Records were served with `TTL 0`, which forbids
+  caching, so the system resolver re-queried Grove for every connection — with
+  macOS's `mDNSResponder` in that path on every first byte. The answer is always
+  loopback and never changes, so it is now `TTL 300`.
+- **The release build is optimised for speed rather than size.** `opt-level = "z"`
+  optimised the one thing that does not matter for a daemon on the request path.
+  Now `opt-level = 3` with fat LTO, which costs about 3 MB of binary.
+
 ## [1.3.2] — 2026-07-31
 
 The other direction. 1.3.1 stopped buffering responses; this stops buffering
