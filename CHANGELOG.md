@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-08-08
+
+Saying the right minimum. 1.4.0's dependency updates quietly moved the lowest
+Rust version Grove can be built with from 1.80 to 1.94 — `sqlx` 0.9 requires it —
+but the manifest, the README badge and CONTRIBUTING all still promised 1.80.
+Anyone who followed the documentation got a wall of errors from a transitive
+dependency instead of a sentence naming the cause. Nothing about the shipped
+binaries changes; this is about being able to build them.
+
+### Fixed
+
+- **The declared minimum Rust version is now true.** `rust-version` said `1.80`
+  while the real floor had moved to `1.94`, so `cargo build` on the documented
+  version failed inside `time-core` with *"the package requires the Cargo feature
+  called `edition2024`"* — which names neither Grove nor the dependency that
+  raised the bar. With the correct value, cargo says
+  *"rustc 1.80 is not supported by the following package: grove-core requires
+  rustc 1.94"* before it compiles anything. The README badge and CONTRIBUTING's
+  build instructions said 1.80 too, and now say 1.94.
+- **CI checks the minimum instead of assuming it.** Every job used `stable`,
+  which is always new enough, so a dependency bump could raise the real floor
+  without anything failing — which is exactly how 1.4.0 shipped a manifest that
+  was wrong. A new `MSRV` job builds the workspace with the declared version, so
+  the claim and the code cannot drift apart again.
+
+### Dependencies
+
+- **The npm group, without the TypeScript 7 jump.** `svelte` 5.56.8, `vite`
+  8.2.0, `@sveltejs/vite-plugin-svelte` 7.2.0, `svelte-check` 4.7.4,
+  `@fontsource/jetbrains-mono` 5.3.0 and `@tauri-apps/plugin-dialog` 2.7.2.
+  TypeScript stays on 6: version 7 is the Go port, which needs both 7 *and* 6
+  installed plus a `--tsgo` flag, and `svelte-check` does not drive it yet.
+  Dependabot is now told to skip TypeScript majors, so one package that cannot
+  move no longer fails the whole grouped update every week.
+- `base64` 0.23.1, `thiserror` 2.0.20, `toml` 1.1.3, and `pnpm/action-setup`
+  4 → 6.0.10 in the workflows.
+
 ## [1.4.0] — 2026-08-08
 
 The same work, once. 1.3.x stopped Grove holding whole bodies in memory; this
@@ -606,6 +643,7 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[1.4.1]: https://github.com/kwhorne/grove/releases/tag/v1.4.1
 [1.4.0]: https://github.com/kwhorne/grove/releases/tag/v1.4.0
 [1.3.2]: https://github.com/kwhorne/grove/releases/tag/v1.3.2
 [1.3.1]: https://github.com/kwhorne/grove/releases/tag/v1.3.1
