@@ -11,6 +11,27 @@ use sqlx::{AnyPool, Row};
 
 use crate::manager::{Result, ServiceError};
 
+/// Why every query in this module is wrapped in `AssertSqlSafe`.
+///
+/// sqlx 0.9 refuses a non-literal query string unless it is explicitly asserted
+/// safe, which is the right default — so here is the audit it asks for.
+///
+/// A converter cannot use bind parameters for the parts that vary: table names,
+/// column names and column types are *identifiers and syntax*, not values, and
+/// no dialect allows binding them. Every fragment interpolated below is one of:
+///
+/// - an identifier read from the source database's own catalog
+///   (`list_tables`/`columns`), passed through [`quote`], which doubles the
+///   dialect's quoting character — backticks for MySQL, double quotes for
+///   PostgreSQL and SQLite;
+/// - a type name from [`target_type`], a closed `match` returning `&'static str`;
+/// - a `?` placeholder, emitted by count.
+///
+/// Row data never reaches the SQL text — it is bound, in [`copy_rows`] — so the
+/// only way to influence these strings is to already control the schema of the
+/// source database the user pointed Grove at.
+use sqlx::{AssertSqlSafe, SqlSafeStr};
+
 /// A database endpoint for a conversion.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DbConnSpec {
@@ -184,10 +205,13 @@ pub async fn convert(
         }
 
         // Recreate the table in the target.
-        let _ = sqlx::query(&format!("DROP TABLE IF EXISTS {}", quote(table, tk)))
-            .execute(&dst)
-            .await;
-        sqlx::query(&create_table_sql(table, &cols, tk))
+        let _ = sqlx::query(AssertSqlSafe(format!(
+            "DROP TABLE IF EXISTS {}",
+            quote(table, tk)
+        )))
+        .execute(&dst)
+        .await;
+        sqlx::query(AssertSqlSafe(create_table_sql(table, &cols, tk)))
             .execute(&dst)
             .await
             .map_err(|e| ServiceError::Init(format!("creating {table}: {e}")))?;
@@ -233,10 +257,13 @@ async fn list_tables(pool: &AnyPool, kind: Kind) -> Result<Vec<String>> {
 async fn columns(pool: &AnyPool, kind: Kind, table: &str) -> Result<Vec<Column>> {
     match kind {
         Kind::Sqlite => {
-            let rows = sqlx::query(&format!("PRAGMA table_info({})", quote(table, kind)))
-                .fetch_all(pool)
-                .await
-                .map_err(|e| ServiceError::Init(format!("reading {table}: {e}")))?;
+            let rows = sqlx::query(AssertSqlSafe(format!(
+                "PRAGMA table_info({})",
+                quote(table, kind)
+            )))
+            .fetch_all(pool)
+            .await
+            .map_err(|e| ServiceError::Init(format!("reading {table}: {e}")))?;
             Ok(rows
                 .iter()
                 .map(|r| {
@@ -384,7 +411,7 @@ async fn copy_rows(
         placeholders.join(", ")
     );
 
-    let rows = sqlx::query(&select)
+    let rows = sqlx::query(AssertSqlSafe(select))
         .fetch_all(src)
         .await
         .map_err(|e| ServiceError::Init(format!("reading rows from {table}: {e}")))?;
@@ -394,8 +421,12 @@ async fn copy_rows(
         .await
         .map_err(|e| ServiceError::Init(e.to_string()))?;
     let mut count = 0u64;
+    // Converted once, outside the loop: cloning a `SqlStr` is a reference-count
+    // bump, where re-wrapping the `String` per row would copy the whole statement
+    // text for every row in the table.
+    let insert = AssertSqlSafe(insert).into_sql_str();
     for row in &rows {
-        let mut q = sqlx::query(&insert);
+        let mut q = sqlx::query(insert.clone());
         for (i, c) in cols.iter().enumerate() {
             if c.cat == Cat::Blob {
                 let v: Option<Vec<u8>> = row.try_get(i).ok().flatten();
@@ -534,12 +565,13 @@ mod tests {
 
         let server = format!("mysql://root@127.0.0.1:{port}");
         let admin = AnyPoolOptions::new().connect(&server).await.unwrap();
+        // Both names are literals from the array above.
         for db in ["grovesrc", "grovedst"] {
-            sqlx::query(&format!("DROP DATABASE IF EXISTS {db}"))
+            sqlx::query(AssertSqlSafe(format!("DROP DATABASE IF EXISTS {db}")))
                 .execute(&admin)
                 .await
                 .unwrap();
-            sqlx::query(&format!("CREATE DATABASE {db}"))
+            sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {db}")))
                 .execute(&admin)
                 .await
                 .unwrap();

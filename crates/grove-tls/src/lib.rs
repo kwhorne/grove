@@ -9,8 +9,8 @@ use std::fs;
 use std::path::Path;
 
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
-    SanType,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
+    KeyUsagePurpose, SanType,
 };
 use time::{Duration, OffsetDateTime};
 
@@ -30,8 +30,13 @@ pub type Result<T> = std::result::Result<T, TlsError>;
 
 /// The in-memory root CA used to sign leaf certificates.
 pub struct CertificateAuthority {
-    cert: rcgen::Certificate,
-    key: KeyPair,
+    /// The CA certificate as PEM — byte for byte the one on disk, and so the
+    /// one the OS trust store was told to trust.
+    cert_pem: String,
+    key_pem: String,
+    /// The signing identity: the CA's distinguished name, key-id method, key
+    /// usages and private key, as rcgen wants them for signing a leaf.
+    issuer: Issuer<'static, KeyPair>,
 }
 
 impl CertificateAuthority {
@@ -45,9 +50,19 @@ impl CertificateAuthority {
             let key_pem = fs::read_to_string(&key_path)?;
             let key = KeyPair::from_pem(&key_pem)?;
             let cert_pem = fs::read_to_string(&cert_path)?;
-            let params = CertificateParams::from_ca_cert_pem(&cert_pem)?;
-            let cert = params.self_signed(&key)?;
-            return Ok(Self { cert, key });
+            // The CA on disk is loaded as a signing identity, not re-created.
+            // The previous shape had no way to express that: it parsed the PEM
+            // into params and then called `self_signed`, which *minted a new
+            // certificate* — new serial, new validity window — on every daemon
+            // start and every CLI call. Leaves still chained (same DN, same
+            // key), but `cert_pem()` returned a certificate that was not the
+            // one on disk and not the one the trust store held.
+            let issuer = Issuer::from_ca_cert_pem(&cert_pem, key)?;
+            return Ok(Self {
+                cert_pem,
+                key_pem,
+                issuer,
+            });
         }
 
         let ca = Self::generate()?;
@@ -73,7 +88,13 @@ impl CertificateAuthority {
 
         let key = KeyPair::generate()?;
         let cert = params.self_signed(&key)?;
-        Ok(Self { cert, key })
+        let cert_pem = cert.pem();
+        let key_pem = key.serialize_pem();
+        Ok(Self {
+            cert_pem,
+            key_pem,
+            issuer: Issuer::new(params, key),
+        })
     }
 
     /// Write the CA cert (0644) and key (0600) to disk.
@@ -81,14 +102,14 @@ impl CertificateAuthority {
         paths.ensure()?;
         let cert_path = paths.ca_cert();
         let key_path = paths.ca_key();
-        fs::write(&cert_path, self.cert.pem())?;
-        fs::write(&key_path, self.key.serialize_pem())?;
+        fs::write(&cert_path, &self.cert_pem)?;
+        fs::write(&key_path, &self.key_pem)?;
         restrict_key_perms(&key_path)?;
         Ok(())
     }
 
     pub fn cert_pem(&self) -> String {
-        self.cert.pem()
+        self.cert_pem.clone()
     }
 
     /// Issue a leaf certificate for the given DNS names, signed by this CA.
@@ -110,7 +131,7 @@ impl CertificateAuthority {
         params.not_after = OffsetDateTime::now_utc() + Duration::days(397);
 
         let leaf_key = KeyPair::generate()?;
-        let leaf = params.signed_by(&leaf_key, &self.cert, &self.key)?;
+        let leaf = params.signed_by(&leaf_key, &self.issuer)?;
         Ok((leaf.pem(), leaf_key.serialize_pem()))
     }
 
@@ -163,5 +184,34 @@ mod tests {
             .unwrap();
         assert!(leaf.contains("BEGIN CERTIFICATE"));
         assert!(key.contains("PRIVATE KEY"));
+    }
+
+    #[test]
+    fn reloading_keeps_the_certificate_that_is_on_disk() {
+        // Regression: `load_or_create` used to parse the CA's PEM into params and
+        // then call `self_signed`, minting a *new* certificate every time. The
+        // CA that `cert_pem()` reported then differed from the file the OS trust
+        // store had been pointed at.
+        let base = std::env::temp_dir().join(format!(
+            "grove-ca-reload-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let paths = GrovePaths::with_base(&base);
+
+        let first = CertificateAuthority::load_or_create(&paths).unwrap();
+        let on_disk = fs::read_to_string(paths.ca_cert()).unwrap();
+        assert_eq!(first.cert_pem(), on_disk);
+
+        let reloaded = CertificateAuthority::load_or_create(&paths).unwrap();
+        assert_eq!(reloaded.cert_pem(), on_disk);
+
+        // And it must still be able to sign: the issuer was rebuilt from PEM,
+        // so a mistake here would show up as a leaf that does not chain.
+        let (leaf, _) = reloaded.issue_leaf(&["myapp.test".to_string()]).unwrap();
+        assert!(leaf.contains("BEGIN CERTIFICATE"));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

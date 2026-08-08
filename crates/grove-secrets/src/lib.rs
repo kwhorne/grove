@@ -101,16 +101,17 @@ pub fn encrypt(plaintext: &[u8], recipients: &[PublicKey]) -> Result<Vec<u8>> {
     if recipients.is_empty() {
         return Err(SecretsError::Crypto("no recipients".into()));
     }
-    let boxed: Vec<Box<dyn age::Recipient + Send>> = recipients
+    // age 0.12 takes borrowed recipients, so they are parsed into an owned Vec
+    // first and lent out as trait objects — no boxing, and one allocation for the
+    // whole set instead of one per recipient.
+    let parsed: Vec<age::x25519::Recipient> = recipients
         .iter()
-        .map(|r| {
-            r.to_recipient()
-                .map(|x| Box::new(x) as Box<dyn age::Recipient + Send>)
-        })
+        .map(|r| r.to_recipient())
         .collect::<Result<_>>()?;
 
-    let encryptor = age::Encryptor::with_recipients(boxed)
-        .ok_or_else(|| SecretsError::Crypto("no recipients".into()))?;
+    let encryptor =
+        age::Encryptor::with_recipients(parsed.iter().map(|r| r as &dyn age::Recipient))
+            .map_err(|e| SecretsError::Crypto(e.to_string()))?;
     let mut out = Vec::new();
     let mut writer = encryptor
         .wrap_output(&mut out)
@@ -124,15 +125,18 @@ pub fn encrypt(plaintext: &[u8], recipients: &[PublicKey]) -> Result<Vec<u8>> {
 
 /// Decrypt `ciphertext` with a member's identity.
 pub fn decrypt(ciphertext: &[u8], identity: &Identity) -> Result<Vec<u8>> {
-    let decryptor =
-        match age::Decryptor::new(ciphertext).map_err(|e| SecretsError::Crypto(e.to_string()))? {
-            age::Decryptor::Recipients(d) => d,
-            age::Decryptor::Passphrase(_) => {
-                return Err(SecretsError::Crypto(
-                    "passphrase-encrypted, not supported".into(),
-                ))
-            }
-        };
+    // `new_buffered` rather than `new`: the input is a `&[u8]`, which is already
+    // `BufRead`, and age's own docs point at the buffered parser for it — `new`
+    // uses a slower one that avoids overreading on arbitrary readers.
+    let decryptor = age::Decryptor::new_buffered(ciphertext)
+        .map_err(|e| SecretsError::Crypto(e.to_string()))?;
+    // age 0.12 folded the Recipients/Passphrase enum into one type, so the case
+    // Grove does not support is now a question rather than a match arm.
+    if decryptor.is_scrypt() {
+        return Err(SecretsError::Crypto(
+            "passphrase-encrypted, not supported".into(),
+        ));
+    }
     let mut reader = decryptor
         .decrypt(std::iter::once(&identity.inner as &dyn age::Identity))
         .map_err(|e| SecretsError::Crypto(e.to_string()))?;
@@ -431,6 +435,38 @@ mod tests {
         ));
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    /// An age file produced by the `age` 0.10 crate Grove shipped before, with
+    /// the identity that can open it. Kept as bytes so the upgrade to 0.12 has to
+    /// prove it can still read what earlier versions of Grove wrote — these are
+    /// real secrets on real users' disks, and a format regression would be
+    /// silent until someone needed their `.env` back.
+    const V0_10_SECRET: &str =
+        "AGE-SECRET-KEY-1N9YZV3KCP6RCYGKFAGUSPL7K0KAW8KLFT4WLTPDE6CYGSXKXGV3SZP5LRW";
+    const V0_10_CIPHERTEXT_HEX: &str = concat!(
+        "6167652d656e6372797074696f6e2e6f72672f76310a2d3e20583235353139204d3736557533",
+        "4a6d74374a4376344656686b6d3637484c63795276713649456e4c6354374e3065594d516f0a",
+        "557074505a514f734157524350792b707071494138635432442f76544c496e4c447259683771",
+        "74747368590a2d3e206d31404d372d6772656173650a70786b53387972374a3472625a336c39",
+        "41626564426b41797441672f5252716f2f346c7242527a512b63380a2d2d2d2039343646334b",
+        "6c4b30654b794f7666396b5655386f566477616c33684e36714549506f66315378367572450a",
+        "e1503e7151b2d4d0fb9960c0383cfe392461e04a3a4e4700d95def1dc241f0fa1d434d69e7f3",
+        "ac1947e6a78f34eb68dc902f4e7579762b46b31c437079524e2f172db626f890b0",
+    );
+
+    #[test]
+    fn reads_files_written_by_the_previous_age_version() {
+        let bytes: Vec<u8> = (0..V0_10_CIPHERTEXT_HEX.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&V0_10_CIPHERTEXT_HEX[i..i + 2], 16).unwrap())
+            .collect();
+        let id = Identity::from_secret(V0_10_SECRET).unwrap();
+        let plain = decrypt(&bytes, &id).expect("age 0.12 must read an age 0.10 file");
+        assert_eq!(
+            String::from_utf8(plain).unwrap(),
+            "DB_PASSWORD=hunter2\nAPP_KEY=base64:abc\n"
+        );
     }
 
     #[test]

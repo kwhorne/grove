@@ -8,12 +8,14 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
-use hickory_proto::op::{Header, MessageType, OpCode, ResponseCode};
+use hickory_proto::op::{Header, HeaderCounts, MessageType, Metadata, OpCode, ResponseCode};
 use hickory_proto::rr::rdata::{A, AAAA};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
-use hickory_server::authority::MessageResponseBuilder;
+use hickory_proto::ProtoError;
+use hickory_server::net::runtime::Time;
 use hickory_server::server::{Request, RequestHandler, ResponseHandler, ResponseInfo};
-use hickory_server::ServerFuture;
+use hickory_server::zone_handler::MessageResponseBuilder;
+use hickory_server::Server;
 use tokio::net::{TcpListener, UdpSocket};
 
 #[derive(Debug, thiserror::Error)]
@@ -21,7 +23,7 @@ pub enum DnsError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
     #[error("dns protocol: {0}")]
-    Proto(#[from] hickory_proto::error::ProtoError),
+    Proto(#[from] ProtoError),
 }
 
 /// How long a resolver may cache a `*.<tld>` answer.
@@ -32,6 +34,12 @@ pub enum DnsError {
 /// loopback and never changes, so there is nothing to keep fresh; sites
 /// added or removed do not change what this returns.
 const RECORD_TTL: u32 = 300;
+
+/// Bytes of outgoing responses buffered per TCP connection.
+///
+/// Grove's answers are one small record, so this only has to cover a burst from
+/// a single resolver; it is a bound on memory per connection, not a target.
+const RESPONSE_BUFFER_SIZE: usize = 8 * 1024;
 
 /// Handler that maps every name ending in `.<tld>` to loopback.
 #[derive(Clone)]
@@ -63,26 +71,41 @@ fn into_label(tld: impl Into<String>) -> String {
     tld.into().trim_matches('.').to_lowercase()
 }
 
+/// Build a `ResponseInfo` for a response that could not be sent.
+///
+/// Only reached when writing to the socket failed, so nothing reads the record
+/// counts; they exist because `ResponseInfo` is built from a full header.
+fn info_for(metadata: Metadata) -> ResponseInfo {
+    ResponseInfo::from(Header {
+        metadata,
+        counts: HeaderCounts::default(),
+    })
+}
+
 #[async_trait::async_trait]
 impl RequestHandler for GroveResolver {
-    async fn handle_request<R: ResponseHandler>(
+    async fn handle_request<R: ResponseHandler, T: Time>(
         &self,
         request: &Request,
         mut response_handle: R,
     ) -> ResponseInfo {
-        let query = request.query();
-        let name = query.name();
-        let fqdn: Name = name.into();
+        // `request_info` enforces exactly one question, which is the only shape
+        // a resolver ever sends; anything else is refused rather than guessed at.
+        let Ok(info) = request.request_info() else {
+            return refuse(request, &mut response_handle).await;
+        };
+        let fqdn: Name = info.query.name().into();
+        let query_type = info.query.query_type();
 
         // Only answer standard queries for our TLD.
-        if request.op_code() != OpCode::Query
-            || request.message_type() != MessageType::Query
+        if request.metadata.op_code != OpCode::Query
+            || request.metadata.message_type != MessageType::Query
             || !self.owns(&fqdn)
         {
             return refuse(request, &mut response_handle).await;
         }
 
-        let records: Vec<Record> = match query.query_type() {
+        let records: Vec<Record> = match query_type {
             RecordType::A => vec![Record::from_rdata(
                 fqdn.clone(),
                 RECORD_TTL,
@@ -99,15 +122,15 @@ impl RequestHandler for GroveResolver {
         };
 
         let builder = MessageResponseBuilder::from_message_request(request);
-        let mut header = Header::response_from_request(request.header());
-        header.set_authoritative(true);
-        let response = builder.build(header, records.iter(), &[], &[], &[]);
+        let mut metadata = Metadata::response_from_request(&request.metadata);
+        metadata.authoritative = true;
+        let response = builder.build(metadata, records.iter(), &[], &[], &[]);
 
         match response_handle.send_response(response).await {
             Ok(info) => info,
             Err(e) => {
                 tracing::error!(error = %e, "failed to send DNS response");
-                ResponseInfo::from(header)
+                info_for(metadata)
             }
         }
     }
@@ -115,28 +138,28 @@ impl RequestHandler for GroveResolver {
 
 async fn refuse<R: ResponseHandler>(request: &Request, handle: &mut R) -> ResponseInfo {
     let builder = MessageResponseBuilder::from_message_request(request);
-    let response = builder.error_msg(request.header(), ResponseCode::Refused);
+    let response = builder.error_msg(&request.metadata, ResponseCode::Refused);
     match handle.send_response(response).await {
         Ok(info) => info,
         Err(_) => {
-            let mut header = Header::response_from_request(request.header());
-            header.set_response_code(ResponseCode::Refused);
-            ResponseInfo::from(header)
+            let mut metadata = Metadata::response_from_request(&request.metadata);
+            metadata.response_code = ResponseCode::Refused;
+            info_for(metadata)
         }
     }
 }
 
 /// Bind UDP+TCP on `addr:port` and serve the resolver until the future is
 /// dropped/aborted.
-pub async fn serve(tld: &str, addr: SocketAddr) -> Result<ServerFuture<GroveResolver>, DnsError> {
+pub async fn serve(tld: &str, addr: SocketAddr) -> Result<Server<GroveResolver>, DnsError> {
     let handler = GroveResolver::new(tld);
-    let mut server = ServerFuture::new(handler);
+    let mut server = Server::new(handler);
 
     let udp = UdpSocket::bind(addr).await?;
     server.register_socket(udp);
 
     let tcp = TcpListener::bind(addr).await?;
-    server.register_listener(tcp, Duration::from_secs(5));
+    server.register_listener(tcp, Duration::from_secs(5), RESPONSE_BUFFER_SIZE);
 
     tracing::info!(%addr, tld, "DNS resolver listening");
     Ok(server)
