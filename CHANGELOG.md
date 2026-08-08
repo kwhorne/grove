@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-08-08
+
+The same work, once. 1.3.x stopped Grove holding whole bodies in memory; this
+release stops it *redoing* things. A proxied request built a new HTTP client —
+and a client is the connection pool, so every request to a Vite dev server paid a
+fresh TCP handshake. A static asset was re-read and re-sent on every reload,
+because responses carried nothing a browser could revalidate against. DNS answers
+were marked uncacheable, so the system resolver asked again for every single
+connection. And the local CA minted a brand-new certificate each time it was
+loaded from disk.
+
+The other half is about staying up. The release profile used `panic = "abort"`,
+which turned any single failed request into a dead daemon — no DNS, no TLS, no
+sites. The accept loop answered failure with a bare `continue`, which under
+`EMFILE` is a busy loop that never recovers. Nothing bounded a TLS handshake or
+the wait for request headers, so a peer that connected and went quiet kept a
+task and a file descriptor for as long as it liked.
+
+Also: the dependency tree is current again, including four crates whose major
+bumps needed real migration rather than a version bump.
+
 ### Fixed
 
 - **Reloading the local CA no longer mints a new certificate.** Loading it from
@@ -61,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The release build is optimised for speed rather than size.** `opt-level = "z"`
   optimised the one thing that does not matter for a daemon on the request path.
   Now `opt-level = 3` with fat LTO, which costs about 3 MB of binary.
+
 ### Dependencies
 
 - **The cargo group's 25 updates, including the breaking ones.** Four crates
@@ -77,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The `age` upgrade is pinned by a fixture encrypted with the previous
     version, so a format regression cannot silently orphan secrets already on
     disk.
+
+### Upgrading
+
+Nothing to do. Existing certificates, encrypted secrets and `config.toml` are
+read as before; the CA on disk is now used as-is rather than re-minted, and
+age files written by earlier versions are covered by a regression test.
 
 ## [1.3.2] — 2026-07-31
 

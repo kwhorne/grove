@@ -66,6 +66,8 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - ⚡ **Runs your dev processes** — `grove dev` reads the processes your app declares via Laravel's `DevCommands` (`artisan dev:list`) and supervises them per site — Vite HMR, queue worker, and your own additions like Reverb or `stripe listen`. It skips `serve` (Grove *is* the server) and `pail` (the Logs panel), needs no open terminal, and falls back to Vite + a queue worker on older Laravel or non-Laravel sites. Use it **instead of** `php artisan dev`, not alongside it.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
 - 🌊 **Streaming both ways** — responses are forwarded as PHP flushes them, so **Server-Sent Events and long-lived streams work**, and a large download costs no memory. Uploads stream too: a 400 MB upload moves through Grove in a few MB of RSS rather than a gigabyte.
+- 🚀 **Nothing done twice** — proxied requests reuse pooled connections instead of handshaking per asset, static files revalidate with an `ETag` (a reload of unchanged assets costs a `304`, not a re-transfer), and DNS answers are cacheable so the system resolver stops asking on every connection.
+- 🛡 **Built to stay up** — a panic in one request stays in that request, the accept loop backs off instead of spinning a core when file descriptors run out, and silent connections are timed out rather than held forever.
 - 🌱 **Create / import sites** — scaffold a new Laravel or static project, or link existing ones.
 - 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon, plus a macOS menu-bar icon.
 - 🔌 **Zero external dependencies** — DNS, proxy, FastCGI and TLS are all built in.
