@@ -76,8 +76,19 @@ once_cell = "1"
 time = { version = "0.3", features = ["formatting", "macros"] }
 
 [profile.release]
-lto = "thin"
+# `lto = "fat"` + one codegen unit claws back most of the size that moving off
+# `opt-level = "z"` costs, so the shipped binary stays small.
+lto = "fat"
 codegen-units = 1
 strip = true
-opt-level = "z"
-panic = "abort"
+# Grove is a long-running proxy on the request path: it terminates TLS, speaks
+# FastCGI and copies bodies for every request on every site. `opt-level = "z"`
+# optimises the one thing that does not matter here — a few hundred KiB of
+# binary — at the cost of the thing that does, so throughput and latency are
+# measurably worse for no user-visible gain.
+opt-level = 3
+# Deliberately *not* `panic = "abort"`. With abort, a panic anywhere — one
+# poisoned mutex, one arithmetic edge case in a single request — takes the whole
+# daemon down and with it DNS, TLS and every other site. Unwinding keeps a panic
+# inside the tokio task that caused it: that one request fails, everything else
+# keeps serving.
