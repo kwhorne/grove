@@ -94,6 +94,46 @@ built assets under `/build/` do not go through PHP), with two rules:
 Anything else falls through to the site's front controller, which receives the
 request path as `PATH_INFO`.
 
+### What is not repeated per request
+
+A local dev proxy is asked the same questions over and over — the same assets on
+every reload, the same hostname on every connection — so the request path is
+built to answer them cheaply the second time:
+
+- **Upstream connections are pooled.** One shared `hyper` client serves the proxy
+  driver and replay. A client *is* the connection pool, so constructing one per
+  request meant a fresh TCP handshake per request — and a Vite dev server saw one
+  connection per asset instead of a few kept alive.
+- **Static responses carry a validator.** An `ETag` is derived from the file's
+  size and mtime, which a `stat` already provides, so no extra read is needed;
+  `If-None-Match` is answered with `304`. `Cache-Control: no-cache` means the
+  browser always asks — an edit is never served stale — but an unchanged asset
+  costs a round trip rather than a re-transfer. Files over 256 KiB stream from
+  disk instead of being read into memory whole.
+- **DNS answers are cacheable** (`TTL 300`). The answer is always loopback and
+  never changes; a `TTL 0` forbade caching, which put the system resolver — and
+  on macOS `mDNSResponder` — in the path to the first byte of every connection.
+- **Filesystem checks are async.** The existence checks on the PHP and static
+  paths run on every request; issued as blocking syscalls from the request task
+  they would stall a runtime worker on a slow volume, such as a network share or
+  a Docker bind mount. Starting an FPM pool — which forks php-fpm and waits for
+  its socket — runs on the blocking pool for the same reason.
+
+### Staying up
+
+The daemon serves every site on the machine, so a failure in one request must not
+be able to end the process:
+
+- **Panics unwind.** The release profile deliberately does not set
+  `panic = "abort"`: with it, one panic anywhere takes down DNS, TLS and every
+  site at once. Unwinding keeps the failure inside the tokio task that caused it.
+- **The accept loop backs off** (5 ms to 1 s) instead of retrying immediately.
+  Out of file descriptors, `accept` fails instantly and forever, so a bare retry
+  is a busy loop that burns a core and never recovers.
+- **Silent connections are bounded.** A TLS handshake has 10 s and the request
+  headers 30 s; without a deadline, a peer that connects and says nothing holds a
+  task and a descriptor indefinitely.
+
 ## Beyond native sites
 
 - **Docker / OrbStack** — `grove-daemon` polls the Docker socket and merges
@@ -124,6 +164,10 @@ request path as `PATH_INFO`.
   status, duration) into a bounded in-memory ring buffer in `grove-core`
   (`RequestLog`), shared with the daemon so `grove requests` and the GUI panel
   can read it. Framework-agnostic; nothing is persisted to disk.
+- **Local HTTPS** — `grove-tls` keeps the root CA that was generated on first run
+  and trusted once, and signs per-site leaves from it on demand. The certificate
+  it reports is the one on disk, which is the one the OS trust store was pointed
+  at; leaves are short-lived (397 days) and renewed by the daemon.
 
 ## Licensing & Teams (Grove Pro)
 

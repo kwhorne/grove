@@ -7,6 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-08-08
+
+The same work, once. 1.3.x stopped Grove holding whole bodies in memory; this
+release stops it *redoing* things. A proxied request built a new HTTP client —
+and a client is the connection pool, so every request to a Vite dev server paid a
+fresh TCP handshake. A static asset was re-read and re-sent on every reload,
+because responses carried nothing a browser could revalidate against. DNS answers
+were marked uncacheable, so the system resolver asked again for every single
+connection. And the local CA minted a brand-new certificate each time it was
+loaded from disk.
+
+The other half is about staying up. The release profile used `panic = "abort"`,
+which turned any single failed request into a dead daemon — no DNS, no TLS, no
+sites. The accept loop answered failure with a bare `continue`, which under
+`EMFILE` is a busy loop that never recovers. Nothing bounded a TLS handshake or
+the wait for request headers, so a peer that connected and went quiet kept a
+task and a file descriptor for as long as it liked.
+
+Also: the dependency tree is current again, including four crates whose major
+bumps needed real migration rather than a version bump.
+
+### Fixed
+
+- **Reloading the local CA no longer mints a new certificate.** Loading it from
+  disk parsed the PEM into params and called `self_signed`, creating a fresh
+  certificate — new serial, new validity window — on every daemon start and every
+  CLI call. Leaf certificates still chained, since the name and key matched, but
+  `cert_pem()` reported a certificate that was neither the file on disk nor the
+  one the OS trust store had been told to trust.
+- **A panic no longer takes the whole daemon down.** The release profile built
+  with `panic = "abort"`, so one unwrap on a poisoned mutex anywhere — in a
+  single request, for a single site — aborted the process and with it DNS, TLS
+  and every other site. Panics now unwind, which keeps the failure inside the
+  tokio task that caused it.
+- **The accept loop no longer spins a core when it runs out of file
+  descriptors.** `accept` failing was answered with a bare `continue`; under
+  `EMFILE` that fails again immediately and forever, so the listener burned 100%
+  of a core and never recovered. Failures now back off exponentially (5 ms to
+  1 s), which also gives descriptors time to be released.
+- **Half-open connections are no longer held forever.** Neither the TLS
+  handshake nor the wait for request headers had a deadline, so a peer that
+  connected and went quiet — a crashed browser, a port scanner — kept a task and
+  a descriptor indefinitely. Handshakes now time out after 10 s and headers
+  after 30 s.
+- **Blocking filesystem calls off the async path.** `Path::is_file`/`is_dir`/
+  `exists` were called on every request to a PHP or static site straight from the
+  request task; on a slow volume (a network share, a Docker bind mount) that
+  stalls a runtime worker and every other request scheduled on it. They are now
+  async stats.
+- **Starting a PHP-FPM pool no longer stalls unrelated requests.** Pool lookup
+  forks php-fpm and then polls for its socket for up to a second, synchronously.
+  It now runs on the blocking pool.
+
+### Changed
+
+- **Proxied requests reuse connections.** A new `hyper` client was constructed
+  per request, and a client *is* the connection pool — so every proxied request
+  paid a fresh TCP handshake and a Vite dev server saw one connection per asset
+  instead of a few kept alive. One shared pooled client now serves the proxy
+  driver and replay.
+- **Static files revalidate instead of re-transferring.** Responses carry an
+  `ETag` (from size + mtime, so no extra read) and answer `If-None-Match` with
+  `304`, so reloading a dev site with unchanged assets no longer re-reads and
+  re-sends every byte. `Cache-Control: no-cache` keeps an edit from ever serving
+  stale.
+- **Static files over 256 KiB stream from disk.** A large asset — a video, a
+  sourcemap — was read into memory in full, per concurrent request, before the
+  first byte reached the browser.
+- **DNS answers are cacheable.** Records were served with `TTL 0`, which forbids
+  caching, so the system resolver re-queried Grove for every connection — with
+  macOS's `mDNSResponder` in that path on every first byte. The answer is always
+  loopback and never changes, so it is now `TTL 300`.
+- **The release build is optimised for speed rather than size.** `opt-level = "z"`
+  optimised the one thing that does not matter for a daemon on the request path.
+  Now `opt-level = 3` with fat LTO, which costs about 3 MB of binary.
+
+### Dependencies
+
+- **The cargo group's 25 updates, including the breaking ones.** Four crates
+  needed code changes rather than a version bump: `rcgen` 0.13→0.14 (`Issuer`
+  replaces passing a certificate and key to `signed_by`), `sqlx` 0.8→0.9
+  (non-literal queries now require an explicit `AssertSqlSafe`, with the audit
+  written down where the conversion happens), `hickory-dns` 0.24→0.26 (`Server`,
+  `zone_handler`, `Metadata`/`HeaderCounts`, `request_info()`), and `age`
+  0.10→0.12 (borrowed recipients, and `is_scrypt()` in place of the `Decryptor`
+  enum). Also `thiserror` 1→2, `ed25519-dalek` 2→3, `rand` 0.8→0.10, `toml`
+  0.8→1.1, `directories` 5→6, `base64` 0.22→0.23.
+  - Requests to the DNS resolver carrying anything other than exactly one
+    question are now refused rather than guessed at.
+  - The `age` upgrade is pinned by a fixture encrypted with the previous
+    version, so a format regression cannot silently orphan secrets already on
+    disk.
+
+### Upgrading
+
+Nothing to do. Existing certificates, encrypted secrets and `config.toml` are
+read as before; the CA on disk is now used as-is rather than re-minted, and
+age files written by earlier versions are covered by a regression test.
+
 ## [1.3.2] — 2026-07-31
 
 The other direction. 1.3.1 stopped buffering responses; this stops buffering
@@ -507,6 +606,12 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[1.4.0]: https://github.com/kwhorne/grove/releases/tag/v1.4.0
+[1.3.2]: https://github.com/kwhorne/grove/releases/tag/v1.3.2
+[1.3.1]: https://github.com/kwhorne/grove/releases/tag/v1.3.1
+[1.3.0]: https://github.com/kwhorne/grove/releases/tag/v1.3.0
+[1.2.1]: https://github.com/kwhorne/grove/releases/tag/v1.2.1
+[1.1.0]: https://github.com/kwhorne/grove/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kwhorne/grove/releases/tag/v1.0.0
 [0.13.1]: https://github.com/kwhorne/grove/releases/tag/v0.13.1
 [0.13.0]: https://github.com/kwhorne/grove/releases/tag/v0.13.0
