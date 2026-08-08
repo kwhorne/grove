@@ -12,7 +12,7 @@ PHP and zero external dependencies — from a single Rust core.
 [![CI](https://github.com/kwhorne/grove/actions/workflows/ci.yml/badge.svg)](https://github.com/kwhorne/grove/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/kwhorne/grove?sort=semver)](https://github.com/kwhorne/grove/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.80%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-1.94%2B-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#status)
 [![GUI](https://img.shields.io/badge/GUI-Tauri%202%20%2B%20Svelte%205-24c8db.svg?logo=tauri)](#gui-tauri--svelte)
 
@@ -220,7 +220,7 @@ grove-gui       Tauri 2 + Svelte 5 desktop GUI (thin client over grove-ipc)
 ## Building from source
 
 ```bash
-# Requirements: Rust 1.80+, and (for the GUI) Node 20+ with pnpm.
+# Requirements: Rust 1.94+, and (for the GUI) Node 20+ with pnpm.
 cargo build --release        # build the CLI + daemon
 cargo test                   # run the test suite
 ```

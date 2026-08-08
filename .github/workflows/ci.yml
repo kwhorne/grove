@@ -25,6 +25,30 @@ jobs:
         # The GUI crate needs the Tauri toolchain; it is linted in the `gui` job.
         run: cargo clippy --workspace --exclude grove-gui --all-targets -- -D warnings
 
+  msrv:
+    name: MSRV (${{ env.MSRV }})
+    runs-on: ubuntu-latest
+    env:
+      # Keep in step with `rust-version` in the workspace Cargo.toml.
+      MSRV: "1.94"
+    steps:
+      - uses: actions/checkout@v4
+      # Every other job uses `stable`, which is always new enough — so a
+      # dependency bump can raise the real minimum without anything noticing,
+      # and the manifest, the README badge and CONTRIBUTING quietly start
+      # lying. That is exactly what happened over 1.4.0: the declared minimum
+      # said 1.80 while sqlx 0.9 had moved it to 1.94, and building on the
+      # documented version failed with an `edition2024` error from a transitive
+      # dependency rather than anything that named the cause.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-${{ env.MSRV }}
+      - name: Verify the declared minimum still builds
+        run: cargo check --workspace --exclude grove-gui --all-targets
+
   test:
     name: Build & Test (${{ matrix.os }})
     strategy:

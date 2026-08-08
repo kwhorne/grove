@@ -6,7 +6,7 @@ dev build running and the conventions the project follows.
 ## Getting started
 
 ```bash
-# Requirements: Rust 1.80+, and (for the GUI) Node 20+ with pnpm.
+# Requirements: Rust 1.94+, and (for the GUI) Node 20+ with pnpm.
 git clone https://github.com/kwhorne/grove
 cd grove
 cargo build
