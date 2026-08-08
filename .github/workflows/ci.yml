@@ -26,10 +26,12 @@ jobs:
         run: cargo clippy --workspace --exclude grove-gui --all-targets -- -D warnings
 
   msrv:
-    name: MSRV (${{ env.MSRV }})
+    name: MSRV
     runs-on: ubuntu-latest
     env:
       # Keep in step with `rust-version` in the workspace Cargo.toml.
+      # Not interpolated into the job's `name`: the `env` context is not
+      # available there, and a workflow that references it fails to load at all.
       MSRV: "1.94"
     steps:
       - uses: actions/checkout@v4
