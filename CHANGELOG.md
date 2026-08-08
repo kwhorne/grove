@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.2] — 2026-08-08
+
+**Upgrade immediately if you are on 1.4.0 or 1.4.1.** Those releases could not
+serve a single request: every connection was reset, on every site.
+
+### Fixed
+
+- **Every request was reset (`ERR_CONNECTION_RESET`) on 1.4.0 and 1.4.1.** The
+  header-read timeout added in 1.4.0 was configured without giving hyper a
+  timer. hyper does not fall back to a default and does not complain at setup:
+  it panics the first time a connection reaches the timeout code, which is every
+  connection — *"timeout `header_read_timeout` set, but no timer set"*. The HTTP
+  and HTTPS listeners now install `TokioTimer`.
+
+  Two changes in 1.4.0 combined to hide it. Panics no longer abort the process,
+  which is right — but it meant the daemon stayed up and kept reporting itself
+  healthy, with `grove status` and the GUI both showing **Running**, while not a
+  single site rendered. Under the previous `panic = "abort"` the first request
+  would have killed the daemon outright and the fault would have been obvious.
+- **A request now goes through a connection in the test suite.** Every layer had
+  tests of its own — DNS answers, TLS chaining, static revalidation, FastCGI
+  framing — and none of them put a request through a connection built the way the
+  listeners build it, which is why a misconfigured builder shipped. That test now
+  exists, and it fails with the exact panic above when the timer is removed.
+
 ## [1.4.1] — 2026-08-08
 
 Saying the right minimum. 1.4.0's dependency updates quietly moved the lowest
@@ -643,6 +668,7 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[1.4.2]: https://github.com/kwhorne/grove/releases/tag/v1.4.2
 [1.4.1]: https://github.com/kwhorne/grove/releases/tag/v1.4.1
 [1.4.0]: https://github.com/kwhorne/grove/releases/tag/v1.4.0
 [1.3.2]: https://github.com/kwhorne/grove/releases/tag/v1.3.2

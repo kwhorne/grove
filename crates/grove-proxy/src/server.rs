@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
@@ -47,6 +47,12 @@ async fn accept(listener: &TcpListener) -> (TcpStream, SocketAddr) {
 /// The HTTP/1 server settings shared by both listeners.
 fn http1_builder() -> http1::Builder {
     let mut builder = http1::Builder::new();
+    // The timer is not optional. hyper does not fall back to a default one, and
+    // it does not fail when the timeout is configured — it panics on the first
+    // connection that reaches the timeout code, which is every connection:
+    // "timeout `header_read_timeout` set, but no timer set". Setting one without
+    // the other takes down every site on the machine.
+    builder.timer(TokioTimer::new());
     builder.header_read_timeout(HEADER_READ_TIMEOUT);
     builder
 }
@@ -148,5 +154,61 @@ pub async fn serve_https(
                 tracing::debug!(error = %e, "https connection closed");
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use http_body_util::{BodyExt, Empty, Full};
+    use hyper::{Request, Response};
+
+    /// Serve exactly one connection with the listeners' own settings and read
+    /// the response back.
+    ///
+    /// Regression: `header_read_timeout` was configured without a timer.
+    /// hyper does not fall back to a default and does not fail at setup — it
+    /// panics on the first connection that reaches the timeout code, which is
+    /// every connection ("timeout `header_read_timeout` set, but no timer set").
+    /// Every site on the machine answered with a reset connection, and because
+    /// panics unwind rather than abort, the daemon stayed up and reported
+    /// itself healthy while serving nothing.
+    ///
+    /// Every layer had been tested on its own; nothing had put a request
+    /// through a connection built the way the listeners build it. This does.
+    #[tokio::test]
+    async fn a_connection_built_like_the_listeners_serves_a_request() {
+        let (client, server) = tokio::io::duplex(4096);
+
+        tokio::spawn(async move {
+            let service =
+                hyper::service::service_fn(|_req: Request<hyper::body::Incoming>| async {
+                    Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(
+                        b"served",
+                    ))))
+                });
+            let _ = http1_builder()
+                .serve_connection(TokioIo::new(server), service)
+                .await;
+        });
+
+        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(client))
+            .await
+            .expect("handshake");
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+
+        let req = Request::builder()
+            .uri("/")
+            .header(hyper::header::HOST, "probe.test")
+            .body(Empty::<Bytes>::new())
+            .expect("request builds");
+
+        let resp = sender.send_request(req).await.expect("a response arrives");
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        let body = resp.into_body().collect().await.expect("body").to_bytes();
+        assert_eq!(&body[..], b"served");
     }
 }
