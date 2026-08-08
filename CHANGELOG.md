@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reloading the local CA no longer mints a new certificate.** Loading it from
+  disk parsed the PEM into params and called `self_signed`, creating a fresh
+  certificate — new serial, new validity window — on every daemon start and every
+  CLI call. Leaf certificates still chained, since the name and key matched, but
+  `cert_pem()` reported a certificate that was neither the file on disk nor the
+  one the OS trust store had been told to trust.
 - **A panic no longer takes the whole daemon down.** The release profile built
   with `panic = "abort"`, so one unwrap on a poisoned mutex anywhere — in a
   single request, for a single site — aborted the process and with it DNS, TLS
@@ -55,6 +61,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The release build is optimised for speed rather than size.** `opt-level = "z"`
   optimised the one thing that does not matter for a daemon on the request path.
   Now `opt-level = 3` with fat LTO, which costs about 3 MB of binary.
+### Dependencies
+
+- **The cargo group's 25 updates, including the breaking ones.** Four crates
+  needed code changes rather than a version bump: `rcgen` 0.13→0.14 (`Issuer`
+  replaces passing a certificate and key to `signed_by`), `sqlx` 0.8→0.9
+  (non-literal queries now require an explicit `AssertSqlSafe`, with the audit
+  written down where the conversion happens), `hickory-dns` 0.24→0.26 (`Server`,
+  `zone_handler`, `Metadata`/`HeaderCounts`, `request_info()`), and `age`
+  0.10→0.12 (borrowed recipients, and `is_scrypt()` in place of the `Decryptor`
+  enum). Also `thiserror` 1→2, `ed25519-dalek` 2→3, `rand` 0.8→0.10, `toml`
+  0.8→1.1, `directories` 5→6, `base64` 0.22→0.23.
+  - Requests to the DNS resolver carrying anything other than exactly one
+    question are now refused rather than guessed at.
+  - The `age` upgrade is pinned by a fixture encrypted with the previous
+    version, so a format regression cannot silently orphan secrets already on
+    disk.
 
 ## [1.3.2] — 2026-07-31
 
