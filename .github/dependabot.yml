@@ -17,6 +17,14 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # TypeScript 7 is the Go port, and it cannot be adopted by bumping a
+      # version: it wants *both* TS 7 and TS 6 installed plus a `--tsgo` flag,
+      # and `svelte-check` does not drive it yet. Grouped updates meant this one
+      # package failed the whole npm PR every week. Drop this entry once
+      # svelte-check supports tsgo.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: "/"
