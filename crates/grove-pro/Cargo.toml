@@ -7,4 +7,4 @@ publish = false
 description = "Open-source stub for Grove Pro feature entry points. Official release builds inject the proprietary implementation."
 
 [dependencies]
-e-db = { git = "https://github.com/kwhorne/e.git" }
+e-db.workspace = true

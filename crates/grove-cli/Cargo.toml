@@ -27,6 +27,6 @@ serde_json.workspace = true
 tar = "0.4"
 flate2 = "1"
 # Database schema/query tools for the MCP server (shared engine from `e`).
-e-db = { git = "https://github.com/kwhorne/e.git" }
+e-db.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

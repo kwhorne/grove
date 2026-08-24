@@ -21,7 +21,7 @@ grove-runtime = { path = "../grove-runtime" }
 grove-services = { path = "../grove-services" }
 grove-license = { path = "../grove-license" }
 # Reused database-client engine (Laravel .env aware) from the `e` editor.
-e-db = { git = "https://github.com/kwhorne/e.git" }
+e-db.workspace = true
 # Grove Pro feature entry points. The in-tree crate is an open-source STUB that
 # returns a friendly "not included" error; official release builds swap in the
 # proprietary implementation (private repo) so the license gate can't simply be

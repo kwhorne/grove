@@ -47,6 +47,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # CLI
 clap = { version = "4", features = ["derive"] }
 
+# Database schema/query engine shared with the `e` editor (Laravel .env aware).
+#
+# Pinned to a rev, and declared here rather than in each member, on purpose.
+# It is a git dependency on a repo we also own, so an unpinned `git = ` lets any
+# commit there land in Grove's lockfile on the next `cargo update` — which is
+# exactly how e-db 0.9.13's new `keyring` dependency nearly arrived: on Linux it
+# pulls `dbus-secret-service` → `libdbus-sys`, needs `libdbus-1-dev` to build,
+# and wants a D-Bus session bus at runtime that a headless Grove daemon does not
+# have. Grove only uses e-db's schema/query API and reads credentials from the
+# project's own .env, so it never needs a credential store.
+#
+# Moving this rev is a deliberate step: bump it, then check `cargo tree` for new
+# system-library dependencies before committing the lockfile.
+e-db = { git = "https://github.com/kwhorne/e.git", rev = "d6af91f0be8f716ff5303b4d9d739ca790bdd6b9" }
+
 # Paths
 directories = "6"
 dirs = "5"
