@@ -1696,6 +1696,25 @@ mod lifecycle {
         true
     }
 
+    /// The `(uid, gid)` behind a `sudo` invocation, when there is one.
+    ///
+    /// `SUDO_UID`/`SUDO_GID` are set by sudo itself, so this needs no `getpwnam`
+    /// and no name resolution. Returns `None` when Grove is not being installed
+    /// through sudo (nothing to record) or when the values name root (root is
+    /// already allowed everywhere, and recording it as "the served user" would
+    /// hand the IPC socket to root and lock out the real one).
+    fn numeric_ids_from_sudo() -> Option<(u32, u32)> {
+        let uid: u32 = std::env::var("SUDO_UID").ok()?.trim().parse().ok()?;
+        if uid == 0 {
+            return None;
+        }
+        let gid: u32 = std::env::var("SUDO_GID")
+            .ok()
+            .and_then(|g| g.trim().parse().ok())
+            .unwrap_or(uid);
+        Some((uid, gid))
+    }
+
     pub fn install(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
         use std::path::PathBuf;
         let exe = std::env::current_exe().context("resolving grove binary path")?;
@@ -1722,7 +1741,12 @@ mod lifecycle {
             paths.base().to_path_buf()
         };
 
-        let unit = grove_os::service::install(&exe, &service_home, run_user.as_deref())
+        // Record who the service runs on behalf of, numerically. The daemon
+        // authorizes its IPC socket against this: it cannot infer the user from
+        // `$GROVE_HOME`'s owner, because the CA setup a few lines below creates
+        // that directory *as root* on a fresh install.
+        let run_ids = numeric_ids_from_sudo();
+        let unit = grove_os::service::install(&exe, &service_home, run_user.as_deref(), run_ids)
             .context("installing service")?;
 
         // Self-heal the system resolver (other tools like Herd can remove
