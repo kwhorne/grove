@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use grove_core::paths::GrovePaths;
+use grove_core::securefs;
 
 use crate::catalog::{self, ServiceKind, ServiceSpec};
 
@@ -344,10 +345,18 @@ impl ServiceManager {
             return Ok("No user databases found on the source — nothing to migrate.".into());
         }
 
-        // 2. Dump them to a temp file.
+        // 2. Dump them to a staging file.
+        //
+        // Deliberately Grove's own run dir rather than `/tmp`: the old path was
+        // `/tmp/grove-mysql-migrate-<port>.sql`, a name anyone could predict and
+        // pre-create as a symlink so a root daemon would write every database in
+        // the source server wherever they pointed. Not world-writable beats
+        // trying to make a `/tmp` name unguessable.
         progress(&format!("dumping {} database(s)…", dbs.len()));
-        let dump_path = std::env::temp_dir().join(format!("grove-mysql-migrate-{}.sql", port));
-        let dump_file = std::fs::File::create(&dump_path)?;
+        let staging = self.paths.run_dir();
+        std::fs::create_dir_all(&staging)?;
+        let dump_path = staging.join(format!("mysql-migrate-{port}.sql"));
+        let dump_file = securefs::create_private(&dump_path)?;
         let mut dump_cmd = std::process::Command::new(&mysqldump);
         dump_cmd
             .args(["-h", host, "-P", &port.to_string(), "-u", user])
@@ -454,7 +463,9 @@ impl ServiceManager {
     /// bundled MySQL to `out` as SQL.
     pub fn snapshot_mysql(&self, db: Option<&str>, out: &std::path::Path) -> Result<()> {
         let (bin, port) = self.db_ready("mysql")?;
-        let file = std::fs::File::create(out)?;
+        // A dump is the whole database in plaintext: owner-only, and never
+        // written through a symlink.
+        let file = securefs::create_private(out)?;
         let mut cmd = std::process::Command::new(bin.join("mysqldump"));
         cmd.args(["-h", "127.0.0.1", "-P", &port.to_string(), "-u", "root"])
             .args([
@@ -501,6 +512,14 @@ impl ServiceManager {
     /// Dump a PostgreSQL database (self-contained, with CREATE/DROP) to `out`.
     pub fn snapshot_postgres(&self, db: &str, out: &std::path::Path) -> Result<()> {
         let (bin, port) = self.db_ready("postgres")?;
+        // `pg_dump -f` opens the file itself, so its flags are not ours to set.
+        // Creating it first does the two things that matter: the path is now a
+        // regular file, so pg_dump's `O_CREAT` cannot be redirected through a
+        // symlink, and `O_CREAT` on an existing file ignores its mode argument,
+        // so the dump keeps the 0600 set here. A racing unlink between the two
+        // opens is still possible in a directory an attacker can write; the
+        // durable answer to that is the directory, not the flags.
+        drop(securefs::create_private(out)?);
         let status = std::process::Command::new(bin.join("pg_dump"))
             .args(["-h", "127.0.0.1", "-p", &port.to_string(), "-U", "grove"])
             .args(["--clean", "--create", "-d", db, "-f"])
@@ -638,7 +657,9 @@ impl ServiceManager {
             .bin_dir(spec)
             .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
         let log = self.paths.logs_dir().join(format!("{key}.log"));
-        let logf = std::fs::File::create(&log)?;
+        // Not secret, but a symlink here would let a root daemon append service
+        // output into an arbitrary file.
+        let logf = securefs::create_public(&log)?;
         let port = self.effective_port(spec);
 
         // Databases refuse to run as root; when the daemon is root, drop to the
@@ -836,7 +857,7 @@ fn load_state(paths: &GrovePaths) -> ServicesState {
 fn save_state(paths: &GrovePaths, state: &ServicesState) {
     let _ = paths.ensure();
     if let Ok(body) = serde_json::to_string_pretty(state) {
-        let _ = std::fs::write(state_file(paths), body);
+        let _ = securefs::write_public(&state_file(paths), body);
     }
 }
 

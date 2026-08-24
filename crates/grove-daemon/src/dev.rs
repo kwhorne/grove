@@ -579,9 +579,13 @@ fn ensure_vite_tls(
     std::fs::create_dir_all(&dir).ok()?;
     let crt = dir.join(format!("{hostname}.crt"));
     let key = dir.join(format!("{hostname}.key"));
-    std::fs::write(&crt, &cert_pem).ok()?;
-    std::fs::write(&key, &key_pem).ok()?;
-    // The Vite process runs as the invoking user; let it read the files.
+    // These went out at the process umask with no `chmod` at all, so a root
+    // daemon left a TLS private key world-readable. `write_private` gives it
+    // 0600 from creation and refuses to write through a symlink.
+    grove_core::securefs::write_public(&crt, &cert_pem).ok()?;
+    grove_core::securefs::write_private(&key, &key_pem).ok()?;
+    // The Vite process runs as the invoking user; let it read the files. 0600
+    // plus this chown means only that user can, which is the point.
     chown_path(&crt, ids);
     chown_path(&key, ids);
     Some((
@@ -603,7 +607,9 @@ fn set_logs(cmd: &mut Command, log: &Path) -> std::io::Result<()> {
     if let Some(dir) = log.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let f = std::fs::File::create(log)?;
+    // Symlink-safe: a link here would let a root daemon append a dev process's
+    // output into an arbitrary file.
+    let f = grove_core::securefs::create_public(log)?;
     cmd.stdout(f.try_clone()?).stderr(f);
     cmd.stdin(std::process::Stdio::null());
     Ok(())
