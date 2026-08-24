@@ -8,6 +8,19 @@ updates:
     groups:
       cargo:
         patterns: ["*"]
+    ignore:
+      # `e-db` is a git dependency on a repo we also own, pinned to a rev in the
+      # workspace Cargo.toml. Dependabot bumps git revs like any other version,
+      # which would undo that pin every week — and a grouped update means one bad
+      # e-db commit fails the whole cargo PR. It already nearly did: e-db 0.9.13
+      # added `keyring`, which on Linux pulls `libdbus-sys` (needs
+      # `libdbus-1-dev` to build, and a D-Bus session bus at runtime that a
+      # headless Grove daemon has not got).
+      #
+      # Bump it by hand instead: move the rev, then check `cargo tree` for new
+      # system-library dependencies. Drop this entry once e-db puts `keyring`
+      # behind an optional feature.
+      - dependency-name: "e-db"
 
   - package-ecosystem: npm
     directory: "/crates/grove-gui/ui"
