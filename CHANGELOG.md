@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`cpx` is part of the bundled toolchain.** `grove path install` now creates a
+  `cpx` shim alongside `php`, `composer`, `node`, `npm`, `npx` and `laravel`, so
+  the Composer Package Executor — npx, but for Composer packages — is simply on
+  your PATH:
+
+  ```console
+  $ cpx laravel/pint
+  $ cpx friendsofphp/php-cs-fixer fix ./src
+  $ cpx phpstan analyse
+  ```
+
+  Nothing to `composer global require`: Grove fetches the self-contained cpx
+  PHAR on first use and runs it on the PHP the current directory resolves to
+  (`grove isolate` / `grove use`). cpx 2's ad-hoc PHP commands come with it —
+  `cpx exec -r '…'` and `cpx tinker` boot your Laravel app (config, facades,
+  `.env`, `$app`), and `cpx tinker` hands off to the project's own
+  `php artisan tinker` when it has one.
+
+  The PHAR lives at `~/.grove/cpx.phar` rather than under the root-owned
+  `$GROVE_HOME`, so `cpx self-update` can replace it in place. cpx needs PHP
+  8.3+; a directory pinned to something older gets an explanation instead of a
+  parse error out of the PHAR.
+
+- **`grove php ext` — an extension audit.** Grove's bundled PHP comes from
+  prebuilt static archives with a *fixed* extension set, and until now nothing
+  told you what was in the one you got. `grove php ext` diffs a build's real
+  `php -m` against the extensions the ecosystem expects, and says what each gap
+  costs:
+
+  ```console
+  $ grove php ext
+  php@8.5 (common) — 49 modules, 1 required missing, 5 recommended missing
+
+    Missing (required):
+      ✗ mysqli         WordPress — its only MySQL driver
+
+    Missing (recommended):
+      ✗ intl           Laravel Number/dates, Filament, Nova
+      ✗ sodium         modern crypto (sodium_*), passkeys
+      ✗ readline       history/editing in tinker and cpx tinker
+      ✗ apcu           in-process cache (Laravel apc store)
+      ✗ xsl            XSLT transforms (ext-xsl)
+  ```
+
+  The same gap now shows up in three other places you'd want it: `grove php
+  install` prints required-tier misses right after installing, `grove php list`
+  carries a one-line summary per build, `grove doctor` has a `php-extensions`
+  check, and the GUI's PHP panel has an **Extensions** section.
+
+- **Grove builds its own PHP.** The prebuilt static-PHP archives Grove used to
+  download are not supersets of each other, and each is missing something that
+  matters: upstream `common` has `pdo_sqlite`/`pdo_pgsql` but no `intl`,
+  `mysqli`, `sodium`, `readline`, `apcu` or `xsl`; upstream `bulk` has those six
+  but drops both PDO drivers. Laravel's default database is SQLite, Grove bundles
+  PostgreSQL, WordPress speaks only `mysqli`, and a large slice of Packagist
+  `require`s `ext-intl` — so no choice between the two was the right one.
+
+  [`.github/workflows/php-build.yml`](.github/workflows/php-build.yml) now builds
+  the union with static-php-cli, for macOS and Linux on both architectures, and
+  publishes it to a rolling `php-runtimes` release. `grove php install` fetches
+  that by default (`--variant grove`, `[general].php_variant = "grove"`).
+
+  The extension list is authored once, in
+  `grove_runtime::extensions::BUILD_SET`, and `grove php craft` prints the
+  static-php-cli config generated from it — so the binary that audits a build is
+  the same one that specified it, and CI can't drift from the audit.
+
+  Until a Grove build exists for a given version, `grove php install` falls back
+  to upstream `common`, names the extensions that costs you, and labels the build
+  with the set it actually got rather than the one requested. Asking for
+  `--variant common` or `--variant bulk` explicitly never falls back: silently
+  trading one extension hole for the other would be worse than an error.
+
+  `GROVE_PHP_MIRROR` still points the downloader at a different host for all
+  three variants, for a team mirror or an air-gapped cache.
+
+### Changed
+
+- **The default PHP version is now 8.5** (was 8.4) — `[general].default_php`,
+  `grove init --php`, and the versions the docs use in examples.
+- `grove php install` now fetches the matching **CLI** binary along with
+  `php-fpm`, and records which variant a build came from. `grove php ext`,
+  `grove php list` and the PATH shims all need the CLI, and auditing a build
+  whose `php -m` came from a different archive than the one serving requests
+  would have been worse than not auditing at all. Switching a version's variant
+  replaces both binaries, so they can never disagree.
+
 ## [1.4.2] — 2026-08-08
 
 **Upgrade immediately if you are on 1.4.0 or 1.4.1.** Those releases could not

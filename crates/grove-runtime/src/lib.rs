@@ -5,6 +5,8 @@
 //! directly addressing Herd's biggest limitation. Pools are started lazily and
 //! reaped after inactivity to keep idle RAM low.
 
+pub mod cpx;
+pub mod extensions;
 pub mod fpm;
 pub mod install;
 pub mod node;
@@ -12,8 +14,9 @@ pub mod registry;
 pub mod scaffold;
 pub mod xdebug;
 
+pub use extensions::{audit_build as audit_extensions, Audit, ExtInfo, Tier};
 pub use fpm::{FpmManager, FpmPool};
-pub use install::{install as install_php, InstallError};
+pub use install::{install as install_php, InstallError, Variant as PhpVariant};
 pub use node::{install as install_node, NodeBuild, NodeRegistry};
 pub use registry::{PhpBuild, PhpRegistry};
 pub use xdebug::{XdebugPlan, DEFAULT_XDEBUG_PORT};

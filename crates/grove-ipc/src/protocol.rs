@@ -88,6 +88,10 @@ pub enum Request {
     /// Download + install a static PHP-FPM build for the given version.
     PhpInstall {
         version: String,
+        /// Prebuilt extension set to fetch (`common` / `bulk`). Omitted means
+        /// "whatever the config selects", which keeps older clients working.
+        #[serde(default)]
+        variant: Option<String>,
     },
     /// List offered + installed PHP versions (for the GUI PHP panel).
     PhpVersionList,

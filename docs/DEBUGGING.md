@@ -9,8 +9,8 @@ Xdebug enabled (FPM pools reloaded, DBGp port 9003).
 
 $ grove debug status
 Xdebug enabled (DBGp port 9003)
-  php@8.4  ready (built into this PHP)
-  php@8.3  unavailable — needs a PHP with Xdebug (grove php register)
+  php@8.5  ready (built into this PHP)
+  php@8.4  unavailable — needs a PHP with Xdebug (grove php register)
 ```
 
 There's also an **Xdebug toggle** in the GUI's **Tools** panel.
@@ -50,8 +50,8 @@ compile Xdebug in). So Grove's own builds report **unavailable** in
 To step-debug, register a PHP that **has** Xdebug — e.g. a dynamic Homebrew PHP:
 
 ```console
-$ grove php register 8.4 /opt/homebrew/opt/php/sbin/php-fpm
-$ grove isolate myapp 8.4     # use it for a site
+$ grove php register 8.5 /opt/homebrew/opt/php/sbin/php-fpm
+$ grove isolate myapp 8.5     # use it for a site
 $ grove debug on
 ```
 

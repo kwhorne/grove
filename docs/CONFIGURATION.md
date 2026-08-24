@@ -12,7 +12,8 @@ Set `GROVE_HOME` to use an isolated tree (handy for testing on high ports).
 ```toml
 [general]
 tld = "test"            # sites are served on *.test
-default_php = "8.4"     # used by sites without an explicit isolate
+default_php = "8.5"     # used by sites without an explicit isolate
+php_variant = "grove"   # extension set: "grove" (union), "common" or "bulk"
 auto_start = true       # launch the daemon at login
 http_port = 80
 https_port = 443
@@ -40,7 +41,7 @@ path = "~/Code"
 [[sites]]
 name = "inside-next"
 path = "~/Code/inside-next"
-php = "8.4"             # per-site PHP (isolate)
+php = "8.5"             # per-site PHP (isolate)
 node = "22"            # per-site Node version
 secure = true          # HTTPS
 driver = "laravel"     # optional; auto-detected otherwise
@@ -59,7 +60,8 @@ proxy_to = "http://127.0.0.1:5173"
 | Key | Default | Notes |
 | --- | --- | --- |
 | `tld` | `test` | Top-level domain. Changing it requires a daemon restart. |
-| `default_php` | `8.4` | Fallback PHP version for sites without `php`. |
+| `default_php` | `8.5` | Fallback PHP version for sites without `php`. |
+| `php_variant` | `grove` | Which static-PHP extension set `grove php install` fetches: `grove` (Grove's own build — has both the PDO SQLite/PostgreSQL drivers *and* `intl`/`mysqli`/`sodium`/`readline`/`apcu`/`xsl`), or upstream `common` / `bulk`, each missing one of those groups. See [COMMANDS.md](COMMANDS.md#extensions-and-the---variant-flag). Existing builds are not re-downloaded when this changes. |
 | `auto_start` | `true` | Start the daemon at login. |
 | `http_port` | `80` | Use a high port (e.g. `8080`) to run without elevation. |
 | `https_port` | `443` | — |
@@ -113,6 +115,7 @@ support `~` and environment variables.
 | Variable | Purpose |
 | --- | --- |
 | `GROVE_HOME` | Base directory for all state (default `~/Library/Application Support/Grove`). |
+| `GROVE_PHP_MIRROR` | Base URL for static PHP archives, for all variants including `grove` (default: Grove's GitHub release for `grove`, `https://dl.static-php.dev/static-php-cli` for the upstream sets). Must keep static-php-cli's `<variant>/php-<version>-<cli\|fpm>-<os>-<arch>.tar.gz` layout. |
 | `GROVE_TEAMS_SERVER` | Grove Teams backend URL (default `https://teams.elyracode.com`). |
 | `GROVE_LOG` | Log filter for the daemon (e.g. `info`, `debug`). |
 
@@ -127,3 +130,5 @@ Beyond `config.toml`, Grove keeps a few files outside the config:
 | `~/.grove/identity` | Your Grove Teams member key pair (private — never leaves the machine). |
 | `$GROVE_HOME/snapshots/` | Database snapshots (`grove db`). |
 | `$GROVE_HOME/certs/` | Root CA + issued leaf certificates. |
+| `~/.grove/bin/` | PATH shims from `grove path install` (`php`, `composer`, `cpx`, `node`, …). |
+| `~/.grove/cpx.phar` | The bundled cpx binary. In your home, not `$GROVE_HOME`, so `cpx self-update` can replace it. |

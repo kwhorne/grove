@@ -9,7 +9,7 @@ containers as usual and they show up.
 $ docker compose up -d
 $ grove list
 SITE              DRIVER   PHP   HTTPS   URL
-elyra-web.test    laravel  8.4   yes     https://elyra-web.test
+elyra-web.test    laravel  8.5   yes     https://elyra-web.test
 inside2.test      proxy          yes     https://inside2.test    🐳
 
 $ curl -sI https://inside2.test | head -1

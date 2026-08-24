@@ -160,7 +160,12 @@ pub fn new_laravel(
         .ok_or_else(|| ScaffoldError::Command("invalid project name".into()))?;
 
     progress("preparing PHP CLI…");
-    let php = install::install_cli(paths, php_version, &progress)?;
+    let php = install::install_cli(
+        paths,
+        php_version,
+        install::Variant::configured(paths),
+        &progress,
+    )?;
     let php_dir = php.parent().map(Path::to_path_buf).unwrap_or_default();
     progress("preparing Composer…");
     let composer = ensure_composer(paths)?;
@@ -304,7 +309,7 @@ mod tests {
         let paths = GrovePaths::with_base(&home);
 
         let target = home.join("code").join("demo-app");
-        new_laravel(&paths, "8.4", &target, kit.as_deref(), false, |m| {
+        new_laravel(&paths, "8.5", &target, kit.as_deref(), false, |m| {
             eprintln!(">> {m}")
         })
         .unwrap();

@@ -94,7 +94,7 @@ Password:
 ✓ config        created at /Users/you/Library/Application Support/Grove/config.toml
 ✓ root CA       generated at …/Grove/certs/grove-ca.pem
 ✓ root CA       added to the system trust store
-✓ PHP 8.4       downloaded and registered
+✓ PHP 8.5       downloaded and registered
 ✓ resolver      /etc/resolver/test → 127.0.0.1:53
 init complete — next run: sudo grove install
 ```
@@ -214,9 +214,9 @@ grove list
 
 ```text
 SITE              DRIVER     PHP     HTTPS  URL
-blog.test         laravel    8.4     no     http://blog.test
-shop.test         laravel    8.4     no     http://shop.test
-docs.test         static     8.4     no     http://docs.test
+blog.test         laravel    8.5     no     http://blog.test
+shop.test         laravel    8.5     no     http://shop.test
+docs.test         static     8.5     no     http://docs.test
 ```
 
 Grove auto-detects the right driver (Laravel, WordPress, plain PHP, static, or a
@@ -235,7 +235,7 @@ grove up             # link + pin PHP/Node + start services + optional dev
 ```toml
 # grove.toml
 name = "myapp"
-php = "8.4"
+php = "8.5"
 services = ["mysql", "redis"]
 dev = true
 ```
@@ -244,7 +244,7 @@ dev = true
 Bringing up myapp…
   ✓ link
   ✓ https on
-  ✓ php 8.4
+  ✓ php 8.5
   ✓ mysql
   ✓ redis
   ✓ dev
@@ -419,16 +419,17 @@ grove node use 22
 ### Use them in your terminal (drop Herd/Valet)
 
 By default Grove uses these bundled runtimes to *serve* your sites. To also use
-them in your shell — so `php`, `composer`, `node`, `npm`, `npx` and `laravel`
-resolve to whatever version each project pins — add the shims to your PATH:
+them in your shell — so `php`, `composer`, `cpx`, `node`, `npm`, `npx` and
+`laravel` resolve to whatever version each project pins — add the shims to your
+PATH:
 
 ```bash
 grove path install
 ```
 
 ```text
-✓ Installed shims for php, composer, node, npm, npx, laravel.
-✓ provisioned toolchain: PHP 8.4 CLI, Composer, Node 22
+✓ Installed shims for php, composer, cpx, node, npm, npx, laravel.
+✓ provisioned toolchain: PHP 8.5 CLI, Composer, cpx, Node 22
 
     echo 'export PATH="$HOME/Library/Application Support/Grove/shims:$PATH"' >> ~/.zshrc
 ```

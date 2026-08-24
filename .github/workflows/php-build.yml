@@ -1,0 +1,222 @@
+name: PHP runtimes
+
+# Grove's own static PHP builds.
+#
+# Neither of static-php-cli's prebuilt sets is enough on its own: `common` ships
+# pdo_sqlite/pdo_pgsql but no intl or mysqli, `bulk` ships intl/mysqli/sodium/
+# readline/apcu/xsl but drops those two PDO drivers. Laravel's default database
+# is SQLite, Grove bundles PostgreSQL, WordPress needs mysqli and a large slice
+# of Packagist wants intl — so Grove builds the union itself.
+#
+# The extension list lives in Rust (`grove_runtime::extensions::BUILD_SET`) and
+# is emitted here by `grove php craft`, so the binary that audits a build is the
+# same one that specified it.
+#
+# Assets are published to a rolling `php-runtimes` release, named exactly like
+# upstream's (`php-<version>-<cli|fpm>-<os>-<arch>.tar.gz`), so `grove php
+# install` needs no special-casing beyond the download host.
+
+on:
+  workflow_dispatch:
+    inputs:
+      php-versions:
+        description: 'PHP minor versions to build, comma separated'
+        required: false
+        default: '8.5,8.4,8.3'
+  # Upstream cuts patch releases monthly; rebuild after they land so
+  # `grove php install` keeps resolving to a current patch.
+  schedule:
+    - cron: '0 5 8 * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: php-build
+  cancel-in-progress: false
+
+jobs:
+  # The extension list is authored in Rust, so it is read out of the binary
+  # rather than duplicated in YAML. Only the generated craft.yml files travel to
+  # the build jobs — the binary itself can't, it is built for this runner.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.split.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the Grove CLI (for `grove php craft`)
+        run: cargo build -p grove-cli --release
+
+      - id: split
+        name: Expand the version list into a matrix
+        env:
+          RAW: ${{ inputs.php-versions || '8.5,8.4,8.3' }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          versions = [v.strip() for v in os.environ["RAW"].split(",") if v.strip()]
+          if not versions:
+              raise SystemExit("no PHP versions requested")
+          print("versions=" + json.dumps(versions))
+          PY
+
+      - name: Generate a craft.yml per version
+        env:
+          RAW: ${{ inputs.php-versions || '8.5,8.4,8.3' }}
+        run: |
+          set -euo pipefail
+          mkdir -p craft
+          echo "$RAW" | tr ',' '\n' | while read -r v; do
+            v=$(echo "$v" | tr -d '[:space:]')
+            [ -n "$v" ] || continue
+            ./target/release/grove php craft --php "$v" > "craft/craft-$v.yml"
+            echo "--- craft-$v.yml ---"
+            cat "craft/craft-$v.yml"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: craft-configs
+          path: craft/
+          retention-days: 1
+
+  build:
+    name: ${{ matrix.target.name }} · php ${{ matrix.php }}
+    needs: plan
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ${{ fromJson(needs.plan.outputs.versions) }}
+        target:
+          - name: macos-aarch64
+            runner: macos-15
+          - name: macos-x86_64
+            runner: macos-15-intel
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: craft-configs
+          path: craft
+
+      - name: Stage the build directory
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          cp "craft/craft-${{ matrix.php }}.yml" work/craft.yml
+          cat work/craft.yml
+
+      # macOS: spc drives Homebrew for autoconf/bison/re2c and friends. GitHub's
+      # macOS runners ship Homebrew and the Xcode command line tools already,
+      # which is the whole reason this build belongs in CI and not on a user's
+      # machine — Grove itself must never need a toolchain.
+      - name: Build (macOS)
+        if: startsWith(matrix.target.name, 'macos')
+        working-directory: work
+        run: |
+          set -euo pipefail
+          curl -#fSL -o spc.tar.gz \
+            "https://github.com/crazywhalecc/static-php-cli/releases/latest/download/spc-macos-$(uname -m).tar.gz"
+          tar -xzf spc.tar.gz
+          ./spc --version
+          ./spc craft craft.yml -n
+
+      # Linux: build inside Alpine so the result is a genuinely static musl
+      # binary that runs on any distribution, glibc version irrelevant.
+      - name: Build (Linux, static musl in Alpine)
+        if: startsWith(matrix.target.name, 'linux')
+        working-directory: work
+        run: |
+          set -euo pipefail
+          cat > run.sh <<'SH'
+          #!/bin/sh
+          set -e
+          apk add --no-cache autoconf automake gettext bash binutils bison build-base \
+            cmake curl file flex g++ gcc git jq libgcc libtool libstdc++ linux-headers \
+            m4 make pkgconfig re2c wget xz gettext-dev binutils-gold
+          cd /work
+          curl -#fSL "https://github.com/crazywhalecc/static-php-cli/releases/latest/download/spc-linux-$(uname -m).tar.gz" | tar -xz -C /work
+          ./spc --version
+          ./spc craft craft.yml -n
+          SH
+          chmod +x run.sh
+          docker run --rm -v "$PWD:/work" -w /work alpine:3.21 /work/run.sh
+
+      # A build missing intl or pdo_sqlite is worse than no build at all:
+      # `grove php install` would hand it out as the complete one. Gate the
+      # release on the extensions that are the entire reason this exists.
+      - name: Verify the extension set
+        working-directory: work
+        run: |
+          set -euo pipefail
+          ./buildroot/bin/php -v
+          ./buildroot/bin/php -m
+          test -x ./buildroot/bin/php-fpm
+          ./buildroot/bin/php -r '
+            $want = ["intl", "mysqli", "sodium", "readline", "apcu", "xsl",
+                     "pdo_sqlite", "pdo_pgsql", "pdo_mysql", "Zend OPcache",
+                     "redis", "igbinary", "zip", "gd", "sockets", "pcntl"];
+            $missing = array_values(array_filter($want, fn ($e) => !extension_loaded($e)));
+            if ($missing) {
+                fwrite(STDERR, "::error::missing extensions: " . implode(", ", $missing) . PHP_EOL);
+                exit(1);
+            }
+            echo "all ", count($want), " checked extensions present", PHP_EOL;
+          '
+
+      - name: Package
+        working-directory: work
+        run: |
+          set -euo pipefail
+          full=$(./buildroot/bin/php -r 'echo PHP_VERSION;')
+          echo "Packaging php $full for ${{ matrix.target.name }}"
+          mkdir -p dist
+          tar -czf "dist/php-${full}-cli-${{ matrix.target.name }}.tar.gz" -C buildroot/bin php
+          tar -czf "dist/php-${full}-fpm-${{ matrix.target.name }}.tar.gz" -C buildroot/bin php-fpm
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: php-${{ matrix.php }}-${{ matrix.target.name }}
+          path: work/dist/*.tar.gz
+          retention-days: 7
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: php-*
+          merge-multiple: true
+          path: dist
+
+      - run: ls -la dist
+
+      # A rolling tag, not a versioned one: `grove php install` resolves the
+      # newest patch out of this release's asset list, so new archives are added
+      # to the same release rather than scattered across many.
+      - name: Publish to the rolling php-runtimes release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! gh release view php-runtimes --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create php-runtimes \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "PHP runtimes" \
+              --notes "Static PHP builds for \`grove php install\`, carrying the union of static-php-cli's \`common\` and \`bulk\` extension sets. Built by .github/workflows/php-build.yml." \
+              --latest=false
+          fi
+          gh release upload php-runtimes dist/*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --clobber

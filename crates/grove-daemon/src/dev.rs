@@ -561,7 +561,8 @@ fn resolve_php_cli(paths: &GrovePaths, version: &str) -> Option<PathBuf> {
     if let Some(cli) = reg.get(version).and_then(|b| b.cli_binary.clone()) {
         return Some(cli);
     }
-    grove_runtime::install::install_cli(paths, version, |_| {}).ok()
+    let variant = grove_runtime::install::Variant::configured(paths);
+    grove_runtime::install::install_cli(paths, version, variant, |_| {}).ok()
 }
 
 /// Issue a Grove-CA leaf for `hostname` into a Grove-owned dir and return its
