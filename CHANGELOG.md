@@ -5,7 +5,34 @@ All notable changes to Elyra Grove are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] — 2026-08-25
+
+This release closes every finding from a security review of the daemon, the
+proxy, the tunnel and the secret-sync client. Most of it needs nothing from you;
+these five do.
+
+### Upgrade notes
+
+- **Re-run `sudo grove install`.** It records the numeric run user in the
+  service unit, which is what lets the daemon authorise its IPC socket and drop
+  privileges precisely. Existing installs keep working without it, on a weaker
+  signal.
+- **`sudo grove ca rotate`,** once. A certificate cannot gain a name constraint
+  after the fact, so an existing root CA stays able to sign any hostname until
+  it is replaced. `grove doctor` warns until you do. Every site's certificate is
+  re-issued on next use.
+- **`grove-tunnel` now requires `--token`.** An empty token used to disable
+  authentication, so the simplest way to start a server was also the open one.
+  Pass `--allow-anonymous` to keep that behaviour deliberately.
+- **`grove secret share` is now required to add a teammate.** The client no
+  longer accepts a recipient list the backend changed on its own, so a new
+  member is refused until someone records the change locally.
+- **`grove request <id> --as curl` now emits `Authorization: [redacted]`.** The
+  snippet will not reproduce an authenticated request until you put your own
+  credential back. `grove replay` is unaffected and still works.
+
+If you run the tunnel server, note that its control channel is still
+unencrypted — see the new Security section in [TUNNEL.md](docs/TUNNEL.md).
 
 ### Added
 
@@ -95,6 +122,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose `php -m` came from a different archive than the one serving requests
   would have been worse than not auditing at all. Switching a version's variant
   replaces both binaries, so they can never disagree.
+- **Redis is fetched from `download.redis.io`**, not GitHub's git-archive of the
+  tag. GitHub generates those tarballs on demand and does not promise their
+  bytes stay stable, so the old URL was unverifiable by construction.
+- `e-db` is pinned to a revision in `[workspace.dependencies]` rather than
+  tracking whatever `kwhorne/e` last pushed. An unpinned git dependency let a
+  commit there land in Grove's lockfile with no review — which is how
+  `keyring`, and with it a `libdbus-1-dev` build requirement on Linux, nearly
+  arrived.
+
+### Security
+
+- **The daemon's IPC socket authenticates its callers.** It was `0777` with no
+  check at all, and its requests are not advisory: `PhpInstall` and
+  `ServiceInstall` make root download and execute a binary, `DbDumpFile` makes
+  root write a file to a caller-chosen path. Any local process could issue them
+  — a compromised `npm`/`composer` postinstall hook, or one of the PHP apps
+  Grove serves. The socket is now `0660`, owned by the user Grove serves, and
+  every connection is checked with `SO_PEERCRED`/`LOCAL_PEERCRED` before the
+  request is read.
+- **Root no longer executes anything out of `$GROVE_HOME`.** That directory is
+  the user's own home, so its contents — and the `php-builds.json` that *names*
+  the php-fpm binary — are user-writable. Rewriting one JSON file made root exec
+  an arbitrary path at the next request. The PHP-FPM master, Redis, the Redis
+  build, the runtime version probes, and `grove new`'s Composer and Laravel
+  installer runs all drop to the invoking user now. PostgreSQL and MySQL already
+  did, because they refuse to run as root at all.
+- **Root no longer writes secrets through symlinks, or world-readable.** A
+  symlink at `certs/grove-ca.key` had root write *and* `chmod` the target. The
+  opposite failure was the Vite dev-server keys, which got no `chmod` at all and
+  so were simply left world-readable. Every sensitive write now sets its mode in
+  `open(2)` and refuses a symlinked destination. The MySQL migration dump also
+  moves out of world-writable `/tmp`.
+- **The root CA is constrained to the TLD Grove serves,** so it can no longer
+  sign `google.com` or a bank — it is in the system trust store, and it had no
+  name constraints. Its private key is also root-owned now: nothing
+  unprivileged needs it, and at user ownership a compromised postinstall hook
+  could have walked off with a machine-trusted signing key.
+- **Certificates are only issued for names Grove actually serves.** The SNI
+  resolver minted a leaf for whatever hostname was asked for, with no check
+  against the site registry — and the HTTPS listener binds `0.0.0.0`, so anyone
+  on the network who could reach it could obtain a valid, machine-trusted
+  certificate for any name. The certificate cache is also bounded now, and only
+  a site's own certificate is persisted.
+- **Downloads are verified** against the publisher's own SHA-256 before they are
+  written or executed: Grove's PHP builds and cpx via the GitHub release digest,
+  Node via `SHASUMS256.txt`, Composer via its `.sha256`, PostgreSQL via the
+  asset's `.sha256`, Redis via `redis/redis-hashes`. Upstream `common`/`bulk`
+  publish no checksum at all and MySQL publishes none usable; both say so per
+  download rather than implying otherwise.
+- **The request log redacts credentials.** Grove is the proxy, so it sees every
+  `Authorization` header, session cookie and login password — and handed them to
+  the GUI, the curl/`.http`/Pest snippets, and the MCP tools, which exist to send
+  a request to an AI assistant. `grove replay` uses a separate in-process path
+  and still sends the real credentials.
+- **The tunnel server closes its open defaults.** A token is required; the apex
+  domain is no longer claimable as a subdomain; tokens and Basic auth compare in
+  constant time; both HTTP servers have a header-read deadline; and
+  `X-Forwarded-For` is overwritten with the real peer instead of passed through.
+- **Secret sync no longer lets the backend choose who can read a project.** The
+  client records the recipient list locally and refuses to encrypt to one the
+  server changed on its own. Payloads carry a version *inside* the encryption,
+  so replaying an old one — reinstating a rotated secret, or a revoked member's
+  access — is caught.
+- The **license key** is `0600` rather than `0644`. It doubles as the bearer
+  token for the Teams backend, so every local user could read it.
+- The **LaunchDaemon plist** escapes the values it interpolates. `$GROVE_HOME`
+  is user-controlled under `sudo -E`, and a value containing `</string>` could
+  have injected keys into a root service.
+
+### Fixed
+
+- **Leaf certificates now actually renew.** `issue_leaf` gives them 397 days and
+  its comment promised the daemon renewed them, but the cached pair was returned
+  unconditionally — so 397 days after a site was first served over HTTPS, its
+  certificate expired and every request to it failed TLS. They are replaced
+  within 30 days of expiry, judged from the certificate's own `notAfter`.
+- An incomplete root CA is no longer silently replaced. `load_or_create`
+  regenerated whenever *either* file was missing, minting a new signing identity
+  while the trust store still held the old certificate — every site failing TLS
+  with nothing pointing at the cause. It now refuses and says how to start over.
+- `grove ca trust` no longer reads the CA private key, which it never needed; an
+  unprivileged run gets the clear "needs elevation" instead of a permissions
+  error.
+- The license verifier's hex decoder no longer panics on non-ASCII input, and
+  the clock helper no longer treats an unreadable clock as "not expired".
 
 ## [1.4.2] — 2026-08-08
 
@@ -757,6 +869,7 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[1.5.0]: https://github.com/kwhorne/grove/releases/tag/v1.5.0
 [1.4.2]: https://github.com/kwhorne/grove/releases/tag/v1.4.2
 [1.4.1]: https://github.com/kwhorne/grove/releases/tag/v1.4.1
 [1.4.0]: https://github.com/kwhorne/grove/releases/tag/v1.4.0
