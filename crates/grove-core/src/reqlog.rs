@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use time::macros::format_description;
 use time::OffsetDateTime;
 
+use crate::redact;
+
 /// Largest request body we retain per entry (enough to replay typical form/JSON
 /// posts without unbounded memory growth).
 pub const MAX_BODY: usize = 1024 * 1024;
@@ -176,23 +178,40 @@ impl RequestLog {
     }
 
     /// Headers + body for one request, for the detail view.
+    /// One captured request, with credentials redacted.
+    ///
+    /// This is the shape that *leaves* the daemon — over IPC to the CLI and GUI,
+    /// into the curl/`.http`/Pest snippets, into the explain bundle, and through
+    /// the MCP tools to an AI assistant. Grove sits in front of every request, so
+    /// without this it was handing out `Authorization` headers, session cookies
+    /// and login passwords to all of them.
+    ///
+    /// [`Self::captured`] deliberately does not redact: it feeds `grove replay`,
+    /// stays inside the daemon, and needs the real credentials to re-issue a
+    /// request that works.
     pub fn detail(&self, id: u64) -> Option<RequestDetail> {
         let q = self.inner.lock().ok()?;
         let c = q.iter().find(|c| c.entry.id == id)?;
+        let mut headers = c.headers.clone();
+        redact::headers(&mut headers);
         Some(RequestDetail {
             id,
             method: c.entry.method.clone(),
             host: c.host.clone(),
-            path: c.entry.path.clone(),
+            path: redact::path_with_query(&c.entry.path).into_owned(),
             https: c.entry.https,
             status: c.entry.status,
-            headers: c.headers.clone(),
-            body: String::from_utf8_lossy(&c.body).into_owned(),
+            headers,
+            body: redact::body(&String::from_utf8_lossy(&c.body)).into_owned(),
             body_truncated: c.body_truncated,
         })
     }
 
-    /// Everything needed to replay one request.
+    /// Everything needed to replay one request, credentials included.
+    ///
+    /// Not redacted, and not sent over IPC: a replay that dropped the session
+    /// cookie would just produce a different request. See [`Self::detail`] for
+    /// the shape that leaves the daemon.
     pub fn captured(&self, id: u64) -> Option<CapturedRequest> {
         let q = self.inner.lock().ok()?;
         let c = q.iter().find(|c| c.entry.id == id)?;
@@ -216,6 +235,82 @@ impl Default for RequestLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A login request, of the kind Grove sees constantly.
+    fn login_record() -> Record<'static> {
+        Record {
+            site: "myapp.test",
+            host: "myapp.test",
+            method: "POST",
+            path: "/login?api_key=sk-live-QUERY",
+            status: 302,
+            duration_ms: 12,
+            https: true,
+            headers: vec![
+                ("Authorization".into(), "Bearer sk-live-HEADER".into()),
+                ("Cookie".into(), "laravel_session=SESSIONVALUE".into()),
+                ("Accept".into(), "text/html".into()),
+            ],
+            body: b"email=me%40example.com&password=hunter2".to_vec(),
+            body_truncated: false,
+        }
+    }
+
+    /// The seam this whole feature rests on: what leaves the daemon is redacted,
+    /// what replays it is not.
+    #[test]
+    fn detail_is_redacted_and_replay_is_not() {
+        let log = RequestLog::new(8);
+        let id = log.record(login_record());
+
+        let detail = log.detail(id).expect("detail");
+        let rendered = format!("{detail:?}");
+        for secret in ["sk-live-HEADER", "SESSIONVALUE", "hunter2", "sk-live-QUERY"] {
+            assert!(
+                !rendered.contains(secret),
+                "{secret} leaked into RequestDetail: {rendered}"
+            );
+        }
+        // Still legible: the names and the non-secret fields survive, or the
+        // entry stops being worth keeping.
+        assert!(detail.headers.iter().any(|(k, _)| k == "Authorization"));
+        assert_eq!(
+            detail
+                .headers
+                .iter()
+                .find(|(k, _)| k == "Accept")
+                .map(|(_, v)| v.as_str()),
+            Some("text/html")
+        );
+        assert!(detail.body.contains("email=me%40example.com"));
+        assert!(detail.path.starts_with("/login?api_key="));
+
+        // Replay needs the real thing, and never crosses the IPC boundary.
+        let captured = log.captured(id).expect("captured");
+        let header_values = captured
+            .headers
+            .iter()
+            .map(|(_, v)| v.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        for secret in ["sk-live-HEADER", "SESSIONVALUE"] {
+            assert!(
+                header_values.contains(secret),
+                "{secret} was stripped from the replay path, which would change the request"
+            );
+        }
+        // The body is bytes here, not text.
+        let raw_body = String::from_utf8_lossy(&captured.body);
+        assert!(
+            raw_body.contains("hunter2"),
+            "the replayed body must be byte-for-byte what arrived: {raw_body}"
+        );
+        assert!(
+            captured.path.contains("sk-live-QUERY"),
+            "the replayed path must keep its query intact: {}",
+            captured.path
+        );
+    }
 
     fn rec<'a>(site: &'a str, method: &'a str, path: &'a str, status: u16) -> Record<'a> {
         Record {
