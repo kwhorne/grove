@@ -104,6 +104,30 @@ jobs:
             echo "GROVE_PRO_SSH_KEY not set — building with the open-source stub (no Pro)."
           fi
 
+      # The injected crate is the one dependency the open-source CI never builds,
+      # so a dependency it declares differently from the workspace reaches us
+      # here or nowhere. When it declares a git dep the workspace pins to a rev,
+      # cargo treats the two as separate sources and the same type exists twice —
+      # which surfaces as a wall of E0308s in grove-gui, nowhere near the cause.
+      # Name it instead.
+      - name: Check grove-pro agrees with the workspace on shared git deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=crates/grove-pro/Cargo.toml
+          [ -f "$manifest" ] || exit 0
+          bad=$(grep -nE '^[a-zA-Z0-9_-]+ *= *\{[^}]*git *=' "$manifest" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::grove-pro declares a git dependency directly:"
+            echo "$bad"
+            echo "::error::Use \`<dep>.workspace = true\` so it inherits the workspace pin."
+            echo "::error::A rev-pinned workspace dep and an unpinned one are two sources to"
+            echo "::error::cargo, so the crate ends up in the graph twice and its types stop"
+            echo "::error::unifying. See the e-db pin in the root Cargo.toml."
+            exit 1
+          fi
+          echo "grove-pro declares no git deps of its own."
+
       # Builds + signs the GUI, generates latest.json, creates/updates the
       # GitHub Release and uploads the bundles + updater artifacts.
       - name: Build & release GUI (Tauri)
