@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::StreamExt;
 use http_body_util::BodyExt;
@@ -15,7 +16,7 @@ use hyper::header::{HeaderValue, AUTHORIZATION, HOST, WWW_AUTHENTICATE};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_yamux::{Config as YamuxConfig, Control, Session};
@@ -32,8 +33,12 @@ pub struct ServerConfig {
     pub http_addr: SocketAddr,
     /// Wildcard apex, e.g. `tunnel.example.com`.
     pub domain: String,
-    /// Shared secret clients must present. Empty = open server (no auth).
-    pub token: String,
+    /// Shared secret clients must present.
+    ///
+    /// `None` is an open server, and reaching it now takes an explicit
+    /// `--allow-anonymous`. It used to be what you got by leaving `--token`
+    /// off, which meant the obvious deployment was the unauthenticated one.
+    pub token: Option<String>,
     /// Scheme advertised in public URLs (`http` or, behind a TLS terminator,
     /// `https`).
     pub scheme: String,
@@ -67,15 +72,21 @@ pub async fn run(cfg: ServerConfig) -> anyhow::Result<()> {
         tokio::spawn(async move {
             loop {
                 match http.accept().await {
-                    Ok((stream, _peer)) => {
+                    Ok((stream, peer)) => {
                         let registry = registry.clone();
                         let domain = domain.clone();
                         let scheme = scheme.clone();
                         tokio::spawn(async move {
                             let svc = service_fn(move |req| {
-                                handle_public(req, registry.clone(), domain.clone(), scheme.clone())
+                                handle_public(
+                                    req,
+                                    registry.clone(),
+                                    domain.clone(),
+                                    scheme.clone(),
+                                    peer,
+                                )
                             });
-                            if let Err(e) = http1::Builder::new()
+                            if let Err(e) = public_http()
                                 .serve_connection(TokioIo::new(stream), svc)
                                 .await
                             {
@@ -139,7 +150,7 @@ async fn handle_control(
     };
 
     let hello: Hello = read_msg(&mut ctrl).await?;
-    if !cfg.token.is_empty() && hello.token != cfg.token {
+    if !token_ok(cfg.token.as_deref(), &hello.token) {
         let _ = write_msg(
             &mut ctrl,
             &Reply::Error {
@@ -200,8 +211,12 @@ async fn pick_subdomain(registry: &Registry, requested: Option<String>) -> Strin
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
             .collect::<String>()
             .to_lowercase();
-        if !clean.is_empty() && !map.contains_key(&clean) {
+        let reserved = RESERVED_SUBDOMAINS.contains(&clean.as_str());
+        if !clean.is_empty() && !reserved && !map.contains_key(&clean) {
             return clean;
+        }
+        if reserved {
+            tracing::debug!(requested = %clean, "refused a reserved subdomain");
         }
     }
     loop {
@@ -235,6 +250,7 @@ async fn handle_public(
     registry: Registry,
     domain: String,
     scheme: String,
+    peer: SocketAddr,
 ) -> Result<Response<Body>, hyper::Error> {
     // Caddy on-demand-TLS authorization endpoint: only allow certificates for
     // hostnames under our own domain.
@@ -264,7 +280,9 @@ async fn handle_public(
         .and_then(|h| h.to_str().ok())
         .map(|h| h.split(':').next().unwrap_or(h).to_string())
         .unwrap_or_default();
-    let subdomain = host.split('.').next().unwrap_or("").to_lowercase();
+    let Some(subdomain) = subdomain_of(&host, &domain) else {
+        return Ok(text(StatusCode::NOT_FOUND, "No such tunnel.\n"));
+    };
 
     let tunnel = match registry.lock().await.get(&subdomain).cloned() {
         Some(t) => t,
@@ -290,6 +308,13 @@ async fn handle_public(
     }
     if let Ok(hv) = HeaderValue::from_str(&scheme) {
         req.headers_mut().insert("x-forwarded-proto", hv);
+    }
+    // Overwrite rather than append: this *is* the edge, so any inbound
+    // `X-Forwarded-For` was written by the caller. Passing it through let anyone
+    // tell the app behind the tunnel which IP they were coming from — enough to
+    // slip past an allow-list or poison a rate limiter.
+    if let Ok(hv) = HeaderValue::from_str(&peer.ip().to_string()) {
+        req.headers_mut().insert("x-forwarded-for", hv);
     }
 
     match relay(req, tunnel).await {
@@ -317,6 +342,93 @@ async fn relay(req: Request<Incoming>, tunnel: Tunnel) -> anyhow::Result<Respons
     Ok(resp.map(|b| b.boxed()))
 }
 
+/// An HTTP/1 server with a header-read deadline.
+///
+/// A bare builder waits forever for request headers, so a handful of sockets
+/// that connect and dribble a byte at a time can hold the server open
+/// indefinitely — slowloris. The daemon's own proxy already sets this; the
+/// tunnel, which is the part actually exposed to the internet, did not.
+///
+/// The timer is not optional: hyper panics on the first connection that reaches
+/// the deadline if a timeout is configured without one.
+fn public_http() -> http1::Builder {
+    let mut builder = http1::Builder::new();
+    builder.timer(TokioTimer::new());
+    builder.header_read_timeout(HEADER_READ_TIMEOUT);
+    builder
+}
+
+/// How long a client may take to send its request headers.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Subdomain names a client may not claim.
+///
+/// Not a security boundary on its own — with a token, whoever can connect can
+/// pick a name — but these are the ones that impersonate the service itself or
+/// its operator, and there is no reason to hand them out.
+const RESERVED_SUBDOMAINS: &[&str] = &[
+    "www",
+    "api",
+    "admin",
+    "mail",
+    "smtp",
+    "ftp",
+    "ns",
+    "ns1",
+    "ns2",
+    "mx",
+    "autodiscover",
+    "static",
+    "assets",
+    "cdn",
+    "status",
+    "dashboard",
+    "login",
+    "account",
+    "billing",
+    "grove",
+    "tunnel",
+];
+
+/// The subdomain a public request is for, given the server's own domain.
+///
+/// Requires the host to sit *under* the domain. The previous rule took the
+/// first label of whatever `Host` said, so a request to the apex
+/// (`tunnel.example.com`) yielded the subdomain `tunnel` — meaning a client that
+/// claimed `tunnel` captured traffic aimed at the service itself. Anything that
+/// is not `<something>.<domain>` now matches no tunnel at all.
+fn subdomain_of(host: &str, domain: &str) -> Option<String> {
+    let host = host.split(':').next().unwrap_or(host).to_lowercase();
+    let domain = domain.to_lowercase();
+    let prefix = host.strip_suffix(&format!(".{domain}"))?;
+    if prefix.is_empty() {
+        return None;
+    }
+    Some(prefix.to_string())
+}
+
+/// Compare a presented token against the configured one in constant time.
+///
+/// `None` is an open server. A plain `!=` leaks the length of the shared prefix
+/// to anyone who can measure a few thousand handshakes.
+fn token_ok(configured: Option<&str>, presented: &str) -> bool {
+    let Some(expected) = configured else {
+        return true;
+    };
+    ct_eq(expected.as_bytes(), presented.as_bytes())
+}
+
+/// Constant-time byte equality.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    use subtle::ConstantTimeEq;
+    // Lengths differing is not itself secret — the comparison below needs equal
+    // lengths, and `ct_eq` on slices of different lengths is not defined.
+    if a.len() != b.len() {
+        return false;
+    }
+    a.ct_eq(b).into()
+}
+
 fn basic_auth_ok(req: &Request<Incoming>, expected: &str) -> bool {
     let Some(val) = req
         .headers()
@@ -328,8 +440,10 @@ fn basic_auth_ok(req: &Request<Incoming>, expected: &str) -> bool {
     let Some(b64) = val.strip_prefix("Basic ") else {
         return false;
     };
-    let decoded = base64_decode(b64.trim());
-    decoded.as_deref() == Some(expected.as_bytes())
+    let Some(decoded) = base64_decode(b64.trim()) else {
+        return false;
+    };
+    ct_eq(&decoded, expected.as_bytes())
 }
 
 /// Minimal standard base64 decoder (no external crate).
@@ -360,4 +474,107 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The apex hijack. The old rule took the first label of `Host`, so a
+    /// request to the server's own domain yielded the subdomain `tunnel` — and a
+    /// client that claimed `tunnel` captured traffic meant for the service.
+    #[test]
+    fn the_apex_belongs_to_no_tunnel() {
+        for host in [
+            "tunnel.example.com",
+            "tunnel.example.com:80",
+            "TUNNEL.EXAMPLE.COM",
+        ] {
+            assert_eq!(
+                subdomain_of(host, "tunnel.example.com"),
+                None,
+                "{host} must not resolve to a tunnel"
+            );
+        }
+    }
+
+    #[test]
+    fn a_subdomain_of_our_domain_resolves() {
+        assert_eq!(
+            subdomain_of("abc123.tunnel.example.com", "tunnel.example.com").as_deref(),
+            Some("abc123")
+        );
+        // Case and port are not part of the name.
+        assert_eq!(
+            subdomain_of("ABC123.tunnel.example.com:8080", "tunnel.example.com").as_deref(),
+            Some("abc123")
+        );
+    }
+
+    /// A host that merely *ends with* our domain's text, or is somewhere else
+    /// entirely, is not ours.
+    #[test]
+    fn foreign_hosts_resolve_to_nothing() {
+        for host in [
+            "eviltunnel.example.com",
+            "tunnel.example.com.evil.test",
+            "example.com",
+            "localhost",
+            "",
+        ] {
+            assert_eq!(
+                subdomain_of(host, "tunnel.example.com"),
+                None,
+                "{host} must not resolve to a tunnel"
+            );
+        }
+    }
+
+    #[test]
+    fn an_open_server_accepts_anything_and_a_closed_one_does_not() {
+        assert!(token_ok(None, ""), "an open server takes any token");
+        assert!(token_ok(None, "whatever"));
+
+        assert!(token_ok(Some("s3cret"), "s3cret"));
+        for wrong in ["", "s3cre", "s3cret ", "S3CRET", "s3cretx"] {
+            assert!(!token_ok(Some("s3cret"), wrong), "{wrong:?} was accepted");
+        }
+    }
+
+    #[test]
+    fn constant_time_equality_still_gets_the_answer_right() {
+        assert!(ct_eq(b"abc", b"abc"));
+        assert!(!ct_eq(b"abc", b"abd"));
+        assert!(!ct_eq(b"abc", b"ab"), "differing lengths are not equal");
+        assert!(ct_eq(b"", b""));
+    }
+
+    /// Reserved names exist so a client cannot pose as the service or its
+    /// operator. Pinned as a list so removing one is a deliberate act.
+    #[test]
+    fn service_names_are_reserved() {
+        for name in ["www", "api", "admin", "grove", "tunnel", "status"] {
+            assert!(
+                RESERVED_SUBDOMAINS.contains(&name),
+                "{name} should be reserved"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reserved_name_is_not_handed_out() {
+        let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
+        let picked = pick_subdomain(&registry, Some("admin".into())).await;
+        assert_ne!(picked, "admin", "a reserved name must not be claimable");
+        assert!(!picked.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_free_name_is_still_honoured() {
+        let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
+        assert_eq!(
+            pick_subdomain(&registry, Some("my-app".into())).await,
+            "my-app"
+        );
+    }
 }

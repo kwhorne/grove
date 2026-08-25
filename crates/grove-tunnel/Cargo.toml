@@ -25,3 +25,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["env"] }
+# Constant-time comparison for the shared token and Basic auth. Already in the
+# lockfile; a hand-rolled loop is the kind of thing a compiler is free to
+# short-circuit back into a timing leak.
+subtle = "2"
