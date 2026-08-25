@@ -41,6 +41,7 @@ fn dirs_home() -> Option<PathBuf> {
 /// including under `sudo -E`. A path containing `&` or `<` produced a plist that
 /// launchd rejects; one containing `</string>` could close the element early and
 /// inject keys of the attacker's choosing into a **root** LaunchDaemon.
+#[cfg(target_os = "macos")]
 fn xml_escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
@@ -219,7 +220,7 @@ fn run(cmd: &str, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
