@@ -31,6 +31,12 @@ on:
 permissions:
   contents: write
 
+# spc resolves its pre-built dependencies through api.github.com. Unauthenticated
+# from a shared Actions runner IP that hits the 60/hour rate limit and the build
+# dies at `spc download`; static-php-cli's own CI passes this for the same reason.
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 concurrency:
   group: php-build
   cancel-in-progress: false
@@ -125,7 +131,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -#fSL -o spc.tar.gz \
-            "https://github.com/crazywhalecc/static-php-cli/releases/latest/download/spc-macos-$(uname -m).tar.gz"
+            "https://github.com/crazywhalecc/static-php-cli/releases/latest/download/spc-${{ matrix.target.name }}.tar.gz"
           tar -xzf spc.tar.gz
           ./spc --version
           ./spc craft craft.yml -n
@@ -144,12 +150,13 @@ jobs:
             cmake curl file flex g++ gcc git jq libgcc libtool libstdc++ linux-headers \
             m4 make pkgconfig re2c wget xz gettext-dev binutils-gold
           cd /work
-          curl -#fSL "https://github.com/crazywhalecc/static-php-cli/releases/latest/download/spc-linux-$(uname -m).tar.gz" | tar -xz -C /work
+          curl -#fSL "https://github.com/crazywhalecc/static-php-cli/releases/latest/download/spc-${{ matrix.target.name }}.tar.gz" | tar -xz -C /work
           ./spc --version
           ./spc craft craft.yml -n
           SH
           chmod +x run.sh
-          docker run --rm -v "$PWD:/work" -w /work alpine:3.21 /work/run.sh
+          docker run --rm -v "$PWD:/work" -w /work \
+            -e GITHUB_TOKEN="$GITHUB_TOKEN" alpine:3.21 /work/run.sh
 
       # A build missing intl or pdo_sqlite is worse than no build at all:
       # `grove php install` would hand it out as the complete one. Gate the
