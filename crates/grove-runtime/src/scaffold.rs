@@ -54,6 +54,18 @@ pub fn ensure_composer(paths: &GrovePaths) -> Result<PathBuf> {
     resp.into_reader()
         .take(64 * 1024 * 1024)
         .read_to_end(&mut buf)?;
+
+    // Composer publishes the digest next to the PHAR. Check it before writing:
+    // this file is executed by every `grove new` and by the `composer` shim.
+    let sum = ureq::get("https://getcomposer.org/composer-stable.phar.sha256")
+        .call()
+        .map_err(|e| ScaffoldError::Http(e.to_string()))?
+        .into_string()?;
+    let expected = grove_core::checksum::expected_for(&sum, "composer-stable.phar")
+        .ok_or_else(|| ScaffoldError::Http("no sha256 published for composer.phar".into()))?;
+    grove_core::checksum::verify("composer.phar", &buf, &expected)
+        .map_err(|e| ScaffoldError::Command(e.to_string()))?;
+
     std::fs::write(&dest, &buf)?;
     Ok(dest)
 }

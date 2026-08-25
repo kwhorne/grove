@@ -105,6 +105,22 @@ pub fn install(
 
     progress(&format!("downloading {filename}…"));
     let bytes = http_get(&url)?;
+
+    // Node publishes `SHASUMS256.txt` beside every release. Verify before the
+    // archive is unpacked, let alone executed: TLS authenticates nodejs.org, not
+    // the bytes it served.
+    progress("verifying checksum…");
+    let sums = http_get_string(&format!(
+        "https://nodejs.org/dist/v{version}/SHASUMS256.txt"
+    ))?;
+    let expected = grove_core::checksum::expected_for(&sums, &filename).ok_or_else(|| {
+        NodeError::Http(format!(
+            "no sha256 published for {filename} in SHASUMS256.txt"
+        ))
+    })?;
+    grove_core::checksum::verify(&filename, &bytes, &expected)
+        .map_err(|e| NodeError::Http(e.to_string()))?;
+
     progress("extracting…");
     let decoder = flate2::read::GzDecoder::new(&bytes[..]);
     tar::Archive::new(decoder).unpack(&dest)?;

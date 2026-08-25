@@ -248,6 +248,7 @@ impl ServiceManager {
         if !self.is_installed(spec) {
             progress(&format!("downloading {} {}…", spec.name, spec.version));
             let bytes = http_get(&url)?;
+            verify_download(spec, &url, &bytes, &progress)?;
             progress("extracting…");
             extract_tar_gz(&bytes, &root)?;
             // Redis ships source only; compile it in place (no external deps).
@@ -777,6 +778,18 @@ fn save_state(paths: &GrovePaths, state: &ServicesState) {
 
 // ---- download / extract helpers -----------------------------------------
 
+/// As [`http_get`], but for a small text document such as a `.sha256`.
+fn http_get_string(url: &str) -> Result<String> {
+    let resp = ureq::get(url)
+        .set(
+            "User-Agent",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Grove/0.1",
+        )
+        .call()
+        .map_err(|e| ServiceError::Http(e.to_string()))?;
+    resp.into_string().map_err(ServiceError::from)
+}
+
 fn http_get(url: &str) -> Result<Vec<u8>> {
     // A browser-like UA is required by some mirrors (e.g. Oracle's MySQL CDN
     // returns 403 without one).
@@ -792,6 +805,43 @@ fn http_get(url: &str) -> Result<Vec<u8>> {
         .take(1024 * 1024 * 1024)
         .read_to_end(&mut buf)?;
     Ok(buf)
+}
+
+/// Check a downloaded service archive against the publisher's own hash.
+///
+/// Only PostgreSQL's publisher offers one usable here — a `.sha256` beside each
+/// asset. The other two are recorded rather than silently skipped:
+///
+/// - **MySQL** publishes `.md5` and a GPG `.asc`, no SHA-256. MD5 catches a
+///   corrupt transfer but not a chosen collision, and verifying the signature
+///   needs an OpenPGP implementation and MySQL's key. Left unverified rather
+///   than verified in a way that reads stronger than it is.
+/// - **Redis** is fetched as a GitHub git-archive tarball, whose bytes GitHub
+///   does not promise to keep stable — pinning a hash for that URL would break
+///   on their next compression change. The fix is to move to
+///   `download.redis.io` plus the hashes in `redis/redis-hashes`, which is a
+///   source change rather than a verification one.
+fn verify_download(
+    spec: &ServiceSpec,
+    url: &str,
+    bytes: &[u8],
+    progress: &impl Fn(&str),
+) -> Result<()> {
+    if !matches!(spec.kind, ServiceKind::Postgres) {
+        tracing::debug!(
+            service = spec.name,
+            "publisher offers no sha256; archive not verified"
+        );
+        return Ok(());
+    }
+    let filename = url.rsplit('/').next().unwrap_or_default().to_string();
+    progress("verifying checksum…");
+    let doc = http_get_string(&format!("{url}.sha256"))?;
+    let expected = grove_core::checksum::expected_for(&doc, &filename)
+        .ok_or_else(|| ServiceError::Http(format!("no sha256 published for {filename}")))?;
+    grove_core::checksum::verify(&filename, bytes, &expected)
+        .map_err(|e| ServiceError::Http(e.to_string()))?;
+    Ok(())
 }
 
 fn extract_tar_gz(gz_bytes: &[u8], dest: &std::path::Path) -> Result<()> {
