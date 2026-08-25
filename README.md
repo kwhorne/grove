@@ -39,6 +39,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 | Cross-platform | macOS only | macOS + Win | ✅ | ✅ |
 | No Homebrew/Composer/dnsmasq | ❌ | ✅ | ➖ | ✅ |
 | Custom / bring-your-own PHP | ✅ | ❌ | ✅ | ✅ |
+| Full extension set (intl, mysqli, pdo_sqlite…) | ➖ | ➖ | ✅ | ✅ |
 | Bundled static PHP | ❌ | ✅ | ➖ | ✅ |
 | Idle footprint | tiny | small | heavy | tiny |
 | Open / no license wall | ✅ | ❌ | ✅ | ✅ |
@@ -47,7 +48,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 
 - 🌐 **Automatic `*.test` routing** via an embedded DNS resolver — no manual hosts editing.
 - 🔒 **Local HTTPS** with a private root CA and on-demand per-site leaf certificates.
-- 🐘 **Bundled PHP** — install multiple self-contained versions (`grove php install 8.5|8.4|8.3`), with per-site `isolate` and lazy FPM pools.
+- 🐘 **Bundled PHP, with the extensions you actually need** — install multiple self-contained versions (`grove php install 8.5|8.4|8.3`), with per-site `isolate` and lazy FPM pools. The prebuilt static-PHP sets each have a hole — one lacks `pdo_sqlite`/`pdo_pgsql`, the other lacks `intl`/`mysqli` — so Grove builds the union itself: both PDO drivers **and** `intl`, `mysqli`, `sodium`, `readline`, `apcu`, `xsl`. `grove php ext` audits any build and tells you what each gap would cost you.
 - 🐞 **Step-debugging** — `grove debug on` loads Xdebug into the FPM pools (trigger mode, zero idle overhead) so a DAP-capable editor can set breakpoints; `grove debug env` wires up CLI debugging (artisan, tests).
 - ⬢ **Bundled Node.js** — download node · npm · npx, with per-site Node versions; no nvm or Homebrew.
 - 🗄️ **Bundled services** — Grove downloads and supervises PostgreSQL, MySQL and Redis itself, so there is no database/cache or Homebrew to install separately.
@@ -61,7 +62,8 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🤖 **AI tools (MCP)** — `grove mcp` exposes your sites, requests, webhooks, logs, and database schema to Claude/Cursor over the Model Context Protocol. Read-only, local-only — ask your assistant "what did the last 500 look like?" or "show me the `orders` schema."
 - 🛠 **Tools** — migrate MySQL from Herd, and convert whole databases between MySQL, PostgreSQL and SQLite.
 - ⏱️ **Database snapshots** — `grove db snapshot` takes a point-in-time SQL snapshot of the bundled MySQL/PostgreSQL and `grove db restore` rolls it back, so risky migrations are fearless.
-- 🔀 **Toolchain on your PATH** — `grove path install` puts the bundled `php`, `composer`, `node`, `npm` and `laravel` on your PATH, auto-switching to each project's pinned version — so you can drop Herd/Valet entirely.
+- 🔀 **Toolchain on your PATH** — `grove path install` puts the bundled `php`, `composer`, `cpx`, `node`, `npm` and `laravel` on your PATH, auto-switching to each project's pinned version — so you can drop Herd/Valet entirely.
+- 📦 **`cpx` built in** — npx for Composer packages: `cpx laravel/pint`, `cpx phpstan analyse`, `cpx friendsofphp/php-cs-fixer fix` run a package's CLI without installing it in your project or globally. `cpx exec -r '…'` and `cpx tinker` run ad-hoc PHP with your app booted. Shipped as a shim over Grove's own PHP — nothing to `composer global require`.
 - 🐳 **Docker / OrbStack aware** — auto-discovers containers and serves them as `<name>.test` with trusted local HTTPS, next to native sites.
 - ⚡ **Runs your dev processes** — `grove dev` reads the processes your app declares via Laravel's `DevCommands` (`artisan dev:list`) and supervises them per site — Vite HMR, queue worker, and your own additions like Reverb or `stripe listen`. It skips `serve` (Grove *is* the server) and `pail` (the Logs panel), needs no open terminal, and falls back to Vite + a queue worker on older Laravel or non-Laravel sites. Use it **instead of** `php artisan dev`, not alongside it.
 - 🧩 **Driver system** — Laravel, WordPress, generic PHP, static sites, and reverse proxy (Vite/Node).
@@ -173,7 +175,7 @@ it, so the file stays human-readable and diff-friendly.
 ```toml
 [general]
 tld = "test"
-default_php = "8.4"
+default_php = "8.5"
 auto_start = true
 
 [[parked]]
@@ -186,7 +188,7 @@ mail_port = 1025
 [[sites]]
 name = "inside-next"
 path = "~/Code/inside-next"
-php = "8.4"          # per-site PHP
+php = "8.5"          # per-site PHP
 node = "22"          # per-site Node
 secure = true
 driver = "laravel"
@@ -234,7 +236,7 @@ mkdir -p "$GROVE_HOME"
 cat > "$GROVE_HOME/config.toml" <<'EOF'
 [general]
 tld = "test"
-default_php = "8.4"
+default_php = "8.5"
 http_port = 8080
 https_port = 8443
 dns_port = 5354

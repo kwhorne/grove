@@ -42,8 +42,8 @@ pub enum Command {
     Import,
     /// First-run setup: config, root CA, a PHP build, resolver + trust (where possible).
     Init {
-        /// PHP version to ensure is installed (default: 8.4). Use --no-php to skip.
-        #[arg(long, default_value = "8.4")]
+        /// PHP version to ensure is installed (default: 8.5). Use --no-php to skip.
+        #[arg(long, default_value = "8.5")]
         php: String,
         /// Skip downloading/ensuring a PHP build.
         #[arg(long)]
@@ -51,7 +51,7 @@ pub enum Command {
     },
     /// Set the global default PHP version.
     Use {
-        /// PHP version, e.g. 8.4
+        /// PHP version, e.g. 8.5
         version: String,
     },
 
@@ -109,7 +109,7 @@ pub enum Command {
     /// Pin a PHP version for a site.
     Isolate {
         name: String,
-        /// PHP version, e.g. 8.4
+        /// PHP version, e.g. 8.5
         version: String,
     },
     /// Revert a site to the default PHP version.
@@ -292,8 +292,9 @@ pub enum Command {
         action: DbAction,
     },
 
-    /// Put Grove's bundled PHP, Composer, Node, npm and the Laravel installer on
-    /// your PATH (per-directory version switching, like Herd — but zero-config).
+    /// Put Grove's bundled PHP, Composer, cpx, Node, npm and the Laravel
+    /// installer on your PATH (per-directory version switching, like Herd — but
+    /// zero-config).
     Path {
         #[command(subcommand)]
         action: Option<PathAction>,
@@ -303,7 +304,7 @@ pub enum Command {
     /// shims that `grove path install` creates.
     #[command(hide = true)]
     Resolve {
-        /// Tool to run: php, composer, node, npm, npx or laravel.
+        /// Tool to run: php, composer, cpx, node, npm, npx or laravel.
         tool: String,
         /// Directory whose site pins the version (defaults to the cwd).
         #[arg(long)]
@@ -486,16 +487,39 @@ pub enum CaAction {
 pub enum PhpAction {
     /// Download + install a self-contained static PHP-FPM build into Grove.
     Install {
-        /// PHP version, e.g. 8.4 (latest patch) or 8.4.22 (exact).
+        /// PHP version, e.g. 8.5 (latest patch) or 8.5.8 (exact).
         version: String,
+        /// Extension set: `grove` (default — Grove's own build, with both the
+        /// PDO SQLite/PostgreSQL drivers *and* intl, mysqli, sodium, readline,
+        /// apcu, xsl), or the upstream `common` / `bulk` sets, each of which is
+        /// missing one of those groups. `grove php ext` shows what you got.
+        #[arg(long, value_parser = ["grove", "common", "bulk"])]
+        variant: Option<String>,
     },
     /// Auto-discover php-fpm binaries on this machine.
     Discover,
-    /// List known PHP builds and their extensions.
+    /// List known PHP builds, with a one-line extension summary each.
     List,
+    /// Print the static-php-cli `craft.yml` that builds Grove's PHP — the
+    /// extension set behind the `grove` variant. Used by Grove's own PHP build
+    /// workflow; handy if you want to reproduce that build yourself.
+    Craft {
+        /// PHP version to build (major.minor).
+        #[arg(long, default_value = "8.5")]
+        php: String,
+    },
+    /// Audit a build's extensions against the ones the PHP ecosystem expects —
+    /// what's there, what's missing, and what each missing one costs you.
+    Ext {
+        /// PHP version to audit (defaults to every registered build).
+        version: Option<String>,
+        /// Show the optional gaps too, plus every module the build loads.
+        #[arg(long)]
+        all: bool,
+    },
     /// Register a custom php-fpm binary (bring-your-own).
     Register {
-        /// Version label, e.g. 8.4
+        /// Version label, e.g. 8.5
         version: String,
         /// Path to the php-fpm binary.
         fpm_binary: String,

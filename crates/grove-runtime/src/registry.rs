@@ -17,6 +17,11 @@ pub struct PhpBuild {
     /// Path to the `php` CLI binary (for `php -m`, version checks).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cli_binary: Option<PathBuf>,
+    /// Which prebuilt extension set this came from (`common` / `bulk`), when
+    /// Grove downloaded it. `None` for discovered or user-registered builds,
+    /// whose extension set is whatever the system happens to have.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
     /// Whether this build was registered by the user (bring-your-own).
     #[serde(default)]
     pub user_registered: bool,
@@ -107,6 +112,7 @@ fn probe(fpm: &Path) -> Option<PhpBuild> {
         version,
         fpm_binary: fpm.to_path_buf(),
         cli_binary: cli,
+        variant: None,
         user_registered: false,
     })
 }

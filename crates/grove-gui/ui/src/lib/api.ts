@@ -92,7 +92,8 @@ export const api = {
   nodeInstall: (version: string): Promise<string> => invoke("node_install", { version }),
 
   phpVersions: (): Promise<NodeVersion[]> => invoke("php_versions"),
-  phpInstall: (version: string): Promise<string> => invoke("php_install", { version }),
+  phpInstall: (version: string, variant?: string): Promise<string> =>
+    invoke("php_install", { version, variant: variant ?? null }),
 
   tunnelStart: (
     site: string,

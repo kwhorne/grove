@@ -675,6 +675,12 @@ struct PhpBuildView {
     version: String,
     fpm_binary: String,
     user_registered: bool,
+    /// Prebuilt extension set (`common` / `bulk`), when Grove downloaded it.
+    variant: Option<String>,
+    /// One-line extension coverage, e.g. "48 modules, 2 required missing".
+    extension_summary: String,
+    /// Catalogued extensions this build lacks that something will need.
+    missing_required: Vec<String>,
 }
 
 #[tauri::command]
@@ -686,8 +692,8 @@ async fn php_versions() -> CmdResult<Vec<NodeVersion>> {
 }
 
 #[tauri::command]
-async fn php_install(version: String) -> CmdResult<String> {
-    message(Request::PhpInstall { version }).await
+async fn php_install(version: String, variant: Option<String>) -> CmdResult<String> {
+    message(Request::PhpInstall { version, variant }).await
 }
 
 /// PHP builds are local, re-derivable state — read the registry directly.
@@ -697,10 +703,20 @@ fn php_list() -> CmdResult<Vec<PhpBuildView>> {
     let reg = PhpRegistry::load(&p);
     Ok(reg
         .iter()
-        .map(|b| PhpBuildView {
-            version: b.version.clone(),
-            fpm_binary: b.fpm_binary.display().to_string(),
-            user_registered: b.user_registered,
+        .map(|b| {
+            let audit = grove_runtime::audit_extensions(b);
+            PhpBuildView {
+                version: b.version.clone(),
+                fpm_binary: b.fpm_binary.display().to_string(),
+                user_registered: b.user_registered,
+                variant: b.variant.clone(),
+                extension_summary: audit.summary(),
+                missing_required: audit
+                    .missing_at(grove_runtime::Tier::Required)
+                    .iter()
+                    .map(|e| e.name.to_string())
+                    .collect(),
+            }
         })
         .collect())
 }

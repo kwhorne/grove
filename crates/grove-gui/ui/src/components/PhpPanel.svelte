@@ -77,6 +77,35 @@
   </table>
 {/if}
 
+{#if php.length}
+  <h3 style="font-size:13px;color:var(--text-dim);margin:20px 0 8px;text-transform:uppercase;letter-spacing:0.5px">
+    Extensions
+  </h3>
+  <table>
+    <tbody>
+      {#each php as b (b.version)}
+        <tr>
+          <td class="host">
+            php@{b.version}{#if b.variant}<span class="mono" style="color:var(--text-dim)"> ({b.variant})</span>{/if}
+          </td>
+          <td class="mono">
+            {b.extension_summary}
+            {#if b.missing_required.length}
+              <div style="color:var(--warn, #d08b00); margin-top:2px">
+                missing: {b.missing_required.join(", ")}
+              </div>
+            {/if}
+          </td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+  <p class="mono" style="margin-top:8px; color: var(--text-dim);">
+    Run <code>grove php ext</code> for the full per-extension breakdown, including
+    why each one matters.
+  </p>
+{/if}
+
 <p class="mono" style="margin-top:14px; color: var(--text-dim);">
   Self-contained static PHP-FPM builds are downloaded into Grove — no Homebrew or Herd needed.
 </p>

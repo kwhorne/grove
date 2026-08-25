@@ -573,11 +573,17 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             Ok(Response::ok(ResponseData::Message("settings saved".into())))
         }
 
-        Request::PhpInstall { version } => {
+        Request::PhpInstall { version, variant } => {
             let paths = state.paths.clone();
+            // An explicit variant from the caller wins; otherwise use the one
+            // the config selects.
+            let variant = variant
+                .as_deref()
+                .and_then(grove_runtime::PhpVariant::parse)
+                .unwrap_or_else(|| grove_runtime::PhpVariant::configured(&paths));
             let build = tokio::task::spawn_blocking(move || {
                 let mut reg = grove_runtime::PhpRegistry::load(&paths);
-                grove_runtime::install_php(&paths, &mut reg, &version, |_| {})
+                grove_runtime::install_php(&paths, &mut reg, &version, variant, |_| {})
             })
             .await
             .map_err(|e| anyhow::anyhow!("install task panicked: {e}"))?
@@ -787,13 +793,18 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let version = php.unwrap_or(default_php);
             let summary = tokio::task::spawn_blocking(move || {
                 let mut done: Vec<String> = Vec::new();
-                match grove_runtime::install::install_cli(&paths, &version, |_| {}) {
+                let variant = grove_runtime::PhpVariant::configured(&paths);
+                match grove_runtime::install::install_cli(&paths, &version, variant, |_| {}) {
                     Ok(_) => done.push(format!("PHP {version} CLI")),
                     Err(e) => done.push(format!("PHP CLI failed: {e}")),
                 }
                 match grove_runtime::scaffold::ensure_composer(&paths) {
                     Ok(_) => done.push("Composer".into()),
                     Err(e) => done.push(format!("Composer failed: {e}")),
+                }
+                match grove_runtime::cpx::ensure(|_| {}) {
+                    Ok(_) => done.push("cpx".into()),
+                    Err(e) => done.push(format!("cpx failed: {e}")),
                 }
                 let mut reg = grove_runtime::NodeRegistry::load(&paths);
                 if reg.iter().next().is_none() {
@@ -1334,6 +1345,58 @@ async fn doctor(state: &Arc<DaemonState>) -> Vec<DiagnosticEntry> {
             grove_os::is_elevated()
         ),
     });
+    // Don't hold the config lock across the blocking `php -m` calls below.
+    drop(config);
+
+    // Extension coverage. Worth a check of its own because the prebuilt static
+    // PHP sets each have a real hole — `common` has no `intl`/`mysqli`, `bulk`
+    // has no `pdo_sqlite`/`pdo_pgsql` — and a missing extension shows up as a
+    // 500 inside an app, with nothing pointing back at the PHP build.
+    let paths = state.paths.clone();
+    let audits = tokio::task::spawn_blocking(move || {
+        let reg = grove_runtime::PhpRegistry::load(&paths);
+        reg.iter()
+            .map(|b| {
+                let audit = grove_runtime::audit_extensions(b);
+                let missing: Vec<String> = audit
+                    .missing_at(grove_runtime::Tier::Required)
+                    .iter()
+                    .map(|e| e.name.to_string())
+                    .collect();
+                (b.version.clone(), missing)
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+
+    let entry = if audits.is_empty() {
+        DiagnosticEntry {
+            check: "php-extensions".into(),
+            status: DiagnosticStatus::Warn,
+            detail: "no PHP builds registered — run `grove php install 8.5`".into(),
+        }
+    } else {
+        let gaps: Vec<String> = audits
+            .iter()
+            .filter(|(_, missing)| !missing.is_empty())
+            .map(|(version, missing)| format!("php@{version} missing {}", missing.join(", ")))
+            .collect();
+        DiagnosticEntry {
+            check: "php-extensions".into(),
+            status: if gaps.is_empty() {
+                DiagnosticStatus::Pass
+            } else {
+                DiagnosticStatus::Warn
+            },
+            detail: if gaps.is_empty() {
+                format!("{} build(s), nothing required missing", audits.len())
+            } else {
+                format!("{} — see `grove php ext`", gaps.join("; "))
+            },
+        }
+    };
+    out.push(entry);
 
     out
 }

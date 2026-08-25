@@ -1,7 +1,7 @@
 //! Human + `--json` output formatting for CLI responses.
 
 use grove_ipc::protocol::{DiagnosticStatus, Response, ResponseData};
-use grove_runtime::PhpRegistry;
+use grove_runtime::{PhpBuild, PhpRegistry, Tier};
 
 pub fn print_response(resp: &Response, json: bool) {
     if json {
@@ -335,10 +335,19 @@ pub fn print_php_list(registry: &PhpRegistry, json: bool) {
         let builds: Vec<_> = registry
             .iter()
             .map(|b| {
+                let audit = grove_runtime::audit_extensions(b);
                 serde_json::json!({
                     "version": b.version,
                     "fpm_binary": b.fpm_binary,
+                    "cli_binary": b.cli_binary,
+                    "variant": b.variant,
                     "user_registered": b.user_registered,
+                    "extensions": audit.loaded,
+                    "missing_required": audit
+                        .missing_at(Tier::Required)
+                        .iter()
+                        .map(|e| e.name)
+                        .collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -351,10 +360,146 @@ pub fn print_php_list(registry: &PhpRegistry, json: bool) {
     let mut any = false;
     for b in registry.iter() {
         any = true;
-        let tag = if b.user_registered { " (custom)" } else { "" };
+        let tag = if b.user_registered {
+            " (custom)".to_string()
+        } else {
+            b.variant
+                .as_deref()
+                .map(|v| format!(" ({v})"))
+                .unwrap_or_default()
+        };
         println!("php@{}{tag}  →  {}", b.version, b.fpm_binary.display());
+        println!("    {}", grove_runtime::audit_extensions(b).summary());
     }
     if !any {
         println!("No PHP builds registered. Run `grove php discover`.");
     }
+}
+
+/// Per-build extension audit — the detail behind `grove php list`'s one-liner.
+///
+/// The point of the report is the *why* column: "intl is missing" means nothing
+/// until you know it's what Laravel's `Number` helpers and Filament need.
+pub fn print_php_extensions(builds: &[PhpBuild], show_present: bool, json: bool) {
+    if json {
+        let out: Vec<_> = builds
+            .iter()
+            .map(|b| {
+                let audit = grove_runtime::audit_extensions(b);
+                let entries = |tier: Tier| {
+                    audit
+                        .missing_at(tier)
+                        .iter()
+                        .map(|e| serde_json::json!({ "name": e.name, "why": e.why }))
+                        .collect::<Vec<_>>()
+                };
+                serde_json::json!({
+                    "version": b.version,
+                    "variant": b.variant,
+                    "loaded": audit.loaded,
+                    "healthy": audit.is_healthy(),
+                    "missing": {
+                        "required": entries(Tier::Required),
+                        "recommended": entries(Tier::Recommended),
+                        "optional": entries(Tier::Optional),
+                    },
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+        return;
+    }
+
+    for (i, b) in builds.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        let audit = grove_runtime::audit_extensions(b);
+        let variant = b
+            .variant
+            .as_deref()
+            .map(|v| format!(" ({v})"))
+            .unwrap_or_else(|| {
+                if b.user_registered {
+                    " (custom)".into()
+                } else {
+                    String::new()
+                }
+            });
+        println!("php@{}{variant} — {}", b.version, audit.summary());
+
+        if audit.loaded.is_empty() {
+            println!("  Could not run `php -m` for this build.");
+            continue;
+        }
+
+        // Optional gaps are a long tail (Swoole, MongoDB, tidy…) that would bury
+        // the two or three lines actually worth acting on, so they wait for
+        // `--all`.
+        let tiers: &[Tier] = if show_present {
+            &[Tier::Required, Tier::Recommended, Tier::Optional]
+        } else {
+            &[Tier::Required, Tier::Recommended]
+        };
+        for &tier in tiers {
+            let missing = audit.missing_at(tier);
+            if missing.is_empty() {
+                continue;
+            }
+            println!("\n  Missing ({}):", tier.label());
+            for e in &missing {
+                println!("    ✗ {:<14} {}", e.name, e.why);
+            }
+        }
+
+        if audit.missing.is_empty() {
+            println!("  Every extension Grove looks for is present.");
+        } else if !show_present {
+            let optional = audit.missing_at(Tier::Optional).len();
+            if optional > 0 {
+                println!(
+                    "\n  {optional} optional extension(s) also missing — `--all` to list them."
+                );
+            }
+        }
+
+        if show_present {
+            println!("\n  Loaded ({}):", audit.loaded.len());
+            for chunk in audit.loaded.chunks(6) {
+                println!("    {}", chunk.join("  "));
+            }
+        }
+    }
+
+    // Close with the way out, phrased for the variant they're actually on: the
+    // two prebuilt sets trade one gap for the other, so telling someone already
+    // on `bulk` to switch to `bulk` is worse than saying nothing.
+    let unhealthy: Vec<&PhpBuild> = builds
+        .iter()
+        .filter(|b| !grove_runtime::audit_extensions(b).is_healthy())
+        .collect();
+    if unhealthy.is_empty() {
+        return;
+    }
+    println!(
+        "\nThe prebuilt static-PHP sets are not supersets of each other: `common` has the PDO\n\
+         SQLite/PostgreSQL drivers but no intl or mysqli; `bulk` has intl and mysqli but not\n\
+         those PDO drivers."
+    );
+    let variants: std::collections::BTreeSet<&str> = unhealthy
+        .iter()
+        .filter_map(|b| b.variant.as_deref())
+        .collect();
+    if let [only] = variants.iter().copied().collect::<Vec<_>>()[..] {
+        let other = if only == "bulk" { "common" } else { "bulk" };
+        println!(
+            "Trade one gap for the other with `grove php install <version> --variant {other}`,"
+        );
+    } else {
+        println!("Pick a set with `grove php install <version> --variant common|bulk`,");
+    }
+    println!(
+        "or get everything by pointing Grove at your own PHP:\n  \
+         grove php register <version> <path-to-php-fpm>"
+    );
 }

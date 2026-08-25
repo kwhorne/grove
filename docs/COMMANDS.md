@@ -11,7 +11,7 @@ grove <command> [args] [--json]
 
 | Command | Description |
 | --- | --- |
-| `grove init [--php 8.4] [--no-php]` | First-run setup: config, root CA, a PHP build, and (when elevated) the resolver + CA trust. Parks `~/Code` by default. |
+| `grove init [--php 8.5] [--no-php]` | First-run setup: config, root CA, a PHP build, and (when elevated) the resolver + CA trust. Parks `~/Code` by default. |
 | `grove daemon` | Run the daemon in the foreground (used by the service manager). |
 | `grove start` | Start the daemon in the background. |
 | `grove stop` | Stop the daemon gracefully. |
@@ -25,7 +25,7 @@ grove <command> [args] [--json]
 
 | Command | Description |
 | --- | --- |
-| `grove new <name> [--kind <kit>] [--path ~/Code] [--php 8.4] [--git]` | Scaffold a new project via `laravel new` and link it. `--kind`: `laravel` (plain) \| `livewire` \| `react` \| `vue` \| a community kit `vendor/package` (`--using`) \| `static`. |
+| `grove new <name> [--kind <kit>] [--path ~/Code] [--php 8.5] [--git]` | Scaffold a new project via `laravel new` and link it. `--kind`: `laravel` (plain) \| `livewire` \| `react` \| `vue` \| a community kit `vendor/package` (`--using`) \| `static`. |
 | `grove park [<dir>]` | Park a directory — every subfolder becomes `<name>.<tld>`. |
 | `grove unpark [<dir>]` | Stop parking a directory. |
 | `grove link [name] [--path <dir>]` | Link a single directory as a site. |
@@ -98,11 +98,95 @@ register a PHP that has it (`grove php register`).
 
 | Command | Description |
 | --- | --- |
-| `grove php install <version>` | Download a self-contained static PHP-FPM build (e.g. `8.5`, `8.4`, `8.3`). |
+| `grove php install <version> [--variant grove\|common\|bulk]` | Download a self-contained static PHP-FPM build (e.g. `8.5`, `8.4`, `8.3`). |
+| `grove php craft [--php <version>]` | Print the static-php-cli config for Grove's own PHP build. |
+| `grove php ext [<version>] [--all]` | Audit a build's extensions against the ones the ecosystem expects. |
 | `grove php register <version> <fpm-binary>` | Register a custom php-fpm binary (bring-your-own). |
 | `grove php discover` | Auto-discover php-fpm binaries on this machine. |
-| `grove php list` | List registered PHP builds. |
+| `grove php list` | List registered PHP builds, with a one-line extension summary each. |
 | `grove use <version>` | Set the global default PHP version. |
+
+### Extensions and the `--variant` flag
+
+Grove's bundled PHP is a static build with a **fixed** extension set, and which
+set you get matters. The two that [static-php-cli](https://github.com/crazywhalecc/static-php-cli)
+publishes are not supersets of each other, so Grove builds the union itself:
+
+| Variant | Size | Notes |
+| --- | --- | --- |
+| `grove` (default) | ~25 MB | Grove's own build. Everything below, in one binary: the PDO drivers **and** `intl`, `mysqli`, `sodium`, `readline`, `apcu`, `xsl`, plus `igbinary`, `shmop` and the System V extensions. Built by [`.github/workflows/php-build.yml`](../.github/workflows/php-build.yml). |
+| `common` | ~14 MB | Upstream. Has `pdo_sqlite`, `pdo_pgsql`, `opcache`, `redis`, `gd`, `gmp`, `soap`. **Missing** `intl`, `mysqli`, `sodium`, `readline`, `apcu`, `xsl`. |
+| `bulk` | ~36 MB | Upstream. Has those six plus `imagick`, `imap`, `swoole`, `dba`. **Missing** `pdo_sqlite` and `pdo_pgsql`. |
+
+Both upstream gaps hurt in practice. Without `pdo_sqlite` a fresh Laravel app —
+and its entire test suite — can't reach its default database, and `pdo_pgsql` is
+how an app talks to Grove's bundled PostgreSQL. Without `mysqli` the WordPress
+driver can't connect at all, and without `intl` you lose Laravel's `Number`
+helpers, Filament, Nova and every package that `require`s `ext-intl`.
+
+When no Grove build exists yet for a version, `grove php install` says so and
+falls back to upstream `common` rather than refusing:
+
+```console
+$ grove php install 8.5
+  resolving latest 8.5 for macos-aarch64 (grove)…
+  no grove build for 8.5 yet — using upstream `common` instead (`grove php ext` shows what it's missing)
+✓ php@8.5 (common) ready at …
+
+  Heads up — this build is missing:
+    mysqli       WordPress — its only MySQL driver
+  See `grove php ext 8.5` for the full picture.
+```
+
+The label always reflects what you actually got, not what was asked for. Ask for
+an upstream set explicitly with `--variant common|bulk`; those never fall back,
+because silently swapping one extension hole for the other would be worse than
+an error.
+
+```console
+$ grove php ext
+php@8.5 (common) — 49 modules, 1 required missing, 5 recommended missing
+
+  Missing (required):
+    ✗ mysqli         WordPress — its only MySQL driver
+
+  Missing (recommended):
+    ✗ intl           Laravel Number/dates, Filament, Nova
+    ✗ sodium         modern crypto (sodium_*), passkeys
+    ✗ readline       history/editing in tinker and cpx tinker
+    ✗ apcu           in-process cache (Laravel apc store)
+    ✗ xsl            XSLT transforms (ext-xsl)
+
+  20 optional extension(s) also missing — `--all` to list them.
+```
+
+`grove doctor` reports the same gap as a `php-extensions` check, and the GUI's
+PHP panel shows it per build.
+
+### Reproducing or extending Grove's PHP
+
+The extension list lives in one place — `grove_runtime::extensions::BUILD_SET` —
+and `grove php craft` prints the static-php-cli config generated from it:
+
+```console
+$ grove php craft --php 8.5 > craft.yml
+$ spc craft craft.yml          # needs a compiler toolchain; see below
+```
+
+Grove's CI runs exactly this. Building it yourself needs a C toolchain
+(Xcode command line tools **and** Homebrew on macOS, or a musl toolchain on
+Linux) — which is precisely why Grove doesn't do it on your machine. If you need
+an extension the build set doesn't have, the quicker route is a PHP you already
+have, which is the thing Herd won't let you do:
+
+```console
+$ grove php register 8.5 /opt/homebrew/opt/php@8.5/sbin/php-fpm
+$ grove isolate myapp 8.5
+```
+
+Set the default variant for future installs with `[general].php_variant`, or
+point Grove at your own mirror with `GROVE_PHP_MIRROR` (it must keep upstream's
+`<variant>/php-<version>-<cli|fpm>-<os>-<arch>.tar.gz` layout).
 
 ## Node.js
 
@@ -137,7 +221,7 @@ running, identical environment in one command.
 ```toml
 # grove.toml
 name = "myapp"
-php = "8.4"
+php = "8.5"
 node = "22"
 secure = true
 services = ["mysql", "redis"]
@@ -264,15 +348,51 @@ risky migration and roll back in one command. Stored as SQL under
 
 ## Toolchain on your PATH
 
-Expose Grove's bundled `php`, `composer`, `node`, `npm`, `npx` and `laravel`,
-auto-switching to whatever version each project pins (`grove isolate` /
-`grove node use`) — so you can drop Herd/Valet entirely.
+Expose Grove's bundled `php`, `composer`, `cpx`, `node`, `npm`, `npx` and
+`laravel`, auto-switching to whatever version each project pins (`grove isolate`
+/ `grove node use`) — so you can drop Herd/Valet entirely.
 
 | Command | Description |
 | --- | --- |
 | `grove path install` | Create the shims + provision the toolchain, then print the PATH line to add. |
 | `grove path show` | Show whether the shims are installed and on your PATH. |
 | `grove path uninstall` | Remove the shims. |
+
+### `cpx` — the Composer Package Executor
+
+`cpx` is to Composer what `npx` is to npm: run a CLI from any Composer package
+without installing it in your project or globally. Grove ships it as one of the
+PATH shims, so it is simply there after `grove path install` — no
+`composer global require`, and it runs on Grove's bundled PHP.
+
+```console
+$ cpx laravel/pint                       # or just: cpx pint
+$ cpx friendsofphp/php-cs-fixer fix ./src
+$ cpx phpstan analyse
+```
+
+Packages are installed into a cache under `~/.cpx` and run isolated from both
+your project's and your global Composer dependencies. Like `npx`, cpx prefers a
+binary your project already has in `vendor/bin` (pass `--skip-local` to force
+the isolated copy).
+
+cpx 2 also runs ad-hoc PHP with your app booted:
+
+| Command | What it does |
+| --- | --- |
+| `cpx exec script.php` | Run a file with Composer's autoloader and, in a Laravel app, a fully booted application (`$app`, config, facades, `.env`). `--no-boot` skips the boot. |
+| `cpx exec -r '<php>'` | Run raw PHP the same way. |
+| `cpx tinker` | Hands off to your project's own `php artisan tinker`; elsewhere it opens a PsySH shell with the project booted. |
+| `cpx alias laravel/pint pint` | Make your own shortcut for a package. |
+| `cpx installed` / `cpx update` / `cpx clean` | Manage what cpx has cached. |
+
+cpx needs **PHP 8.3 or newer**. Grove uses whatever PHP the current directory
+resolves to (`grove isolate` / `grove use`) and refuses with an explanation if
+that version is too old. `readline` makes `cpx tinker` pleasant to use — see the
+variant table under [PHP](#php).
+
+Grove keeps the cpx PHAR at `~/.grove/cpx.phar`, deliberately in your home
+rather than in Grove's root-owned tree, so `cpx self-update` works.
 
 ## Docker / OrbStack
 

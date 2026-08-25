@@ -48,15 +48,53 @@ Grove's. (Do this **before** removing Herd, while its MySQL data still exists.)
 
 ## 4. Put the toolchain on your PATH
 
-Herd added `php`, `composer`, and `node` to your shell. Grove does too — pointing
-at each project's pinned version:
+Herd added `php`, `composer`, `cpx` and `node` to your shell. Grove does too —
+pointing at each project's pinned version:
 
 ```bash
 grove path install
 # add the printed line to your shell profile, then restart your shell
 ```
 
-Now `php`, `composer`, `node`, `npm` and `laravel` come from Grove.
+Now `php`, `composer`, `cpx`, `node`, `npm` and `laravel` come from Grove.
+
+### `cpx`
+
+Herd 1.30 started shipping `cpx` (the Composer Package Executor) as a built-in
+command. Grove ships it the same way, so nothing changes for you:
+
+```bash
+cpx laravel/pint
+cpx friendsofphp/php-cs-fixer fix ./src
+cpx tinker
+```
+
+Your `~/.cpx` cache and aliases are cpx's own, not Herd's, so they carry over
+untouched. Grove keeps the cpx binary at `~/.grove/cpx.phar` and runs it on
+Grove's PHP; `cpx self-update` still works.
+
+### A note on extensions
+
+Grove builds its own static PHP precisely so this isn't a downgrade: `intl`,
+`mysqli`, `sodium`, `readline`, `apcu` and `xsl` are all there, alongside
+`pdo_sqlite` and `pdo_pgsql`. Check what you have before migrating a project
+that needs something specific:
+
+```bash
+grove php ext
+```
+
+If a version has no Grove build yet, `grove php install` falls back to an
+upstream set and tells you which extensions that costs you — the label in
+`grove php list` always shows what you actually got.
+
+And if you need an extension nothing prebuilt has, register a PHP that has it —
+the thing Herd will not let you do:
+
+```bash
+grove php register 8.5 /opt/homebrew/opt/php@8.5/sbin/php-fpm
+grove isolate myapp 8.5
+```
 
 ## 5. Vite over HTTPS
 

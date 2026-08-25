@@ -39,7 +39,9 @@ async fn main() -> anyhow::Result<()> {
                 let socket = paths.ipc_socket();
                 if client::is_running(&socket).await {
                     if !args.json {
-                        eprintln!("\nProvisioning the bundled toolchain (php, composer, node)…");
+                        eprintln!(
+                            "\nProvisioning the bundled toolchain (php, composer, cpx, node)…"
+                        );
                     }
                     let resp =
                         client::send(&socket, &Request::ProvisionToolchain { php: None }).await?;
@@ -751,7 +753,8 @@ mod mcp {
         if let Some(cli) = reg.get(version).and_then(|b| b.cli_binary.clone()) {
             return Ok(cli);
         }
-        grove_runtime::install::install_cli(paths, version, |_| {})
+        let variant = grove_runtime::install::Variant::configured(paths);
+        grove_runtime::install::install_cli(paths, version, variant, |_| {})
             .map_err(|e| anyhow::anyhow!("could not resolve the PHP {version} CLI: {e}"))
     }
 
@@ -1874,6 +1877,7 @@ mod lifecycle {
                 &socket,
                 &Request::PhpInstall {
                     version: php.clone(),
+                    variant: None,
                 },
             )
             .await;
@@ -2085,7 +2089,9 @@ mod lifecycle {
                 if !json {
                     eprintln!("  installing php@{php} (static, self-contained)…");
                 }
-                match grove_runtime::install_php(paths, &mut registry, &php, |m| {
+                let variant = grove_runtime::PhpVariant::parse(&config.general.php_variant)
+                    .unwrap_or_default();
+                match grove_runtime::install_php(paths, &mut registry, &php, variant, |m| {
                     if !json {
                         eprintln!("    {m}");
                     }
@@ -2283,21 +2289,50 @@ mod local {
     pub fn php(paths: &GrovePaths, action: PhpAction, json: bool) -> anyhow::Result<()> {
         let mut registry = PhpRegistry::load(paths);
         match action {
-            PhpAction::Install { version } => {
-                let build = grove_runtime::install_php(paths, &mut registry, &version, |msg| {
-                    if !json {
-                        eprintln!("  {msg}");
-                    }
-                })
-                .context("installing static PHP build")?;
+            PhpAction::Install { version, variant } => {
+                let variant = match variant.as_deref() {
+                    Some(v) => grove_runtime::PhpVariant::parse(v)
+                        .with_context(|| format!("unknown PHP variant {v:?}"))?,
+                    None => grove_runtime::PhpVariant::configured(paths),
+                };
+                let build =
+                    grove_runtime::install_php(paths, &mut registry, &version, variant, |msg| {
+                        if !json {
+                            eprintln!("  {msg}");
+                        }
+                    })
+                    .context("installing static PHP build")?;
+                // Report the variant off the *build*, not off `variant`: the
+                // install may have fallen back to a different set, and saying
+                // "grove" over a `common` binary would misreport exactly the
+                // thing the user needs to know.
                 output::print_message(
                     &format!(
-                        "php@{} ready at {}",
+                        "php@{} ({}) ready at {}",
                         build.version,
+                        build.variant.as_deref().unwrap_or("unknown"),
                         build.fpm_binary.display()
                     ),
                     json,
                 );
+                // Say it now rather than letting the user discover it as a
+                // 500 later: the prebuilt sets have real holes, and which hole
+                // they have depends on the variant they just installed.
+                if !json {
+                    let audit = grove_runtime::audit_extensions(&build);
+                    let missing = audit.missing_at(grove_runtime::Tier::Required);
+                    if !missing.is_empty() {
+                        eprintln!();
+                        eprintln!("  Heads up — this build is missing:");
+                        for e in &missing {
+                            eprintln!("    {:<12} {}", e.name, e.why);
+                        }
+                        eprintln!(
+                            "  See `grove php ext {}` for the full picture.",
+                            build.version
+                        );
+                    }
+                }
             }
             PhpAction::Discover => {
                 let n = registry.discover();
@@ -2306,6 +2341,34 @@ mod local {
             }
             PhpAction::List => {
                 output::print_php_list(&registry, json);
+            }
+            PhpAction::Craft { php } => {
+                // Straight to stdout, no `--json` envelope: the caller is a
+                // build script redirecting this into craft.yml.
+                print!("{}", grove_runtime::extensions::craft_yml(&php));
+            }
+            PhpAction::Ext { version, all } => {
+                let builds: Vec<_> = registry
+                    .iter()
+                    .filter(|b| {
+                        version
+                            .as_deref()
+                            .map(|v| b.version == v || b.version.starts_with(v))
+                            .unwrap_or(true)
+                    })
+                    .cloned()
+                    .collect();
+                if builds.is_empty() {
+                    match version.as_deref() {
+                        Some(v) => anyhow::bail!(
+                            "no PHP {v} build registered — `grove php install {v}` or `grove php discover`"
+                        ),
+                        None => anyhow::bail!(
+                            "no PHP builds registered — run `grove php install 8.5`"
+                        ),
+                    }
+                }
+                output::print_php_extensions(&builds, all, json);
             }
             PhpAction::Register {
                 version,
@@ -2320,6 +2383,7 @@ mod local {
                     version: version.clone(),
                     fpm_binary: path,
                     cli_binary: cli,
+                    variant: None,
                     user_registered: true,
                 });
                 registry.save(paths)?;
@@ -2329,7 +2393,7 @@ mod local {
         Ok(())
     }
 
-    const SHIM_TOOLS: [&str; 6] = ["php", "composer", "node", "npm", "npx", "laravel"];
+    const SHIM_TOOLS: [&str; 7] = ["php", "composer", "cpx", "node", "npm", "npx", "laravel"];
 
     /// Manage the PATH shims that expose Grove's bundled toolchain.
     /// The shims live under the user's home (not `$GROVE_HOME`, which is
@@ -2444,7 +2508,7 @@ mod local {
         }
         if path_contains(shims) {
             println!("Grove's toolchain is on your PATH ({dir}).");
-            println!("php, composer, node, npm, npx and laravel now resolve to the version each project pins,");
+            println!("php, composer, cpx, node, npm, npx and laravel now resolve to the version each project pins,");
             println!("and `grove` itself is on your PATH.");
             return;
         }
@@ -2460,7 +2524,7 @@ mod local {
             };
             println!("    echo 'export PATH=\"{dir}:$PATH\"' >> {profile}\n");
         }
-        println!("Then `php`, `composer`, `node`, `npm`, `npx` and `laravel` use Grove's bundled versions,");
+        println!("Then `php`, `composer`, `cpx`, `node`, `npm`, `npx` and `laravel` use Grove's bundled versions,");
         println!(
             "auto-switching to whatever each project pins with `grove isolate` / `grove node use`."
         );
@@ -2488,6 +2552,26 @@ mod local {
                     .map_err(|e| anyhow::anyhow!("preparing composer: {e}"))?;
                 (php, vec![phar])
             }
+            "cpx" => {
+                let php = resolve_php(paths, &cfg, php_pin)?;
+                // cpx needs PHP >= 8.3. Say so up front when we can tell, so a
+                // site pinned to an older PHP gets an actionable message rather
+                // than a parse error out of the PHAR.
+                if let Some((maj, min)) = php_minor_from_path(&php) {
+                    if (maj, min) < grove_runtime::cpx::MIN_PHP {
+                        let (rmaj, rmin) = grove_runtime::cpx::MIN_PHP;
+                        anyhow::bail!(
+                            "cpx needs PHP {rmaj}.{rmin} or newer, but this directory resolves to \
+                             php@{maj}.{min} — install a newer one (`grove php install {rmaj}.{rmin}`), \
+                             then point this directory at it (`grove isolate <site> {rmaj}.{rmin}`) or \
+                             move the global default (`grove use {rmaj}.{rmin}`)"
+                        );
+                    }
+                }
+                let phar = grove_runtime::cpx::ensure(|msg| eprintln!("  {msg}"))
+                    .map_err(|e| anyhow::anyhow!("preparing cpx: {e}"))?;
+                (php, vec![phar])
+            }
             "laravel" => {
                 let php = resolve_php(paths, &cfg, php_pin)?;
                 let installer = grove_runtime::scaffold::laravel_installer(paths);
@@ -2502,7 +2586,7 @@ mod local {
             "npm" => (resolve_node(paths, node_pin)?.1, vec![]),
             "npx" => (resolve_node(paths, node_pin)?.2, vec![]),
             other => anyhow::bail!(
-                "unknown tool {other:?}; use php, composer, node, npm, npx or laravel"
+                "unknown tool {other:?}; use php, composer, cpx, node, npm, npx or laravel"
             ),
         };
 
@@ -2539,6 +2623,19 @@ mod local {
             })
             .map(|s| (s.php.clone(), s.node.clone()))
             .unwrap_or((None, None))
+    }
+
+    /// Best-effort PHP minor version for a resolved binary, read off the
+    /// version-keyed directory Grove installs into (`runtimes/cli/8.4/php`,
+    /// `runtimes/8.4/php-fpm`).
+    ///
+    /// `None` for a bring-your-own binary whose path says nothing about its
+    /// version — cheaper than spawning it, and the caller treats an unknown
+    /// version as "let the tool speak for itself" rather than guessing.
+    fn php_minor_from_path(bin: &Path) -> Option<(u32, u32)> {
+        let dir = bin.parent()?.file_name()?.to_str()?;
+        let (maj, min) = dir.split_once('.')?;
+        Some((maj.parse().ok()?, min.split('.').next()?.parse().ok()?))
     }
 
     fn resolve_php(

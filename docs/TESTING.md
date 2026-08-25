@@ -40,7 +40,7 @@ mkdir -p "$GROVE_HOME"
 cat > "$GROVE_HOME/config.toml" <<'EOF'
 [general]
 tld = "test"
-default_php = "8.4"
+default_php = "8.5"
 http_port = 8080
 https_port = 8443
 dns_port = 5354
@@ -50,7 +50,7 @@ mail_port = 11025
 EOF
 
 # PHP: download a bundled static build, or register an existing php-fpm
-grove php install 8.4
+grove php install 8.5
 # grove php register 8.4 "$HOME/Library/Application Support/Herd/bin/php84-fpm"
 
 grove start

@@ -176,6 +176,12 @@ export interface PhpBuild {
   version: string;
   fpm_binary: string;
   user_registered: boolean;
+  /// Prebuilt extension set (`common` / `bulk`), when Grove downloaded it.
+  variant: string | null;
+  /// One-line extension coverage, e.g. "48 modules, 2 required missing".
+  extension_summary: string;
+  /// Catalogued extensions this build lacks that something will need.
+  missing_required: string[];
 }
 
 export interface EmailSummary {

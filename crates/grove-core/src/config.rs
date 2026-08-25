@@ -17,7 +17,7 @@ fn default_tld() -> String {
 }
 
 fn default_php() -> String {
-    "8.4".to_string()
+    "8.5".to_string()
 }
 
 fn default_true() -> bool {
@@ -106,6 +106,12 @@ pub struct General {
     #[serde(default = "default_php")]
     pub default_php: String,
 
+    /// Which static-PHP extension set `grove php install` fetches: `grove`
+    /// (Grove's own build — the union), or the upstream `common` /`bulk` sets.
+    /// See `grove php ext` for what a given build actually loads.
+    #[serde(default = "default_php_variant")]
+    pub php_variant: String,
+
     #[serde(default = "default_true")]
     pub auto_start: bool,
 
@@ -134,6 +140,10 @@ pub struct General {
     pub xdebug_port: u16,
 }
 
+fn default_php_variant() -> String {
+    "grove".into()
+}
+
 fn default_xdebug_port() -> u16 {
     9003
 }
@@ -153,6 +163,7 @@ impl Default for General {
         Self {
             tld: default_tld(),
             default_php: default_php(),
+            php_variant: default_php_variant(),
             auto_start: true,
             http_port: default_http_port(),
             https_port: default_https_port(),
@@ -276,7 +287,8 @@ mod tests {
         let toml = toml::to_string_pretty(&cfg).unwrap();
         let parsed: Config = toml::from_str(&toml).unwrap();
         assert_eq!(parsed.general.tld, "test");
-        assert_eq!(parsed.general.default_php, "8.4");
+        assert_eq!(parsed.general.default_php, "8.5");
+        assert_eq!(parsed.general.php_variant, "grove");
         assert_eq!(parsed.general.http_port, 80);
     }
 
@@ -285,7 +297,7 @@ mod tests {
         let raw = r#"
 [general]
 tld = "test"
-default_php = "8.4"
+default_php = "8.5"
 auto_start = true
 
 [[parked]]
@@ -294,7 +306,7 @@ path = "~/Code"
 [[sites]]
 name = "inside-next"
 path = "~/Code/inside-next"
-php = "8.4"
+php = "8.5"
 secure = true
 driver = "laravel"
 
