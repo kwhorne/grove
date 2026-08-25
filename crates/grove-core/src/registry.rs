@@ -16,6 +16,57 @@ pub struct SiteRegistry {
     tld: String,
 }
 
+/// The two site keys a hostname could name, given the TLD.
+///
+/// `api.myapp.test` with tld `test` yields `("myapp", "api.myapp")`: the
+/// left-most label, then the whole remainder, which is the order
+/// [`SiteRegistry::by_hostname`] tries them in. `None` when the host is not
+/// under the TLD at all.
+///
+/// Extracted so the TLS layer can ask the same question the router does. Two
+/// copies of this rule drifting apart is precisely how a certificate gets
+/// issued for a name nothing will serve.
+pub fn host_candidates<'a>(hostname: &'a str, tld: &str) -> Option<(&'a str, &'a str)> {
+    let host = hostname.split(':').next().unwrap_or(hostname);
+    let suffix = format!(".{tld}");
+    let name = host.strip_suffix(&suffix)?;
+    if name.is_empty() {
+        return None;
+    }
+    let leaf = name.rsplit('.').next().unwrap_or(name);
+    Some((leaf, name))
+}
+
+/// Which hostnames resolve to a site, readable without async.
+#[derive(Debug, Clone, Default)]
+pub struct KnownHosts {
+    tld: String,
+    names: std::collections::HashSet<String>,
+}
+
+impl KnownHosts {
+    /// Whether `hostname` resolves to a site Grove serves.
+    pub fn resolves(&self, hostname: &str) -> bool {
+        match host_candidates(hostname, &self.tld) {
+            Some((leaf, name)) => self.names.contains(leaf) || self.names.contains(name),
+            None => false,
+        }
+    }
+
+    /// The site hostname `hostname` belongs to — `api.myapp.test` → `myapp.test`.
+    pub fn site_hostname(&self, hostname: &str) -> Option<String> {
+        let (leaf, name) = host_candidates(hostname, &self.tld)?;
+        let site = if self.names.contains(leaf) {
+            leaf
+        } else if self.names.contains(name) {
+            name
+        } else {
+            return None;
+        };
+        Some(format!("{site}.{}", self.tld))
+    }
+}
+
 impl SiteRegistry {
     /// Build the registry by resolving every parked subdirectory and explicit
     /// site in `config`.
@@ -110,13 +161,20 @@ impl SiteRegistry {
 
     /// Look up a site by its hostname (e.g. `myapp.test`).
     pub fn by_hostname(&self, hostname: &str) -> Option<&ResolvedSite> {
-        let host = hostname.split(':').next().unwrap_or(hostname);
-        // Strip the TLD; the remaining left-most label is the site name.
-        let suffix = format!(".{}", self.tld);
-        let name = host.strip_suffix(&suffix)?;
-        // Support multi-label hosts like api.myapp.test → myapp.
-        let leaf = name.rsplit('.').next().unwrap_or(name);
+        let (leaf, name) = host_candidates(hostname, &self.tld)?;
         self.sites.get(leaf).or_else(|| self.sites.get(name))
+    }
+
+    /// A cheap, synchronously-readable view of which hostnames are ours.
+    ///
+    /// The TLS layer has to answer "is this a site?" inside a rustls callback,
+    /// which is synchronous and cannot await the registry's async lock. This is
+    /// the same question by the same rule, in a shape that callback can read.
+    pub fn known_hosts(&self) -> KnownHosts {
+        KnownHosts {
+            tld: self.tld.clone(),
+            names: self.sites.keys().cloned().collect(),
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &ResolvedSite> {
@@ -174,6 +232,97 @@ pub fn name_from_path(path: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn host_candidates_follows_the_router_rule() {
+        assert_eq!(
+            host_candidates("myapp.test", "test"),
+            Some(("myapp", "myapp"))
+        );
+        assert_eq!(
+            host_candidates("api.myapp.test", "test"),
+            Some(("myapp", "api.myapp"))
+        );
+        // A port is not part of the name.
+        assert_eq!(
+            host_candidates("myapp.test:8443", "test"),
+            Some(("myapp", "myapp"))
+        );
+        // Not under the TLD at all.
+        assert_eq!(host_candidates("bank.example", "test"), None);
+        assert_eq!(host_candidates("test", "test"), None);
+        assert_eq!(host_candidates(".test", "test"), None);
+    }
+
+    fn hosts(tld: &str, names: &[&str]) -> KnownHosts {
+        KnownHosts {
+            tld: tld.to_string(),
+            names: names.iter().map(|n| n.to_string()).collect(),
+        }
+    }
+
+    /// The finding: a machine-trusted certificate must not be mintable for a
+    /// name Grove does not serve.
+    #[test]
+    fn foreign_names_do_not_resolve() {
+        let h = hosts("test", &["myapp", "shop"]);
+        for name in [
+            "google.com",
+            "bank.example",
+            "myapp.test.evil.com",
+            "notmyapp.test",
+            "localhost",
+            "",
+        ] {
+            assert!(!h.resolves(name), "{name} must not resolve to a site");
+            assert_eq!(h.site_hostname(name), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn sites_and_their_subdomains_resolve() {
+        let h = hosts("test", &["myapp", "shop"]);
+        for name in [
+            "myapp.test",
+            "api.myapp.test",
+            "a.b.myapp.test",
+            "shop.test",
+        ] {
+            assert!(h.resolves(name), "{name} should resolve");
+        }
+        // …and every one of them maps back to the site's own hostname, which is
+        // what decides whether a certificate is persisted.
+        assert_eq!(h.site_hostname("myapp.test").as_deref(), Some("myapp.test"));
+        assert_eq!(
+            h.site_hostname("api.myapp.test").as_deref(),
+            Some("myapp.test")
+        );
+    }
+
+    #[test]
+    fn a_custom_tld_is_honoured() {
+        let h = hosts("localhost", &["myapp"]);
+        assert!(h.resolves("myapp.localhost"));
+        assert!(!h.resolves("myapp.test"));
+    }
+
+    #[test]
+    fn known_hosts_matches_the_registry_it_came_from() {
+        let cfg = Config::default();
+        let reg = SiteRegistry::build(&cfg);
+        let known = reg.known_hosts();
+        // Whatever the registry resolves, the mirror must resolve too — the two
+        // drifting apart is how a certificate gets issued for a name nothing
+        // will serve, or refused for one that would be.
+        for site in reg.iter() {
+            assert!(
+                known.resolves(&site.hostname),
+                "{} resolves in the registry but not in the mirror",
+                site.hostname
+            );
+        }
+        assert!(!known.resolves("bank.example"));
+    }
+
     use super::*;
     use crate::config::{Config, ParkedDir};
 

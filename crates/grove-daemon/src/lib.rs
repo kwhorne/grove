@@ -52,7 +52,13 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     // Local CA + SNI resolver for HTTPS.
     let ca = Arc::new(CertificateAuthority::load_or_create(&paths)?);
-    let sni = Arc::new(SniResolver::new(ca.clone(), paths.clone()));
+    // The resolver reads the registry's hostnames, not the registry itself:
+    // rustls resolves a certificate synchronously and cannot await the lock.
+    let sni = Arc::new(SniResolver::new(
+        ca.clone(),
+        paths.clone(),
+        shared.known_hosts.clone(),
+    ));
 
     // Built-in mail-catcher store, shared with the SMTP listener + IPC queries.
     let mail = grove_services::MailStore::new();
