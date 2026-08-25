@@ -52,13 +52,40 @@ after editing its config.
 | --- | --- |
 | `grove_sites` | Every site Grove serves (host, driver, PHP/Node, HTTPS, path). |
 | `grove_requests` | Recent requests across sites — method, path, status, duration. |
-| `grove_request` | Full headers + body of one captured request. |
+| `grove_request` | Full headers + body of one captured request, with credentials redacted (see below). |
 | `grove_request_chain` | The causal chain for one request — the SQL it issued (with `grove sql-capture on`) and mail it sent within its time window, plus derived metrics (duration, query count). |
 | `grove_explain` | A curated debugging bundle for one request — the request (headers + body), its causal chain, and matching error-log entries with stacktraces. Everything needed to explain a failing request. |
 | `grove_webhooks` | Recently captured inbound webhooks. |
 | `grove_logs` | List log sources, or read recent Laravel / service log entries. |
 | `grove_db_schema` | Tables and columns for a site's database (read from its `.env`). |
 | `grove_db_query` | Run a **read-only** SQL query and return rows. |
+
+## What is redacted
+
+Grove is the proxy, so it sees every request in full. Anything these tools hand
+back has its credentials replaced with `[redacted]` first:
+
+- **Headers** — `Authorization`, `Cookie`, `Proxy-Authorization`, `X-Api-Key`
+  and any header whose name contains `token`, `secret`, `password`, `api-key`,
+  `credential` or `private-key`.
+- **Query parameters and body fields** with those same names, in JSON and
+  form-encoded bodies. JSON is re-serialised, so the result is still valid JSON.
+
+Names are kept, only values are replaced — a request that carried an
+`Authorization` header still looks like one.
+
+Two limits worth knowing:
+
+- A body Grove cannot parse (multipart, protobuf, something truncated
+  mid-token) is passed through untouched. Redaction narrows the exposure; it
+  does not eliminate it.
+- Webhook **signatures** (`Stripe-Signature`, `X-Hub-Signature`) are *not*
+  redacted. They authenticate a payload rather than granting access, and they
+  are usually the thing you are debugging when you look at a webhook.
+
+`grove replay` and `grove hooks replay` are unaffected: they use a separate
+in-process path that keeps the real credentials, or the replayed request would
+not be the same request.
 
 So you can ask your assistant things like:
 

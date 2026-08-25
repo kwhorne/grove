@@ -12,6 +12,7 @@ pub mod httpgen;
 pub mod paths;
 pub mod privdrop;
 pub mod project;
+pub mod redact;
 pub mod registry;
 pub mod reqlog;
 pub mod securefs;
