@@ -200,8 +200,9 @@ one**, before the file is written or executed:
 | Composer | `composer-stable.phar.sha256` |
 | cpx | the release asset's `digest` |
 | PostgreSQL | the asset's `.sha256` |
+| Redis | the SHA-256 in `redis/redis-hashes` |
 
-Three sources publish nothing usable, and Grove says so per download rather
+Two sources publish nothing usable, and Grove says so per download rather
 than implying otherwise:
 
 - **Upstream `common` / `bulk`** archives have no checksum at all — no
@@ -210,9 +211,6 @@ than implying otherwise:
 - **MySQL** publishes `.md5` and a GPG signature but no SHA-256. MD5 catches a
   corrupt transfer, not a chosen collision, and checking the signature needs an
   OpenPGP implementation and MySQL's key.
-- **Redis** is fetched as a GitHub git-archive tarball, whose bytes GitHub does
-  not promise to keep stable, so a pinned hash would break on their next
-  compression change.
 
 What this proves is worth stating plainly: a hash fetched from the same host as
 the file catches storage corruption, a truncated transfer and a tampered

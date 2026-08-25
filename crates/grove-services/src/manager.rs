@@ -807,6 +807,30 @@ fn http_get(url: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Redis's published hashes, one line per release ever made.
+const REDIS_HASHES: &str = "https://raw.githubusercontent.com/redis/redis-hashes/master/README";
+
+/// The SHA-256 Redis publishes for `filename`.
+///
+/// The document is `hash <file> <algo> <hex> <url>` per line, and it still
+/// carries `sha1` lines for releases from 2013 — so the algorithm has to be
+/// matched rather than assumed from its position. Reading a SHA-1 as a SHA-256
+/// would compare a 40-character digest against a 64-character one and always
+/// fail; treating it as authoritative would be worse.
+fn redis_sha256(document: &str, filename: &str) -> Option<String> {
+    document.lines().find_map(|line| {
+        let mut f = line.split_whitespace();
+        match (f.next(), f.next(), f.next(), f.next()) {
+            (Some("hash"), Some(name), Some("sha256"), Some(hex))
+                if name == filename && hex.len() == 64 =>
+            {
+                Some(hex.to_ascii_lowercase())
+            }
+            _ => None,
+        }
+    })
+}
+
 /// Check a downloaded service archive against the publisher's own hash.
 ///
 /// Only PostgreSQL's publisher offers one usable here — a `.sha256` beside each
@@ -827,21 +851,37 @@ fn verify_download(
     bytes: &[u8],
     progress: &impl Fn(&str),
 ) -> Result<()> {
-    if !matches!(spec.kind, ServiceKind::Postgres) {
-        tracing::debug!(
-            service = spec.name,
-            "publisher offers no sha256; archive not verified"
-        );
-        return Ok(());
-    }
     let filename = url.rsplit('/').next().unwrap_or_default().to_string();
-    progress("verifying checksum…");
-    let doc = http_get_string(&format!("{url}.sha256"))?;
-    let expected = grove_core::checksum::expected_for(&doc, &filename)
-        .ok_or_else(|| ServiceError::Http(format!("no sha256 published for {filename}")))?;
-    grove_core::checksum::verify(&filename, bytes, &expected)
-        .map_err(|e| ServiceError::Http(e.to_string()))?;
-    Ok(())
+    let expected = match spec.kind {
+        // A `.sha256` beside each asset.
+        ServiceKind::Postgres => {
+            progress("verifying checksum…");
+            let doc = http_get_string(&format!("{url}.sha256"))?;
+            grove_core::checksum::expected_for(&doc, &filename)
+        }
+        // Redis publishes hashes in a repository of its own, in its own format.
+        ServiceKind::Redis => {
+            progress("verifying checksum…");
+            let doc = http_get_string(REDIS_HASHES)?;
+            redis_sha256(&doc, &filename)
+        }
+        // MySQL offers `.md5` and a GPG `.asc`, no SHA-256. MD5 catches a
+        // corrupt transfer but not a chosen collision, and checking the
+        // signature needs an OpenPGP implementation and MySQL's key. Left
+        // unverified rather than verified in a way that reads stronger than it
+        // is.
+        ServiceKind::Mysql => None,
+    };
+    match expected {
+        Some(expected) => grove_core::checksum::verify(&filename, bytes, &expected)
+            .map_err(|e| ServiceError::Http(e.to_string())),
+        None => {
+            progress(&format!(
+                "note: no sha256 published for {filename}; not verified"
+            ));
+            Ok(())
+        }
+    }
 }
 
 fn extract_tar_gz(gz_bytes: &[u8], dest: &std::path::Path) -> Result<()> {
@@ -870,4 +910,76 @@ fn make_executables(bin_dir: &Option<PathBuf>) -> Result<()> {
 #[cfg(not(unix))]
 fn make_executables(_bin_dir: &Option<PathBuf>) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+
+    /// A slice of the real document, including the sha1 lines it still carries
+    /// from 2013 and a sha256 line for a version we do not want.
+    const DOC: &str = "\
+hash redis-2.8.0-rc5.tar.gz sha1 bd27589b71a0b406b982485051f32b7c40c9d2c1 http://download.redis.io/releases/redis-2.8.0-rc5.tar.gz
+hash redis-7.4.1.tar.gz sha256 0e439cbc19f6db5d4c63d2bc0aa8d43fdaf9ab164717c67f30f2b8873c8dcb50 http://download.redis.io/releases/redis-7.4.1.tar.gz
+hash redis-7.4.2.tar.gz sha256 4ddebbf09061cbb589011786febdb34f29767dd7f89dbe712d2b68e808af6a1f http://download.redis.io/releases/redis-7.4.2.tar.gz
+";
+
+    #[test]
+    fn the_right_release_line_is_found() {
+        assert_eq!(
+            redis_sha256(DOC, "redis-7.4.2.tar.gz").as_deref(),
+            Some("4ddebbf09061cbb589011786febdb34f29767dd7f89dbe712d2b68e808af6a1f")
+        );
+        // A near neighbour must not be picked up.
+        assert_eq!(
+            redis_sha256(DOC, "redis-7.4.1.tar.gz").as_deref(),
+            Some("0e439cbc19f6db5d4c63d2bc0aa8d43fdaf9ab164717c67f30f2b8873c8dcb50")
+        );
+    }
+
+    /// The one that matters: an old sha1 line must not be read as a sha256.
+    #[test]
+    fn sha1_lines_are_refused() {
+        assert_eq!(
+            redis_sha256(DOC, "redis-2.8.0-rc5.tar.gz"),
+            None,
+            "a sha1 digest must not be accepted as a sha256"
+        );
+    }
+
+    #[test]
+    fn unknown_and_malformed_lines_yield_nothing() {
+        assert_eq!(redis_sha256(DOC, "redis-9.9.9.tar.gz"), None);
+        assert_eq!(redis_sha256("", "redis-7.4.2.tar.gz"), None);
+        assert_eq!(redis_sha256("404 Not Found", "redis-7.4.2.tar.gz"), None);
+        // Right shape, truncated digest.
+        assert_eq!(
+            redis_sha256(
+                "hash redis-7.4.2.tar.gz sha256 abc123 url",
+                "redis-7.4.2.tar.gz"
+            ),
+            None
+        );
+    }
+
+    /// The catalog must point at the verifiable source, not GitHub's
+    /// git-archive — whose bytes are not promised to be stable.
+    #[test]
+    fn redis_is_fetched_from_the_official_release_host() {
+        let spec = catalog::spec("redis").expect("redis is in the catalog");
+        let url = catalog::download_url(spec).expect("a download url");
+        assert!(
+            url.starts_with("https://download.redis.io/releases/redis-"),
+            "got {url}"
+        );
+        assert!(
+            !url.contains("archive/refs/tags"),
+            "the git-archive tarball has no stable hash: {url}"
+        );
+        // And the unpacked root still matches what the build step expects.
+        assert_eq!(
+            catalog::archive_root(spec).as_deref(),
+            Some(format!("redis-{}", spec.version).as_str())
+        );
+    }
 }

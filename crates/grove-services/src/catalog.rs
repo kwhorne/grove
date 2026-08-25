@@ -73,8 +73,17 @@ pub fn download_url(spec: &ServiceSpec) -> Option<String> {
                 v = spec.version,
             ))
         }
+        // The official release tarball, not GitHub's git-archive of the tag.
+        //
+        // The archive URL was convenient but unverifiable: GitHub generates those
+        // tarballs on demand and does not promise their bytes stay stable — a
+        // compression change on their side silently invalidates any pinned hash,
+        // as one did across the ecosystem in 2023. `download.redis.io` serves a
+        // fixed artefact, and Redis publishes its SHA-256 in the `redis-hashes`
+        // repository. Both unpack to `redis-<version>/`, so nothing downstream
+        // changes.
         ServiceKind::Redis => Some(format!(
-            "https://github.com/redis/redis/archive/refs/tags/{v}.tar.gz",
+            "https://download.redis.io/releases/redis-{v}.tar.gz",
             v = spec.version,
         )),
         ServiceKind::Mysql => {
