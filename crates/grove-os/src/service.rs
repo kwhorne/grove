@@ -34,13 +34,21 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
-/// Install (and load) the Grove daemon as an OS service for the current user.
+/// Install (and load) the Grove daemon as an OS service.
 ///
 /// `exe` is the path to the `grove` binary; the service runs `grove daemon`.
+///
+/// `run_uid` is the `(uid, gid)` Grove is being installed on behalf of, when the
+/// caller can tell — under `sudo` that is `SUDO_UID`/`SUDO_GID`. It is recorded
+/// in the unit so the daemon can authorize that user on its IPC socket without
+/// having to resolve a username at runtime. See `grove-daemon`'s `ipc` module:
+/// inferring it from `$GROVE_HOME`'s owner is not enough, because root creates
+/// that directory on a fresh install.
 pub fn install(
     exe: &std::path::Path,
     grove_home: &std::path::Path,
     run_user: Option<&str>,
+    run_uid: Option<(u32, u32)>,
 ) -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
@@ -52,6 +60,17 @@ pub fn install(
         let path = unit_path().ok_or_else(|| OsError::Unsupported("no unit path".into()))?;
         let run_user_xml = run_user
             .map(|u| format!("        <key>GROVE_RUN_USER</key><string>{u}</string>\n"))
+            .unwrap_or_default();
+        // Numeric ids so the daemon can authorize its IPC socket without
+        // resolving a username. Rendered from `u32`, so no XML escaping is
+        // needed here even though the surrounding template does not escape.
+        let run_id_xml = run_uid
+            .map(|(uid, gid)| {
+                format!(
+                    "        <key>GROVE_RUN_USER_ID</key><string>{uid}</string>\n\
+                             <key>GROVE_RUN_GROUP_ID</key><string>{gid}</string>\n"
+                )
+            })
             .unwrap_or_default();
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -67,7 +86,7 @@ pub fn install(
     <key>EnvironmentVariables</key>
     <dict>
         <key>GROVE_HOME</key><string>{home}</string>
-{run_user_xml}    </dict>
+{run_user_xml}{run_id_xml}    </dict>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
     <key>StandardOutPath</key><string>{home}/daemon.out.log</string>
@@ -79,6 +98,7 @@ pub fn install(
             exe = exe.display(),
             home = grove_home.display(),
             run_user_xml = run_user_xml,
+            run_id_xml = run_id_xml,
         );
         std::fs::write(&path, plist)?;
         #[cfg(unix)]
@@ -101,12 +121,20 @@ pub fn install(
             std::fs::create_dir_all(parent)?;
         }
         let _ = run_user;
+        let run_id_env = run_uid
+            .map(|(uid, gid)| {
+                format!(
+                    "Environment=GROVE_RUN_USER_ID={uid}\nEnvironment=GROVE_RUN_GROUP_ID={gid}\n"
+                )
+            })
+            .unwrap_or_default();
         let unit = format!(
             "[Unit]\nDescription=Elyra Grove daemon\nAfter=network.target\n\n\
-             [Service]\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\nRestart=on-failure\n\n\
+             [Service]\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\n{run_id_env}Restart=on-failure\n\n\
              [Install]\nWantedBy=default.target\n",
             exe = exe.display(),
             home = grove_home.display(),
+            run_id_env = run_id_env,
         );
         std::fs::write(&path, unit)?;
         run("systemctl", &["--user", "daemon-reload"])?;
@@ -115,7 +143,7 @@ pub fn install(
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = (exe, grove_home, run_user);
+        let _ = (exe, grove_home, run_user, run_uid);
         Err(OsError::Unsupported(
             "Windows service install not yet implemented".into(),
         ))
