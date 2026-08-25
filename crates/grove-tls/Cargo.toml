@@ -13,4 +13,12 @@ rustls.workspace = true
 rustls-pemfile.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 time.workspace = true
+
+[dev-dependencies]
+# To assert the name-constraints extension is really in the generated
+# certificate, rather than only that the field was set. Already in the lockfile
+# via rcgen's `x509-parser` feature.
+x509-parser = "0.18"

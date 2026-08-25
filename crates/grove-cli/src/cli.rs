@@ -479,6 +479,14 @@ pub enum DebugAction {
 pub enum CaAction {
     /// Generate (if needed) and trust the Grove root CA in the system store.
     Trust,
+    /// Replace the root CA with a freshly generated one and trust it.
+    ///
+    /// Needed once for CAs created before Grove constrained them to its own
+    /// TLD: an existing certificate cannot gain a name constraint, only a new
+    /// one can carry it. Also the fix if you change `[general].tld`, since the
+    /// old CA is not permitted to sign the new one. Every site's certificate is
+    /// re-issued on next use.
+    Rotate,
     /// Remove the Grove root CA from the system store.
     Uninstall,
 }

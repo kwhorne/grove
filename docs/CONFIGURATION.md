@@ -59,7 +59,7 @@ proxy_to = "http://127.0.0.1:5173"
 
 | Key | Default | Notes |
 | --- | --- | --- |
-| `tld` | `test` | Top-level domain. Changing it requires a daemon restart. |
+| `tld` | `test` | Top-level domain. Changing it requires a daemon restart — and `sudo grove ca rotate`, since the root CA is name-constrained to the TLD it was generated for and cannot sign the new one. `grove doctor` flags the mismatch. |
 | `default_php` | `8.5` | Fallback PHP version for sites without `php`. |
 | `php_variant` | `grove` | Which static-PHP extension set `grove php install` fetches: `grove` (Grove's own build — has both the PDO SQLite/PostgreSQL drivers *and* `intl`/`mysqli`/`sodium`/`readline`/`apcu`/`xsl`), or upstream `common` / `bulk`, each missing one of those groups. See [COMMANDS.md](COMMANDS.md#extensions-and-the---variant-flag). Existing builds are not re-downloaded when this changes. |
 | `auto_start` | `true` | Start the daemon at login. |

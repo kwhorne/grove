@@ -427,4 +427,5 @@ The desktop app's **Tools** panel adds actions without a CLI equivalent:
 | Command | Description |
 | --- | --- |
 | `grove ca trust` | Generate (if needed) and trust the Grove root CA in the system store. |
+| `grove ca rotate` | Replace the root CA with a freshly generated one and trust it. Needed once for CAs made before Grove constrained them to its TLD, and after changing `[general].tld`. |
 | `grove ca uninstall` | Remove the Grove root CA from the system store. |

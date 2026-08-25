@@ -2523,9 +2523,12 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-pemfile",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "time",
  "tracing",
+ "x509-parser",
 ]
 
 [[package]]
