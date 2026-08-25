@@ -15,26 +15,29 @@ fn license_path(paths: &GrovePaths) -> PathBuf {
     paths.base().join("license.key")
 }
 
-fn now_unix() -> i64 {
+/// Seconds since the epoch, or `None` if the clock is before it.
+///
+/// This used to fall back to `0`, which every expiry comparison reads as "not
+/// expired yet" — so a clock set before 1970 validated any license. Far-fetched,
+/// but the fallback was the wrong direction: a license check that cannot
+/// establish the time should decline, not approve.
+fn now_unix() -> Option<i64> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
+        .ok()
         .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 /// Verify a key and, if valid, persist it. Returns the claims on success.
 pub fn activate(paths: &GrovePaths, key: &str) -> Result<LicenseClaims, LicenseError> {
     let key = key.trim();
-    let claims = grove_license::verify(key, now_unix())?;
-    if let Err(e) = std::fs::write(license_path(paths), key) {
+    let claims = grove_license::verify(key, now_unix().ok_or(LicenseError::Misconfigured)?)?;
+    // 0600, and never through a symlink. This key is not just an entitlement
+    // claim: it doubles as the bearer token for the Teams backend, so at 0644 it
+    // was a credential every local user could read.
+    if let Err(e) = grove_core::securefs::write_private(&license_path(paths), key) {
         tracing::warn!(error = %e, "could not persist license");
         return Err(LicenseError::Misconfigured);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ =
-            std::fs::set_permissions(license_path(paths), std::fs::Permissions::from_mode(0o644));
     }
     Ok(claims)
 }
@@ -42,7 +45,7 @@ pub fn activate(paths: &GrovePaths, key: &str) -> Result<LicenseClaims, LicenseE
 /// The current entitlement, if a valid (non-expired) license is stored.
 pub fn current(paths: &GrovePaths) -> Option<LicenseClaims> {
     let key = std::fs::read_to_string(license_path(paths)).ok()?;
-    grove_license::verify(key.trim(), now_unix()).ok()
+    grove_license::verify(key.trim(), now_unix()?).ok()
 }
 
 /// Remove the stored license.

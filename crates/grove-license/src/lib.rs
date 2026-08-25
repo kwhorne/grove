@@ -115,13 +115,26 @@ fn verifying_key(public_key_hex: &str) -> Result<VerifyingKey> {
     VerifyingKey::from_bytes(&arr).map_err(|_| LicenseError::Misconfigured)
 }
 
+/// Decode an even-length hex string.
+///
+/// Works on bytes rather than string slices. The previous version sliced
+/// `&s[i..i + 2]`, which panics when the index is not a UTF-8 character
+/// boundary — `hex_decode("€x")` was a panic rather than a `None`. Only ever
+/// called with a compile-time constant today, so it was latent, but a public
+/// function that panics on its documented input type is a trap for the next
+/// caller.
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
+    let bytes = s.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+    bytes
+        .chunks(2)
+        .map(|pair| {
+            let hi = (pair[0] as char).to_digit(16)?;
+            let lo = (pair[1] as char).to_digit(16)?;
+            Some((hi * 16 + lo) as u8)
+        })
         .collect()
 }
 
@@ -129,6 +142,32 @@ pub type Result<T> = std::result::Result<T, LicenseError>;
 
 #[cfg(test)]
 mod tests {
+    /// Regression: the old decoder sliced `&s[i..i + 2]`, which panics when the
+    /// index is not a UTF-8 boundary. Multi-byte input must be `None`, not a
+    /// crash.
+    #[test]
+    fn non_ascii_hex_is_refused_not_panicked_on() {
+        for input in [
+            "\u{20ac}x",
+            "\u{20ac}\u{20ac}",
+            "ab\u{e9}d",
+            "\u{1F600}\u{1F600}",
+        ] {
+            assert_eq!(hex_decode(input), None, "{input:?} should decode to None");
+        }
+    }
+
+    #[test]
+    fn valid_hex_still_decodes() {
+        assert_eq!(hex_decode("00ff10"), Some(vec![0x00, 0xff, 0x10]));
+        assert_eq!(hex_decode("DEADBEEF"), Some(vec![0xde, 0xad, 0xbe, 0xef]));
+        assert_eq!(hex_decode(""), Some(vec![]));
+        assert_eq!(hex_decode("abc"), None, "odd length");
+        assert_eq!(hex_decode("zz"), None, "not hex digits");
+        // The real public key must still parse, or nothing verifies.
+        assert!(hex_decode(PUBLIC_KEY_HEX).is_some());
+    }
+
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use ed25519_dalek::{Signer, SigningKey};

@@ -227,10 +227,19 @@ impl CertificateAuthority {
         let key_path = paths.certs_dir().join(format!("{safe}.key"));
 
         if cert_path.exists() && key_path.exists() {
-            return Ok((
-                fs::read_to_string(&cert_path)?,
-                fs::read_to_string(&key_path)?,
-            ));
+            let cert_pem = fs::read_to_string(&cert_path)?;
+            // Reuse it only while it is still good for a while. `issue_leaf`
+            // says the daemon renews these automatically, and it did not: the
+            // cached pair was returned unconditionally, so 397 days after a site
+            // was first served its certificate would simply expire and every
+            // request to it would fail TLS.
+            if !expires_within(&cert_pem, RENEW_BEFORE_DAYS) {
+                return Ok((cert_pem, fs::read_to_string(&key_path)?));
+            }
+            tracing::info!(
+                hostname,
+                "leaf certificate is near expiry; issuing a replacement"
+            );
         }
 
         let names = vec![hostname.to_string(), format!("*.{hostname}")];
@@ -240,6 +249,32 @@ impl CertificateAuthority {
         securefs::write_private(&key_path, &key_pem)?;
         Ok((cert_pem, key_pem))
     }
+}
+
+/// How long before expiry a leaf is replaced.
+///
+/// Comfortably longer than any browser session, so a certificate is never
+/// swapped out from under a page that is already loaded, and short enough that
+/// the vast majority of reuses are a plain file read.
+const RENEW_BEFORE_DAYS: i64 = 30;
+
+/// Whether a PEM certificate expires within `days`.
+///
+/// A certificate that cannot be parsed is treated as due for replacement:
+/// re-issuing costs a keypair, while trusting something unreadable is how a
+/// site ends up serving an expired certificate.
+fn expires_within(cert_pem: &str, days: i64) -> bool {
+    use x509_parser::prelude::*;
+
+    let Ok((_, pem)) = parse_x509_pem(cert_pem.as_bytes()) else {
+        return true;
+    };
+    let Ok(cert) = pem.parse_x509() else {
+        return true;
+    };
+    let not_after = cert.validity().not_after.timestamp();
+    let cutoff = OffsetDateTime::now_utc() + Duration::days(days);
+    not_after <= cutoff.unix_timestamp()
 }
 
 /// The TLD a CA on disk was constrained to, if Grove recorded one.
@@ -462,6 +497,63 @@ mod tests {
         let fresh = CertificateAuthority::load_or_create(&paths).unwrap();
         assert_ne!(fresh.cert_pem(), ca.cert_pem(), "it must be a new CA");
         assert!(fresh.issue_leaf(&["myapp.test".to_string()]).is_ok());
+        let _ = std::fs::remove_dir_all(paths.base());
+    }
+
+    /// Build a leaf that expires in `days`, to drive the renewal check.
+    fn leaf_expiring_in(ca: &CertificateAuthority, days: i64) -> String {
+        let mut params = CertificateParams::default();
+        params.subject_alt_names = vec![SanType::DnsName(
+            "myapp.test".to_string().try_into().unwrap(),
+        )];
+        params.not_before = OffsetDateTime::now_utc() - Duration::days(1);
+        params.not_after = OffsetDateTime::now_utc() + Duration::days(days);
+        let key = KeyPair::generate().unwrap();
+        params.signed_by(&key, &ca.issuer).unwrap().pem()
+    }
+
+    #[test]
+    fn expiry_is_judged_from_the_certificate() {
+        let ca = CertificateAuthority::generate_for_tld("test").unwrap();
+        assert!(
+            !expires_within(&leaf_expiring_in(&ca, 200), RENEW_BEFORE_DAYS),
+            "a certificate with 200 days left should be reused"
+        );
+        assert!(
+            expires_within(&leaf_expiring_in(&ca, 5), RENEW_BEFORE_DAYS),
+            "a certificate with 5 days left should be replaced"
+        );
+        // Unparseable input errs towards replacing: re-issuing costs a keypair,
+        // serving something unreadable costs the site.
+        assert!(expires_within("not a certificate", RENEW_BEFORE_DAYS));
+        assert!(expires_within("", RENEW_BEFORE_DAYS));
+    }
+
+    /// The bug: `leaf_for_site` returned the cached pair unconditionally, so
+    /// 397 days after a site was first served its certificate expired and every
+    /// request to it failed TLS — despite the comment promising renewal.
+    #[test]
+    fn a_near_expiry_leaf_is_replaced_on_next_use() {
+        let paths = scratch("renew");
+        let ca = CertificateAuthority::load_or_create(&paths).unwrap();
+
+        // Seed the cache with a certificate that is nearly up.
+        let stale = leaf_expiring_in(&ca, 3);
+        let cert_path = paths.certs_dir().join("myapp_test.pem");
+        let key_path = paths.certs_dir().join("myapp_test.key");
+        fs::write(&cert_path, &stale).unwrap();
+        fs::write(&key_path, "placeholder").unwrap();
+
+        let (served, key) = ca.leaf_for_site(&paths, "myapp.test").unwrap();
+        assert_ne!(served, stale, "the stale certificate should not be served");
+        assert_ne!(key, "placeholder", "its key should have been replaced too");
+        assert!(!expires_within(&served, RENEW_BEFORE_DAYS));
+
+        // And the replacement is what is now on disk, so the next call is a
+        // plain file read.
+        assert_eq!(fs::read_to_string(&cert_path).unwrap(), served);
+        let (again, _) = ca.leaf_for_site(&paths, "myapp.test").unwrap();
+        assert_eq!(again, served, "a fresh certificate should be reused as-is");
         let _ = std::fs::remove_dir_all(paths.base());
     }
 

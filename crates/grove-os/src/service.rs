@@ -34,6 +34,29 @@ fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+/// Escape a value for inclusion in a plist `<string>`.
+///
+/// The template interpolates `$GROVE_HOME` and the run user's name straight into
+/// XML. Both come from the environment — and `GROVE_HOME` is one a user controls,
+/// including under `sudo -E`. A path containing `&` or `<` produced a plist that
+/// launchd rejects; one containing `</string>` could close the element early and
+/// inject keys of the attacker's choosing into a **root** LaunchDaemon.
+#[cfg(target_os = "macos")]
+fn xml_escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Install (and load) the Grove daemon as an OS service.
 ///
 /// `exe` is the path to the `grove` binary; the service runs `grove daemon`.
@@ -59,7 +82,12 @@ pub fn install(
         }
         let path = unit_path().ok_or_else(|| OsError::Unsupported("no unit path".into()))?;
         let run_user_xml = run_user
-            .map(|u| format!("        <key>GROVE_RUN_USER</key><string>{u}</string>\n"))
+            .map(|u| {
+                format!(
+                    "        <key>GROVE_RUN_USER</key><string>{}</string>\n",
+                    xml_escape(u)
+                )
+            })
             .unwrap_or_default();
         // Numeric ids so the daemon can authorize its IPC socket without
         // resolving a username. Rendered from `u32`, so no XML escaping is
@@ -95,8 +123,8 @@ pub fn install(
 </plist>
 "#,
             label = SERVICE_LABEL,
-            exe = exe.display(),
-            home = grove_home.display(),
+            exe = xml_escape(&exe.display().to_string()),
+            home = xml_escape(&grove_home.display().to_string()),
             run_user_xml = run_user_xml,
             run_id_xml = run_id_xml,
         );
@@ -190,4 +218,42 @@ fn run(cmd: &str, args: &[&str]) -> Result<()> {
         });
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_paths_pass_through_unchanged() {
+        for value in [
+            "/Users/kh/Library/Application Support/Grove",
+            "/home/kh/.local/share/Grove",
+            "kh",
+        ] {
+            assert_eq!(xml_escape(value), value);
+        }
+    }
+
+    /// The one that matters: a value cannot close the element it sits in and
+    /// start writing keys of its own into a root LaunchDaemon.
+    #[test]
+    fn a_value_cannot_break_out_of_its_element() {
+        let hostile = "/tmp/x</string><key>ProgramArguments</key><array><string>/bin/sh";
+        let escaped = xml_escape(hostile);
+        assert!(!escaped.contains("</string>"), "{escaped}");
+        assert!(!escaped.contains('<'), "{escaped}");
+        assert!(!escaped.contains('>'), "{escaped}");
+    }
+
+    #[test]
+    fn the_xml_metacharacters_are_all_covered() {
+        assert_eq!(xml_escape("a&b"), "a&amp;b");
+        assert_eq!(xml_escape("a<b"), "a&lt;b");
+        assert_eq!(xml_escape("a>b"), "a&gt;b");
+        assert_eq!(xml_escape("a\"b"), "a&quot;b");
+        assert_eq!(xml_escape("a'b"), "a&apos;b");
+        // `&` must be escaped once, not twice.
+        assert_eq!(xml_escape("&amp;"), "&amp;amp;");
+    }
 }
