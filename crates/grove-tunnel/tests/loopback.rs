@@ -81,7 +81,7 @@ async fn request_flows_through_tunnel() {
         control_addr: control,
         http_addr: http,
         domain: "tun.local".into(),
-        token: "secret".into(),
+        token: Some("secret".into()),
         scheme: "http".into(),
     }));
 

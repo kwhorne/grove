@@ -50,7 +50,7 @@ tunnel.example.com.     A    203.0.113.10
 ```bash
 grove-tunnel \
   --domain tunnel.example.com \
-  --token "a-long-shared-secret" \
+  --token "a-long-shared-secret" \   # required; --allow-anonymous to opt out
   --control 0.0.0.0:7000 \
   --http 0.0.0.0:80
 ```
@@ -145,10 +145,38 @@ path, headers and body, so signature verification keeps working.
 
 ---
 
+## Security
+
+The tunnel is the one part of Grove that faces the public internet, so it is
+worth being precise about what it does and does not protect.
+
+**A token is required.** `grove-tunnel` refuses to start without `--token`
+(or `GROVE_TUNNEL_TOKEN`). Running an open server is still possible, but it
+takes an explicit `--allow-anonymous` and logs a warning — it used to be what
+you got by leaving the flag off.
+
+**The control channel is not encrypted.** Client↔server traffic on `:7000` is
+plain TCP: the token and every request and response body cross the internet in
+the clear, and the client does not verify the server's identity. Put the
+control port on a private network, or tunnel it (WireGuard, SSH) — and treat
+the public HTTP side as the only part a TLS terminator protects. Encrypting
+this channel is planned; until then, do not carry anything through a tunnel
+that you would not send over plain HTTP.
+
+**Subdomains are first-come.** Any client with the token may claim any free
+name, minus a reserved list (`www`, `api`, `admin`, `grove`, …). There is no
+ownership model. A request to the apex domain matches no tunnel at all.
+
+**Headers the server sets, and you can trust:** `X-Forwarded-For` is
+overwritten with the real peer address, so an app behind the tunnel cannot be
+told a false client IP. `X-Forwarded-Proto` and `X-Grove-Site` are set by the
+server.
+
+---
+
 ## How it works
 
-- **One control connection** (TCP, optionally token-authenticated) per shared
-  site.
+- **One control connection** (TCP, token-authenticated) per shared site.
 - **yamux** multiplexes every public request as its own stream — full
   concurrency over a single socket.
 - **hyper on both ends**: the server runs an HTTP client over each stream, the
