@@ -2790,7 +2790,14 @@ mod secret {
     fn client(paths: &GrovePaths) -> anyhow::Result<SecretsClient<HttpStore>> {
         let token = license_token(paths)?;
         let id = load_or_create_identity()?;
-        Ok(SecretsClient::new(HttpStore::new(server(), token), id))
+        // Pins live in the user's own home, beside the identity: the root
+        // daemon plays no part in secret sync, and a record of who you trust
+        // should not sit in a tree owned by another user.
+        let pins = identity_path()
+            .parent()
+            .map(|d| d.join("secrets"))
+            .unwrap_or_else(|| std::path::PathBuf::from(".grove/secrets"));
+        Ok(SecretsClient::new(HttpStore::new(server(), token), id).with_pins(pins))
     }
 
     pub fn run(paths: &GrovePaths, action: SecretAction, json: bool) -> anyhow::Result<()> {
