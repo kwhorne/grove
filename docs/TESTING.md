@@ -115,12 +115,20 @@ demonstrate the refusal path. These files skip themselves unless they happen to
 be running as root — a no-op on your machine, real evidence in a container:
 
 ```bash
-docker run --rm -v "$PWD:/w" -w /w rust:alpine sh -c '
-  apk add --no-cache musl-dev openssl-dev &&
-  cargo test -p grove-core --test privdrop_root -- --nocapture &&
-  cargo test -p grove-tls  --test ca_ownership_root -- --nocapture &&
-  cargo test -p grove-runtime --test probe_root -- --nocapture'
+docker run --rm -v "$PWD:/w" -w /w \
+  -v grove-linux-target:/target -e CARGO_TARGET_DIR=/target \
+  rust:alpine sh -c '
+    apk add --no-cache musl-dev openssl-dev &&
+    cargo test -p grove-core    --test privdrop_root     -- --nocapture &&
+    cargo test -p grove-tls     --test ca_ownership_root -- --nocapture &&
+    cargo test -p grove-runtime --test probe_root        -- --nocapture'
 ```
+
+The named volume is worth the extra flags. Cargo keys artefacts by target
+triple, so a container writing into `./target` does *not* destroy your host
+build — but it does grow the directory by a second platform's worth of objects,
+and it starts from cold every run. In a volume the first run is a ~12-minute
+build and every run after it is seconds.
 
 They cover: that a dropped child really comes out as the requested user and
 group, with none of root's supplementary groups surviving; that with no target
