@@ -290,6 +290,38 @@ ciphertext. Requires an active Teams license (`grove license activate`).
 The backend URL defaults to `https://teams.elyracode.com` (`GROVE_TEAMS_SERVER`
 overrides it).
 
+### How much the backend is trusted
+
+Not much, deliberately. It stores ciphertext and it does **not** get to decide
+who can read it.
+
+The first time your client sees a project it records that project's member list
+under `~/.grove/secrets/`. From then on the recipients are whatever *you* last
+agreed to — the server's copy is compared to yours, never obeyed. If the two
+have diverged in either direction, `grove secret set` refuses and names the keys
+involved rather than encrypting to a list you did not approve:
+
+```console
+$ grove secret set myapp APP_KEY=…
+Error: the recipient list for "myapp" does not match what you agreed to
+       (added: ["age1qy…"], removed: []). Refusing to encrypt.
+```
+
+`grove secret share` and `revoke` are how you record a change. That makes adding
+a teammate a deliberate act rather than something the backend can announce —
+which is the whole point, and the cost: a legitimate new colleague is refused
+until someone runs `share`.
+
+Each payload also carries a version **inside** the encryption, where the server
+cannot edit it. A client refuses a payload older than the newest it has already
+seen, so replaying yesterday's blob — reinstating a rotated secret, or a revoked
+member's access — fails instead of passing silently.
+
+Two things this does not yet do, both needing backend support: payloads are not
+*signed*, so a compromised backend could in principle forge one your key would
+still decrypt; and the API token is the license key rather than a separate
+credential.
+
 ## License (Grove Pro / Teams)
 
 Activate a purchased license to unlock Pro/Teams features. Verified offline
