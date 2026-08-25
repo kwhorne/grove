@@ -5,6 +5,7 @@
 //! touches the operating system. Higher-level crates (`grove-dns`,
 //! `grove-proxy`, `grove-daemon`) consume the resolved state produced here.
 
+pub mod checksum;
 pub mod config;
 pub mod driver;
 pub mod error;

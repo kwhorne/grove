@@ -21,4 +21,6 @@ once_cell.workspace = true
 # per-platform value would be a silent portability bug. `libc` is a bindings
 # crate with no C code, already in the lockfile transitively.
 libc = "0.2"
+# SHA-256 for verifying downloaded runtimes. Already in the lockfile.
+sha2 = "0.10"
 

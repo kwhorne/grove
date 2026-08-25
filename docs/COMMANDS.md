@@ -188,6 +188,38 @@ Set the default variant for future installs with `[general].php_variant`, or
 point Grove at your own mirror with `GROVE_PHP_MIRROR` (it must keep upstream's
 `<variant>/php-<version>-<cli|fpm>-<os>-<arch>.tar.gz` layout).
 
+### Are downloads verified?
+
+Grove checks a SHA-256 for everything it downloads **where the publisher offers
+one**, before the file is written or executed:
+
+| | Verified against |
+| --- | --- |
+| Grove's own PHP builds | the release asset's `digest` |
+| Node | `SHASUMS256.txt` |
+| Composer | `composer-stable.phar.sha256` |
+| cpx | the release asset's `digest` |
+| PostgreSQL | the asset's `.sha256` |
+
+Three sources publish nothing usable, and Grove says so per download rather
+than implying otherwise:
+
+- **Upstream `common` / `bulk`** archives have no checksum at all — no
+  `.sha256`, no signature, nothing in the directory listing. This is one more
+  reason the `grove` variant is the default.
+- **MySQL** publishes `.md5` and a GPG signature but no SHA-256. MD5 catches a
+  corrupt transfer, not a chosen collision, and checking the signature needs an
+  OpenPGP implementation and MySQL's key.
+- **Redis** is fetched as a GitHub git-archive tarball, whose bytes GitHub does
+  not promise to keep stable, so a pinned hash would break on their next
+  compression change.
+
+What this proves is worth stating plainly: a hash fetched from the same host as
+the file catches storage corruption, a truncated transfer and a tampered
+artefact. It does not defend against a publisher whose account is taken over
+and who replaces both. Only Node publishes an independent chain — a GPG
+signature over `SHASUMS256.txt` — and Grove does not check that yet.
+
 ## Node.js
 
 | Command | Description |

@@ -213,7 +213,8 @@ pub fn install(
     // get. Everything downstream — the CLI archive, the label recorded on the
     // build — has to follow the resolved one, or a build ends up labelled as
     // something it isn't.
-    let (variant, resolved) = resolve_with_fallback(variant, version_req, &suffix, &progress)?;
+    let (variant, resolved, listing) =
+        resolve_with_fallback(variant, version_req, &suffix, &progress)?;
     let base = variant.download_base();
     let filename = format!("php-{}-fpm-{plat}.tar.gz", resolved.dotted());
     let url = format!("{base}{filename}");
@@ -225,6 +226,7 @@ pub fn install(
 
     progress(&format!("downloading {filename}…"));
     let bytes = http_get(&url)?;
+    verify_or_note(variant, &listing, &filename, &bytes, &progress)?;
 
     progress("extracting…");
     extract_fpm(&bytes, &fpm_path)?;
@@ -299,7 +301,8 @@ fn fetch_cli(
     let (os, arch) = platform_slug()?;
     let plat = format!("{os}-{arch}");
     let suffix = format!("-cli-{plat}.tar.gz");
-    let (variant, resolved) = resolve_with_fallback(variant, version_req, &suffix, &progress)?;
+    let (variant, resolved, listing) =
+        resolve_with_fallback(variant, version_req, &suffix, &progress)?;
     let base = variant.download_base();
     let key = resolved.minor_key();
     let dest_dir = paths.runtimes_dir().join("cli").join(&key);
@@ -311,6 +314,7 @@ fn fetch_cli(
     let filename = format!("php-{}-cli-{plat}.tar.gz", resolved.dotted());
     progress(&format!("downloading {filename}…"));
     let bytes = http_get(&format!("{base}{filename}"))?;
+    verify_or_note(variant, &listing, &filename, &bytes, &progress)?;
     let decoder = flate2::read::GzDecoder::new(&bytes[..]);
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries()? {
@@ -339,6 +343,67 @@ fn fetch_cli(
     )))
 }
 
+/// The digest a publisher offers for `filename`, if any.
+///
+/// Only Grove's own release has one: the GitHub API serves an asset's `digest`
+/// in the same response as its URL, so a Grove-built PHP can be verified with no
+/// hash pinned in this repository.
+///
+/// static-php-cli's upstream archives publish nothing — no `.sha256`, no
+/// signature, nothing in the directory listing. So `common` and `bulk` cannot be
+/// verified at all, and this returns `None` for them rather than pretending
+/// otherwise. That is one more reason Grove's own build is the default.
+fn published_digest(variant: Variant, listing: &str, filename: &str) -> Option<String> {
+    if variant != Variant::Grove || variant.mirror_dir().is_some() {
+        return None;
+    }
+    let release: serde_json::Value = serde_json::from_str(listing).ok()?;
+    release
+        .get("assets")?
+        .as_array()?
+        .iter()
+        .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(filename))?
+        .get("digest")?
+        .as_str()
+        .map(|d| d.to_string())
+}
+
+/// Verify `bytes` against whatever the publisher offers, or say it could not be.
+fn verify_or_note(
+    variant: Variant,
+    listing: &str,
+    filename: &str,
+    bytes: &[u8],
+    progress: &impl Fn(&str),
+) -> Result<()> {
+    match published_digest(variant, listing, filename) {
+        Some(expected) => {
+            progress("verifying checksum…");
+            grove_core::checksum::verify(filename, bytes, &expected)
+                .map_err(|e| InstallError::Http(e.to_string()))
+        }
+        None => {
+            // Said out loud once per download rather than buried: this binary is
+            // about to be installed and executed, and nothing proved it is the
+            // one the publisher shipped. The two reasons are different and the
+            // message should not conflate them — upstream genuinely publishes no
+            // checksum, whereas a missing Grove digest means we could not read
+            // one (a rate-limited API, a build published without it).
+            if variant == Variant::Grove {
+                progress(&format!(
+                    "note: could not read a published digest; {filename} not verified"
+                ));
+            } else {
+                progress(&format!(
+                    "note: upstream `{}` publishes no checksum; {filename} not verified",
+                    variant.slug()
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Resolve `version_req` against `variant`, dropping to its fallback when that
 /// variant has nothing for this version or platform.
 ///
@@ -349,27 +414,37 @@ fn resolve_with_fallback(
     version_req: &str,
     suffix: &str,
     progress: &impl Fn(&str),
-) -> Result<(Variant, SemVer)> {
-    let first = resolve_version(&variant.listing_url(), version_req, suffix);
-    if first.is_ok() {
-        return first.map(|v| (variant, v));
+) -> Result<(Variant, SemVer, String)> {
+    // Fetch the listing once and carry it back: it answers both "which version"
+    // and "what digest", and GitHub's unauthenticated budget is 60 requests an
+    // hour for the whole IP. Asking twice per archive spent four of them on a
+    // single `grove php install`.
+    let listing = http_get_string(&variant.listing_url());
+    let first = listing
+        .as_ref()
+        .map_err(|e| InstallError::Http(e.to_string()))
+        .and_then(|l| resolve_from_listing(l, version_req, suffix));
+    if let Ok(resolved) = first {
+        return Ok((variant, resolved, listing.unwrap_or_default()));
     }
     let Some(alt) = variant.fallback() else {
-        return first.map(|v| (variant, v));
+        return Err(first.err().unwrap_or(InstallError::NoMatch {
+            req: version_req.to_string(),
+            plat: suffix.to_string(),
+        }));
     };
-    let resolved = resolve_version(&alt.listing_url(), version_req, suffix)?;
+    let alt_listing = http_get_string(&alt.listing_url())?;
+    let resolved = resolve_from_listing(&alt_listing, version_req, suffix)?;
     progress(&format!(
         "no {} build for {version_req} yet — using upstream `{}` instead (`grove php ext` shows what it's missing)",
         variant.slug(),
         alt.slug(),
     ));
-    Ok((alt, resolved))
+    Ok((alt, resolved, alt_listing))
 }
 
 /// Scrape the listing and pick the best matching version.
-fn resolve_version(base_url: &str, version_req: &str, suffix: &str) -> Result<SemVer> {
-    // Exact 3-part version: use as-is (still validate it exists in the listing).
-    let listing = http_get_string(base_url)?;
+fn resolve_from_listing(listing: &str, version_req: &str, suffix: &str) -> Result<SemVer> {
     let mut matches: Vec<SemVer> = Vec::new();
     for (idx, _) in listing.match_indices(suffix) {
         let prefix = &listing[..idx];
