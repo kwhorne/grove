@@ -15,6 +15,7 @@ use rcgen::{
 use time::{Duration, OffsetDateTime};
 
 use grove_core::paths::GrovePaths;
+use grove_core::securefs;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TlsError {
@@ -98,13 +99,18 @@ impl CertificateAuthority {
     }
 
     /// Write the CA cert (0644) and key (0600) to disk.
+    ///
+    /// The key goes out through [`securefs::write_private`], so it is `0600`
+    /// from the first byte and the write refuses a symlink rather than letting a
+    /// root daemon `chmod` and overwrite whatever it points at. `$GROVE_HOME`
+    /// lives in the user's own home, so that destination is not ours to trust.
     pub fn persist(&self, paths: &GrovePaths) -> Result<()> {
         paths.ensure()?;
         let cert_path = paths.ca_cert();
         let key_path = paths.ca_key();
-        fs::write(&cert_path, &self.cert_pem)?;
-        fs::write(&key_path, &self.key_pem)?;
-        restrict_key_perms(&key_path)?;
+        refuse_symlinked_dir(&key_path)?;
+        securefs::write_public(&cert_path, &self.cert_pem)?;
+        securefs::write_private(&key_path, &self.key_pem)?;
         Ok(())
     }
 
@@ -150,24 +156,29 @@ impl CertificateAuthority {
 
         let names = vec![hostname.to_string(), format!("*.{hostname}")];
         let (cert_pem, key_pem) = self.issue_leaf(&names)?;
-        fs::write(&cert_path, &cert_pem)?;
-        fs::write(&key_path, &key_pem)?;
-        restrict_key_perms(&key_path)?;
+        refuse_symlinked_dir(&key_path)?;
+        securefs::write_public(&cert_path, &cert_pem)?;
+        securefs::write_private(&key_path, &key_pem)?;
         Ok((cert_pem, key_pem))
     }
 }
 
-#[cfg(unix)]
-fn restrict_key_perms(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(path)?.permissions();
-    perms.set_mode(0o600);
-    fs::set_permissions(path, perms)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn restrict_key_perms(_path: &Path) -> Result<()> {
+/// Refuse to write into a directory that has been swapped for a symlink.
+///
+/// `O_NOFOLLOW` in [`securefs`] only guards the final path component, so it
+/// cannot see a `certs/` that now points at `/etc`. Checking one level up covers
+/// the realistic version of that attack; the durable fix is for this tree not to
+/// sit inside a user-writable directory at all.
+fn refuse_symlinked_dir(path: &Path) -> Result<()> {
+    if securefs::parent_is_symlink(path) {
+        return Err(TlsError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "{} is a symlink; refusing to write a private key through it",
+                path.parent().unwrap_or(path).display()
+            ),
+        )));
+    }
     Ok(())
 }
 

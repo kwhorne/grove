@@ -13,6 +13,7 @@ pub mod paths;
 pub mod project;
 pub mod registry;
 pub mod reqlog;
+pub mod securefs;
 pub mod site;
 
 pub use config::Config;

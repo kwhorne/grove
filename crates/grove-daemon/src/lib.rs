@@ -167,7 +167,7 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
 fn write_pidfile(paths: &GrovePaths) -> anyhow::Result<()> {
     paths.ensure()?;
-    std::fs::write(paths.pid_file(), std::process::id().to_string())?;
+    grove_core::securefs::write_public(&paths.pid_file(), std::process::id().to_string())?;
     Ok(())
 }
 

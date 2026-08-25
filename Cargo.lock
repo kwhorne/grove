@@ -2342,6 +2342,7 @@ name = "grove-core"
 version = "1.4.2"
 dependencies = [
  "directories",
+ "libc",
  "once_cell",
  "serde",
  "serde_json",

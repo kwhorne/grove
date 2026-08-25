@@ -52,7 +52,7 @@ impl SnapshotStore {
     fn save(&self, list: &[Snapshot]) -> Result<()> {
         std::fs::create_dir_all(&self.dir)?;
         let json = serde_json::to_string_pretty(list).unwrap_or_else(|_| "[]".into());
-        std::fs::write(self.index(), json)?;
+        grove_core::securefs::write_public(&self.index(), json)?;
         Ok(())
     }
 
