@@ -101,6 +101,49 @@ To undo everything afterwards:
 sudo grove uninstall           # removes service, resolver and CA trust
 ```
 
+## 2b. The suites that don't run by default
+
+`cargo test --workspace` deliberately skips two groups. Both exist because the
+code they cover cannot be exercised honestly from an ordinary test run, so
+neither being green in CI means they passed — they have to be run on purpose.
+
+### Privileged tests
+
+Dropping privileges can only be *proved* by a process that has some. `setgroups`
+is privileged even when it would change nothing, so an unprivileged run can only
+demonstrate the refusal path. These files skip themselves unless they happen to
+be running as root — a no-op on your machine, real evidence in a container:
+
+```bash
+docker run --rm -v "$PWD:/w" -w /w rust:alpine sh -c '
+  apk add --no-cache musl-dev openssl-dev &&
+  cargo test -p grove-core --test privdrop_root -- --nocapture &&
+  cargo test -p grove-tls  --test ca_ownership_root -- --nocapture &&
+  cargo test -p grove-runtime --test probe_root -- --nocapture'
+```
+
+They cover: that a dropped child really comes out as the requested user and
+group, with none of root's supplementary groups surviving; that with no target
+recorded the child stays root rather than dropping somewhere arbitrary; that a
+root-created CA is owned by root while a *user-owned* key is claimed on the next
+root load, and the certificate stays readable either way; and that runtime probes
+(`php -m` and friends) do not exec as root when a run user is known.
+
+### Network tests
+
+Checksum verification is only as good as its agreement with what publishers
+actually serve today: a parser that handles *our idea* of `SHASUMS256.txt` and
+not Node's would pass every unit test and fail every install. These are
+`#[ignore]`d because they download real artefacts:
+
+```bash
+cargo test -p grove-runtime --test download_verification -- --ignored --nocapture
+```
+
+The cheapest of them (`published_checksum_documents_still_parse`) fetches only
+the manifests, and is the one that catches a publisher changing format from
+under us. Worth running before a release even if you skip the rest.
+
 ## 3. What to verify
 
 - [ ] `*.test` resolves and serves (Laravel / static / proxy drivers)
