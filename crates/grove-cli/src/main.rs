@@ -1699,6 +1699,25 @@ mod lifecycle {
         true
     }
 
+    /// The `(uid, gid)` behind a `sudo` invocation, when there is one.
+    ///
+    /// `SUDO_UID`/`SUDO_GID` are set by sudo itself, so this needs no `getpwnam`
+    /// and no name resolution. Returns `None` when Grove is not being installed
+    /// through sudo (nothing to record) or when the values name root (root is
+    /// already allowed everywhere, and recording it as "the served user" would
+    /// hand the IPC socket to root and lock out the real one).
+    fn numeric_ids_from_sudo() -> Option<(u32, u32)> {
+        let uid: u32 = std::env::var("SUDO_UID").ok()?.trim().parse().ok()?;
+        if uid == 0 {
+            return None;
+        }
+        let gid: u32 = std::env::var("SUDO_GID")
+            .ok()
+            .and_then(|g| g.trim().parse().ok())
+            .unwrap_or(uid);
+        Some((uid, gid))
+    }
+
     pub fn install(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
         use std::path::PathBuf;
         let exe = std::env::current_exe().context("resolving grove binary path")?;
@@ -1725,7 +1744,12 @@ mod lifecycle {
             paths.base().to_path_buf()
         };
 
-        let unit = grove_os::service::install(&exe, &service_home, run_user.as_deref())
+        // Record who the service runs on behalf of, numerically. The daemon
+        // authorizes its IPC socket against this: it cannot infer the user from
+        // `$GROVE_HOME`'s owner, because the CA setup a few lines below creates
+        // that directory *as root* on a fresh install.
+        let run_ids = numeric_ids_from_sudo();
+        let unit = grove_os::service::install(&exe, &service_home, run_user.as_deref(), run_ids)
             .context("installing service")?;
 
         // Self-heal the system resolver (other tools like Herd can remove
@@ -2038,9 +2062,22 @@ mod lifecycle {
             steps.push((true, format!("config present at {}", cfg_path.display())));
         }
 
-        // 2. Root CA (no elevation needed to generate).
-        CertificateAuthority::load_or_create(paths)?;
-        steps.push((true, format!("root CA at {}", paths.ca_cert().display())));
+        // 2. Root CA. Generating it needs no elevation, but the private key
+        // becomes root-owned once a root daemon has seen it (see
+        // `grove_tls::claim_key_for_root`), so an unprivileged re-run of `init`
+        // after that point cannot read it. Skip rather than fail: everything
+        // else `init` does is still worth doing, and the CA already exists.
+        match CertificateAuthority::load_or_create(paths) {
+            Ok(_) => steps.push((true, format!("root CA at {}", paths.ca_cert().display()))),
+            Err(e) if paths.ca_cert().exists() => steps.push((
+                true,
+                format!(
+                    "root CA present at {} (not readable here: {e})",
+                    paths.ca_cert().display()
+                ),
+            )),
+            Err(e) => return Err(e.into()),
+        }
 
         // 3. Ensure a PHP build.
         let mut registry = PhpRegistry::load(paths);
@@ -2207,8 +2244,15 @@ mod local {
         let platform = grove_os::current();
         match action {
             CaAction::Trust => {
-                let ca = CertificateAuthority::load_or_create(paths)?;
-                let _ = ca; // ensures it exists on disk
+                // Only generate when there is nothing to trust yet. Trusting an
+                // existing CA needs the *certificate*, not the private key —
+                // and since that key is now root-owned, loading it here would
+                // fail an unprivileged run with a permissions error instead of
+                // the clear "needs elevation" from `trust_ca` below.
+                if !paths.ca_cert().exists() {
+                    let ca = CertificateAuthority::load_or_create(paths)?;
+                    let _ = ca; // ensures it exists on disk
+                }
                 platform
                     .trust_ca(&paths.ca_cert())
                     .context("trusting root CA (needs elevation)")?;

@@ -16,3 +16,9 @@ tracing.workspace = true
 directories.workspace = true
 shellexpand.workspace = true
 once_cell.workspace = true
+# For `O_NOFOLLOW` in `securefs`. A constant, so it cannot be declared as an
+# extern the way this workspace declares `geteuid`/`setuid` — and hardcoding the
+# per-platform value would be a silent portability bug. `libc` is a bindings
+# crate with no C code, already in the lockfile transitively.
+libc = "0.2"
+

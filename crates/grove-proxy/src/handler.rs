@@ -341,17 +341,23 @@ pub async fn handle(
         .get("x-grove-site")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && trusts_forwarded_headers(&peer))
         .unwrap_or_else(|| host.clone());
 
-    // Honour X-Forwarded-Proto (set by the tunnel) so generated URLs use https.
+    // Honour X-Forwarded-Proto so generated URLs use https — but only from the
+    // tunnel, which reaches the site over loopback. From anywhere else it is
+    // just a string the caller chose, and the proxy binds 0.0.0.0: without this
+    // check anyone on the same network could convince an app that its plaintext
+    // request arrived over TLS, which is enough to have it set secure cookies on
+    // an insecure connection or build https asset URLs for a site with no TLS.
     let https = https
-        || req
-            .headers()
-            .get("x-forwarded-proto")
-            .and_then(|h| h.to_str().ok())
-            .map(|v| v.eq_ignore_ascii_case("https"))
-            .unwrap_or(false);
+        || (trusts_forwarded_headers(&peer)
+            && req
+                .headers()
+                .get("x-forwarded-proto")
+                .and_then(|h| h.to_str().ok())
+                .map(|v| v.eq_ignore_ascii_case("https"))
+                .unwrap_or(false));
 
     // Capture headers + body for the timeline and replay before the body is
     // consumed downstream. One buffering clone; bodies are typically tiny and
@@ -896,6 +902,22 @@ async fn serve_proxy(
 }
 
 /// Build the CGI/1.1 environment FastCGI expects.
+/// Whether Grove's own forwarded hints from this peer may be believed.
+///
+/// `x-forwarded-proto` and `x-grove-site` are injected by Grove's tunnel, which
+/// proxies into the site over loopback (`grove share` runs on the same machine as
+/// the daemon). Every other source is an ordinary client, and the HTTP/HTTPS
+/// listeners bind `0.0.0.0` — so on the LAN these are attacker-controlled.
+///
+/// Loopback is not an authorization boundary in general: any local process can
+/// reach it. It is the right line *here* because these headers only change how a
+/// request is described to an app the local user already controls, and a local
+/// process could reach that app directly anyway. What it removes is the remote
+/// attacker.
+fn trusts_forwarded_headers(peer: &SocketAddr) -> bool {
+    peer.ip().is_loopback()
+}
+
 fn build_fcgi_params(
     parts: &hyper::http::request::Parts,
     site: &ResolvedSite,
@@ -954,8 +976,22 @@ fn build_fcgi_params(
         }
     }
 
-    // Forward all request headers as HTTP_* CGI variables.
+    // Forward request headers as HTTP_* CGI variables.
+    //
+    // The `HTTP_` prefix normally keeps client input from colliding with real
+    // environment variables — except for one name, which is why `Proxy` is
+    // dropped here. A client-supplied `Proxy:` header becomes `HTTP_PROXY`,
+    // which is precisely the variable HTTP clients consult for an outbound
+    // proxy, so any PHP that reads it (directly, or through a library that has
+    // not been hardened) would send its outbound requests wherever the *caller*
+    // chose. That is httpoxy, CVE-2016-5385; nginx and Apache strip it too.
+    //
+    // A legitimate request has no reason to carry it: `Proxy` is not a real
+    // request header in any specification.
     for (name, value) in parts.headers.iter() {
+        if name.as_str().eq_ignore_ascii_case("proxy") {
+            continue;
+        }
         if let Ok(v) = value.to_str() {
             let key = format!("HTTP_{}", name.as_str().to_uppercase().replace('-', "_"));
             p.insert(key, v.to_string());
@@ -1010,6 +1046,105 @@ fn text_response(status: StatusCode, msg: &str) -> Response<BoxBody> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build the `Parts` of a request carrying `headers`, for the CGI-parameter
+    /// tests below.
+    fn parts_with(headers: &[(&str, &str)]) -> hyper::http::request::Parts {
+        let mut b = hyper::Request::builder().uri("http://myapp.test/index.php");
+        for (k, v) in headers {
+            b = b.header(*k, *v);
+        }
+        b.body(()).unwrap().into_parts().0
+    }
+
+    fn fcgi_params(headers: &[(&str, &str)]) -> HashMap<String, String> {
+        let parts = parts_with(headers);
+        let site = ResolvedSite::from_parts(
+            "myapp".to_string(),
+            "test",
+            PathBuf::from("/srv"),
+            grove_core::driver::DriverPlan {
+                driver: grove_core::Driver::Laravel,
+                document_root: PathBuf::from("/srv/public"),
+                front_controller: Some(PathBuf::from("index.php")),
+            },
+            "8.5".to_string(),
+            None,
+            false,
+            grove_core::SiteKind::Linked,
+            None,
+        );
+        build_fcgi_params(
+            &parts,
+            &site,
+            Path::new("/srv/public/index.php"),
+            Path::new("/index.php"),
+            false,
+            0,
+            false,
+        )
+    }
+
+    /// httpoxy (CVE-2016-5385): a client-supplied `Proxy:` header must not
+    /// become `HTTP_PROXY`, which is the variable outbound HTTP clients read.
+    #[test]
+    fn the_proxy_header_never_reaches_php() {
+        for name in ["Proxy", "proxy", "PROXY", "pRoXy"] {
+            let p = fcgi_params(&[(name, "http://attacker.example:3128")]);
+            assert!(
+                !p.contains_key("HTTP_PROXY"),
+                "{name}: HTTP_PROXY leaked through as {:?}",
+                p.get("HTTP_PROXY")
+            );
+        }
+    }
+
+    /// …while every other header still does, so the strip is surgical.
+    #[test]
+    fn ordinary_headers_still_reach_php() {
+        let p = fcgi_params(&[
+            ("Proxy", "http://attacker.example:3128"),
+            ("X-Proxy-Authorization", "keep-me"),
+            ("Accept", "text/html"),
+            ("X-Custom-Thing", "value"),
+        ]);
+        assert!(!p.contains_key("HTTP_PROXY"));
+        // A header whose name merely *contains* "proxy" is untouched: the
+        // collision is with the exact name, not the substring.
+        assert_eq!(
+            p.get("HTTP_X_PROXY_AUTHORIZATION").map(String::as_str),
+            Some("keep-me")
+        );
+        assert_eq!(p.get("HTTP_ACCEPT").map(String::as_str), Some("text/html"));
+        assert_eq!(
+            p.get("HTTP_X_CUSTOM_THING").map(String::as_str),
+            Some("value")
+        );
+    }
+
+    #[test]
+    fn forwarded_hints_are_believed_only_over_loopback() {
+        for addr in ["127.0.0.1:9000", "[::1]:9000"] {
+            let peer: SocketAddr = addr.parse().unwrap();
+            assert!(
+                trusts_forwarded_headers(&peer),
+                "{addr} is the tunnel's own path and must be trusted"
+            );
+        }
+        // The listeners bind 0.0.0.0, so these are reachable from the LAN.
+        for addr in [
+            "192.168.1.50:9000",
+            "10.0.0.7:9000",
+            "[2001:db8::1]:9000",
+            "8.8.8.8:9000",
+        ] {
+            let peer: SocketAddr = addr.parse().unwrap();
+            assert!(
+                !trusts_forwarded_headers(&peer),
+                "{addr} must not be able to claim its request was HTTPS"
+            );
+        }
+    }
 
     #[test]
     fn hidden_paths_are_refused() {

@@ -129,6 +129,6 @@ Beyond `config.toml`, Grove keeps a few files outside the config:
 | `~/.grove/bin/` | PATH shims created by `grove path install`. |
 | `~/.grove/identity` | Your Grove Teams member key pair (private — never leaves the machine). |
 | `$GROVE_HOME/snapshots/` | Database snapshots (`grove db`). |
-| `$GROVE_HOME/certs/` | Root CA + issued leaf certificates. |
+| `$GROVE_HOME/certs/` | Root CA + issued leaf certificates. The CA **private key** is `0600` and owned by root once a root daemon has seen it — it signs certificates the system trust store believes, and nothing unprivileged needs it. The certificate stays world-readable, and leaf keys stay user-readable so `grove dev` can hand them to Vite. |
 | `~/.grove/bin/` | PATH shims from `grove path install` (`php`, `composer`, `cpx`, `node`, …). |
 | `~/.grove/cpx.phar` | The bundled cpx binary. In your home, not `$GROVE_HOME`, so `cpx self-update` can replace it. |
