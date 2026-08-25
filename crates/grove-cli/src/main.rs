@@ -2058,9 +2058,22 @@ mod lifecycle {
             steps.push((true, format!("config present at {}", cfg_path.display())));
         }
 
-        // 2. Root CA (no elevation needed to generate).
-        CertificateAuthority::load_or_create(paths)?;
-        steps.push((true, format!("root CA at {}", paths.ca_cert().display())));
+        // 2. Root CA. Generating it needs no elevation, but the private key
+        // becomes root-owned once a root daemon has seen it (see
+        // `grove_tls::claim_key_for_root`), so an unprivileged re-run of `init`
+        // after that point cannot read it. Skip rather than fail: everything
+        // else `init` does is still worth doing, and the CA already exists.
+        match CertificateAuthority::load_or_create(paths) {
+            Ok(_) => steps.push((true, format!("root CA at {}", paths.ca_cert().display()))),
+            Err(e) if paths.ca_cert().exists() => steps.push((
+                true,
+                format!(
+                    "root CA present at {} (not readable here: {e})",
+                    paths.ca_cert().display()
+                ),
+            )),
+            Err(e) => return Err(e.into()),
+        }
 
         // 3. Ensure a PHP build.
         let mut registry = PhpRegistry::load(paths);
@@ -2225,8 +2238,15 @@ mod local {
         let platform = grove_os::current();
         match action {
             CaAction::Trust => {
-                let ca = CertificateAuthority::load_or_create(paths)?;
-                let _ = ca; // ensures it exists on disk
+                // Only generate when there is nothing to trust yet. Trusting an
+                // existing CA needs the *certificate*, not the private key —
+                // and since that key is now root-owned, loading it here would
+                // fail an unprivileged run with a permissions error instead of
+                // the clear "needs elevation" from `trust_ca` below.
+                if !paths.ca_cert().exists() {
+                    let ca = CertificateAuthority::load_or_create(paths)?;
+                    let _ = ca; // ensures it exists on disk
+                }
                 platform
                     .trust_ca(&paths.ca_cert())
                     .context("trusting root CA (needs elevation)")?;

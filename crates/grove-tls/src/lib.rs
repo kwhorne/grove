@@ -47,6 +47,24 @@ impl CertificateAuthority {
         let cert_path = paths.ca_cert();
         let key_path = paths.ca_key();
 
+        // Half a CA is not a CA. Regenerating over a cert whose key has gone —
+        // or a key whose cert has — mints a *new* signing identity while the
+        // system trust store still holds the old certificate, so every site
+        // starts failing TLS with nothing pointing at the cause. Say so instead.
+        if cert_path.exists() != key_path.exists() {
+            let (present, missing) = if cert_path.exists() {
+                (cert_path.display(), key_path.display())
+            } else {
+                (key_path.display(), cert_path.display())
+            };
+            return Err(TlsError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "incomplete root CA: {present} exists but {missing} is missing.                      Refusing to mint a new CA over a half-present one — the trust store                      still holds the old certificate. Remove both and re-run                      `sudo grove ca trust` to start over."
+                ),
+            )));
+        }
+
         if cert_path.exists() && key_path.exists() {
             let key_pem = fs::read_to_string(&key_path)?;
             let key = KeyPair::from_pem(&key_pem)?;
@@ -59,6 +77,7 @@ impl CertificateAuthority {
             // key), but `cert_pem()` returned a certificate that was not the
             // one on disk and not the one the trust store held.
             let issuer = Issuer::from_ca_cert_pem(&cert_pem, key)?;
+            claim_key_for_root(&key_path);
             return Ok(Self {
                 cert_pem,
                 key_pem,
@@ -111,6 +130,7 @@ impl CertificateAuthority {
         refuse_symlinked_dir(&key_path)?;
         securefs::write_public(&cert_path, &self.cert_pem)?;
         securefs::write_private(&key_path, &self.key_pem)?;
+        claim_key_for_root(&key_path);
         Ok(())
     }
 
@@ -163,6 +183,53 @@ impl CertificateAuthority {
     }
 }
 
+/// Make the CA private key root-owned, whenever we are root to do it.
+///
+/// This key is the whole point of Grove's HTTPS: it is installed in the
+/// **system** trust store, so whoever holds it can mint a certificate for any
+/// name — `google.com` included — that this machine will believe. Nothing
+/// unprivileged needs it: every caller that loads it is either the root daemon
+/// or a command documented as `sudo`. Leaving it readable by the login user
+/// meant a compromised `npm`/`composer` postinstall hook could walk off with it.
+///
+/// `0600` from [`securefs::write_private`] already stops other *users*; this is
+/// what stops unprivileged code running as the login user. Ownership converges
+/// rather than being enforced up front, because a first-run `grove init` without
+/// `sudo` legitimately creates the CA as the user — the root daemon then claims
+/// it on its next start. That leaves a window where the key is user-readable,
+/// but only for a key the user created and therefore already had.
+///
+/// Note that the leaf keys are deliberately *not* included: `grove dev` hands
+/// Vite its certificate and key on purpose, and that process runs as the user. A
+/// stolen leaf key impersonates one local site; a stolen CA key impersonates
+/// everything.
+fn claim_key_for_root(key_path: &Path) {
+    if !grove_core::privdrop::running_as_root() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let already_root = fs::metadata(key_path)
+            .map(|m| m.uid() == 0)
+            .unwrap_or(false);
+        if already_root {
+            return;
+        }
+        match std::os::unix::fs::chown(key_path, Some(0), Some(0)) {
+            Ok(()) => tracing::info!(
+                key = %key_path.display(),
+                "took ownership of the root CA key so unprivileged code cannot read it"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                key = %key_path.display(),
+                "could not take ownership of the root CA key"
+            ),
+        }
+    }
+}
+
 /// Refuse to write into a directory that has been swapped for a symlink.
 ///
 /// `O_NOFOLLOW` in [`securefs`] only guards the final path component, so it
@@ -195,6 +262,94 @@ mod tests {
             .unwrap();
         assert!(leaf.contains("BEGIN CERTIFICATE"));
         assert!(key.contains("PRIVATE KEY"));
+    }
+
+    fn scratch(name: &str) -> GrovePaths {
+        let base = std::env::temp_dir().join(format!(
+            "grove-ca-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        GrovePaths::with_base(&base)
+    }
+
+    /// A CA missing half of itself must not be silently replaced.
+    ///
+    /// The old behaviour regenerated both files, which mints a new signing
+    /// identity while the system trust store still holds the old certificate —
+    /// every site then fails TLS with nothing pointing at why.
+    #[test]
+    fn a_half_present_ca_is_refused_rather_than_replaced() {
+        for missing_key in [true, false] {
+            let paths = scratch(if missing_key { "nokey" } else { "nocert" });
+            let ca = CertificateAuthority::load_or_create(&paths).unwrap();
+            let original_cert = ca.cert_pem();
+
+            let gone = if missing_key {
+                paths.ca_key()
+            } else {
+                paths.ca_cert()
+            };
+            std::fs::remove_file(&gone).unwrap();
+
+            let err = match CertificateAuthority::load_or_create(&paths) {
+                Err(e) => e,
+                Ok(_) => panic!("a half-present CA must not be regenerated"),
+            };
+            assert!(
+                err.to_string().contains("incomplete root CA"),
+                "unhelpful error: {err}"
+            );
+
+            // Crucially, the surviving half is untouched — the trust store's
+            // certificate is still the one on disk.
+            if !missing_key {
+                assert!(!paths.ca_cert().exists(), "cert must not be re-minted");
+            } else {
+                assert_eq!(
+                    fs::read_to_string(paths.ca_cert()).unwrap(),
+                    original_cert,
+                    "the trusted certificate must survive untouched"
+                );
+            }
+            let _ = std::fs::remove_dir_all(paths.base());
+        }
+    }
+
+    /// The key must never be group- or world-readable, whoever owns it.
+    #[test]
+    fn the_ca_key_is_owner_only() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let paths = scratch("mode");
+            CertificateAuthority::load_or_create(&paths).unwrap();
+            let mode = fs::metadata(paths.ca_key()).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "CA key mode is {mode:o}");
+            let _ = std::fs::remove_dir_all(paths.base());
+        }
+    }
+
+    /// Unprivileged, `claim_key_for_root` must be a no-op rather than an error —
+    /// a first-run `grove init` without `sudo` has to keep working.
+    #[test]
+    fn claiming_the_key_is_a_no_op_without_root() {
+        let paths = scratch("claim");
+        CertificateAuthority::load_or_create(&paths).unwrap();
+        let before = fs::metadata(paths.ca_key()).unwrap();
+        claim_key_for_root(&paths.ca_key());
+        let after = fs::metadata(paths.ca_key()).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if !grove_core::privdrop::running_as_root() {
+                assert_eq!(before.uid(), after.uid(), "ownership must not change");
+            }
+        }
+        // And the CA still loads afterwards.
+        assert!(CertificateAuthority::load_or_create(&paths).is_ok());
+        let _ = std::fs::remove_dir_all(paths.base());
     }
 
     #[test]
