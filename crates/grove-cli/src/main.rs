@@ -2261,6 +2261,34 @@ mod local {
                     json,
                 );
             }
+            CaAction::Rotate => {
+                // Untrust the outgoing certificate before removing it: once the
+                // file is gone the platform has nothing to match on, and the old
+                // CA would stay trusted forever — which is the opposite of the
+                // point when you are rotating away from an unconstrained one.
+                if paths.ca_cert().exists() {
+                    if let Err(e) = platform.untrust_ca(&paths.ca_cert()) {
+                        tracing::warn!(error = %e, "could not untrust the old root CA");
+                    }
+                }
+                grove_tls::remove(paths).context("removing the old root CA")?;
+                let ca = CertificateAuthority::load_or_create(paths)
+                    .context("generating a new root CA")?;
+                platform
+                    .trust_ca(&paths.ca_cert())
+                    .context("trusting the new root CA (needs elevation)")?;
+                let scope = ca
+                    .constrained_tld()
+                    .map(|t| format!(", constrained to .{t}"))
+                    .unwrap_or_default();
+                output::print_message(
+                    &format!(
+                        "Grove root CA replaced and trusted ({} store{scope}).                          Restart Grove so sites pick up new certificates.",
+                        platform.name()
+                    ),
+                    json,
+                );
+            }
             CaAction::Uninstall => {
                 platform.untrust_ca(&paths.ca_cert())?;
                 output::print_message("Grove root CA removed from trust store", json);

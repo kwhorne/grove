@@ -8,9 +8,12 @@
 use std::fs;
 use std::path::Path;
 
+/// Fallback TLD when no config can be read. Matches `[general].tld`'s default.
+const DEFAULT_TLD: &str = "test";
+
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
-    KeyUsagePurpose, SanType,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, GeneralSubtree, IsCa, Issuer,
+    KeyPair, KeyUsagePurpose, NameConstraints, SanType,
 };
 use time::{Duration, OffsetDateTime};
 
@@ -38,6 +41,26 @@ pub struct CertificateAuthority {
     /// The signing identity: the CA's distinguished name, key-id method, key
     /// usages and private key, as rcgen wants them for signing a leaf.
     issuer: Issuer<'static, KeyPair>,
+    /// The TLD this CA was constrained to when Grove generated it.
+    ///
+    /// `None` for a CA loaded from disk without a marker — either one Grove
+    /// wrote before it constrained anything, or one brought from elsewhere.
+    constrained_tld: Option<String>,
+}
+
+/// Records what a generated CA was constrained to.
+///
+/// A marker file rather than parsing the certificate back: the TLD is the thing
+/// that has to be compared against config later, and reading it from our own
+/// note is simpler and has no failure mode of its own. Its *absence* is the
+/// signal that matters — that is a CA from before constraints existed.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CaMeta {
+    constrained_tld: String,
+}
+
+fn meta_path(paths: &GrovePaths) -> std::path::PathBuf {
+    paths.certs_dir().join("ca-meta.json")
 }
 
 impl CertificateAuthority {
@@ -82,17 +105,34 @@ impl CertificateAuthority {
                 cert_pem,
                 key_pem,
                 issuer,
+                constrained_tld: constrained_tld(paths),
             });
         }
 
-        let ca = Self::generate()?;
+        let ca = Self::generate_for_tld(&configured_tld(paths))?;
         ca.persist(paths)?;
         Ok(ca)
     }
 
-    /// Generate a fresh root CA valid for ~20 years.
-    pub fn generate() -> Result<Self> {
+    /// Generate a fresh root CA valid for ~20 years, able to sign only `.tld`.
+    ///
+    /// The name constraint is the point. This certificate goes into the
+    /// **system** trust store, so without one it is a universal CA: anything
+    /// holding its key could mint a certificate for `google.com`, a bank, any
+    /// name at all, and this machine would believe it. Constrained to the TLD
+    /// Grove serves, the worst it can assert is a local development site.
+    ///
+    /// RFC 5280 dNSName subtrees are suffix matches on label boundaries, so the
+    /// bare TLD permits `myapp.test` and `api.myapp.test` while excluding
+    /// `test.evil.com` — a name that merely ends in the same letters.
+    pub fn generate_for_tld(tld: &str) -> Result<Self> {
         let mut params = CertificateParams::default();
+        params.name_constraints = Some(NameConstraints {
+            permitted_subtrees: vec![GeneralSubtree::DnsName(tld.to_string())],
+            excluded_subtrees: Vec::new(),
+        });
+        // `Unconstrained` here is the *path length*, which is a different
+        // constraint entirely — it says nothing about which names may be signed.
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.key_usages = vec![
             KeyUsagePurpose::KeyCertSign,
@@ -114,7 +154,13 @@ impl CertificateAuthority {
             cert_pem,
             key_pem,
             issuer: Issuer::new(params, key),
+            constrained_tld: Some(tld.to_string()),
         })
+    }
+
+    /// Generate a CA for the default TLD. Prefer [`Self::generate_for_tld`].
+    pub fn generate() -> Result<Self> {
+        Self::generate_for_tld(DEFAULT_TLD)
     }
 
     /// Write the CA cert (0644) and key (0600) to disk.
@@ -131,7 +177,20 @@ impl CertificateAuthority {
         securefs::write_public(&cert_path, &self.cert_pem)?;
         securefs::write_private(&key_path, &self.key_pem)?;
         claim_key_for_root(&key_path);
+        if let Some(tld) = &self.constrained_tld {
+            let meta = CaMeta {
+                constrained_tld: tld.clone(),
+            };
+            if let Ok(body) = serde_json::to_string_pretty(&meta) {
+                let _ = securefs::write_public(&meta_path(paths), body);
+            }
+        }
         Ok(())
+    }
+
+    /// The TLD this CA may sign for, or `None` if it is unconstrained.
+    pub fn constrained_tld(&self) -> Option<&str> {
+        self.constrained_tld.as_deref()
     }
 
     pub fn cert_pem(&self) -> String {
@@ -181,6 +240,47 @@ impl CertificateAuthority {
         securefs::write_private(&key_path, &key_pem)?;
         Ok((cert_pem, key_pem))
     }
+}
+
+/// The TLD a CA on disk was constrained to, if Grove recorded one.
+pub fn constrained_tld(paths: &GrovePaths) -> Option<String> {
+    let raw = fs::read_to_string(meta_path(paths)).ok()?;
+    serde_json::from_str::<CaMeta>(&raw)
+        .ok()
+        .map(|m| m.constrained_tld)
+}
+
+/// The TLD Grove is configured to serve, falling back to the default.
+fn configured_tld(paths: &GrovePaths) -> String {
+    grove_core::Config::load(paths)
+        .map(|c| c.general.tld)
+        .unwrap_or_else(|_| DEFAULT_TLD.to_string())
+}
+
+/// Remove the CA and every leaf it signed, so the next load mints a fresh one.
+///
+/// Leaves have to go with it: they chain to the old CA, and a leaf whose issuer
+/// the trust store no longer holds is a certificate error on every site rather
+/// than a helpful one.
+pub fn remove(paths: &GrovePaths) -> Result<()> {
+    let _ = fs::remove_file(paths.ca_cert());
+    let _ = fs::remove_file(paths.ca_key());
+    let _ = fs::remove_file(meta_path(paths));
+    let dir = paths.certs_dir();
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_leaf = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e == "pem" || e == "key" || e == "crt")
+                .unwrap_or(false);
+            if is_leaf && path != paths.ca_cert() && path != paths.ca_key() {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Make the CA private key root-owned, whenever we are root to do it.
@@ -252,6 +352,128 @@ fn refuse_symlinked_dir(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The extension has to be *in the certificate*, not merely set on the
+    /// params — this parses the DER back out and looks.
+    #[test]
+    fn the_ca_carries_a_dns_name_constraint() {
+        use x509_parser::prelude::*;
+
+        let ca = CertificateAuthority::generate_for_tld("test").unwrap();
+        let (_, pem) = parse_x509_pem(ca.cert_pem().as_bytes()).expect("pem");
+        let cert = pem.parse_x509().expect("der");
+
+        let constraints = cert
+            .extensions()
+            .iter()
+            .find_map(|e| match e.parsed_extension() {
+                ParsedExtension::NameConstraints(nc) => Some(nc),
+                _ => None,
+            })
+            .expect("the CA must carry a NameConstraints extension");
+
+        let permitted: Vec<String> = constraints
+            .permitted_subtrees
+            .as_ref()
+            .expect("permitted subtrees")
+            .iter()
+            .map(|s| format!("{:?}", s.base))
+            .collect();
+        assert!(
+            permitted.iter().any(|p| p.contains("test")),
+            "permitted subtrees were {permitted:?}"
+        );
+    }
+
+    /// A CA generated for a custom TLD constrains itself to that one.
+    #[test]
+    fn the_constraint_follows_the_configured_tld() {
+        use x509_parser::prelude::*;
+
+        let ca = CertificateAuthority::generate_for_tld("localhost").unwrap();
+        let (_, pem) = parse_x509_pem(ca.cert_pem().as_bytes()).unwrap();
+        let cert = pem.parse_x509().unwrap();
+        let nc = cert
+            .extensions()
+            .iter()
+            .find_map(|e| match e.parsed_extension() {
+                ParsedExtension::NameConstraints(nc) => Some(nc),
+                _ => None,
+            })
+            .expect("NameConstraints");
+        let permitted = format!("{:?}", nc.permitted_subtrees);
+        assert!(permitted.contains("localhost"), "{permitted}");
+        assert!(!permitted.contains("\"test\""), "{permitted}");
+    }
+
+    /// The constraint must not stop Grove doing its actual job.
+    /// Generation records the TLD, and a fresh install is constrained without
+    /// anyone having to ask.
+    #[test]
+    fn a_generated_ca_records_what_it_was_constrained_to() {
+        let paths = scratch("meta");
+        let ca = CertificateAuthority::load_or_create(&paths).unwrap();
+        assert_eq!(ca.constrained_tld(), Some("test"));
+        assert_eq!(constrained_tld(&paths).as_deref(), Some("test"));
+
+        // And it survives a reload, which is what `grove doctor` reads.
+        let reloaded = CertificateAuthority::load_or_create(&paths).unwrap();
+        assert_eq!(reloaded.constrained_tld(), Some("test"));
+        let _ = std::fs::remove_dir_all(paths.base());
+    }
+
+    /// A CA from before constraints existed has no marker — that absence is the
+    /// signal `grove doctor` turns into a warning.
+    #[test]
+    fn a_legacy_ca_reports_no_constraint() {
+        let paths = scratch("legacy");
+        CertificateAuthority::load_or_create(&paths).unwrap();
+        std::fs::remove_file(paths.certs_dir().join("ca-meta.json")).unwrap();
+
+        assert_eq!(constrained_tld(&paths), None);
+        let reloaded = CertificateAuthority::load_or_create(&paths).unwrap();
+        assert_eq!(reloaded.constrained_tld(), None);
+        let _ = std::fs::remove_dir_all(paths.base());
+    }
+
+    /// Rotation has to take the leaves with it: they chain to the old CA, and a
+    /// leaf whose issuer is gone is a certificate error on every site.
+    #[test]
+    fn removing_the_ca_takes_its_leaves_too() {
+        let paths = scratch("rotate");
+        let ca = CertificateAuthority::load_or_create(&paths).unwrap();
+        ca.leaf_for_site(&paths, "myapp.test").unwrap();
+        let leaf = paths.certs_dir().join("myapp_test.pem");
+        let leaf_key = paths.certs_dir().join("myapp_test.key");
+        assert!(leaf.exists() && leaf_key.exists());
+
+        remove(&paths).unwrap();
+        assert!(
+            !paths.ca_cert().exists(),
+            "the CA certificate should be gone"
+        );
+        assert!(!paths.ca_key().exists(), "the CA key should be gone");
+        assert!(!leaf.exists(), "a leaf signed by the old CA should be gone");
+        assert!(!leaf_key.exists(), "its key too");
+        assert_eq!(constrained_tld(&paths), None, "the marker should be gone");
+
+        // And the next load mints a working CA rather than tripping the
+        // half-present guard.
+        let fresh = CertificateAuthority::load_or_create(&paths).unwrap();
+        assert_ne!(fresh.cert_pem(), ca.cert_pem(), "it must be a new CA");
+        assert!(fresh.issue_leaf(&["myapp.test".to_string()]).is_ok());
+        let _ = std::fs::remove_dir_all(paths.base());
+    }
+
+    #[test]
+    fn a_constrained_ca_still_signs_its_own_sites() {
+        let ca = CertificateAuthority::generate_for_tld("test").unwrap();
+        let (leaf, key) = ca
+            .issue_leaf(&["myapp.test".to_string(), "*.myapp.test".to_string()])
+            .expect("a site under the permitted TLD must still be signable");
+        assert!(leaf.contains("BEGIN CERTIFICATE"));
+        assert!(key.contains("PRIVATE KEY"));
+    }
 
     #[test]
     fn generates_and_signs_leaf() {

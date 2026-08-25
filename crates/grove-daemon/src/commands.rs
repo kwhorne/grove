@@ -1318,6 +1318,31 @@ async fn doctor(state: &Arc<DaemonState>) -> Vec<DiagnosticEntry> {
     });
 
     let ca = state.paths.ca_cert();
+    // A CA that can sign any name is trusted by the whole machine, so whether
+    // this one is constrained — and to the TLD actually in use — is worth
+    // saying out loud rather than leaving to be discovered.
+    let ca_scope = if ca.exists() {
+        match grove_tls::constrained_tld(&state.paths) {
+            Some(tld) if tld == config.general.tld => Some((
+                DiagnosticStatus::Pass,
+                format!("constrained to .{tld}"),
+            )),
+            Some(tld) => Some((
+                DiagnosticStatus::Warn,
+                format!(
+                    "constrained to .{tld} but the configured TLD is .{} —                      sites will fail TLS until `sudo grove ca rotate`",
+                    config.general.tld
+                ),
+            )),
+            None => Some((
+                DiagnosticStatus::Warn,
+                "unconstrained: it can sign any hostname, and it is in the system                  trust store. `sudo grove ca rotate` replaces it with one limited                  to your TLD"
+                    .to_string(),
+            )),
+        }
+    } else {
+        None
+    };
     out.push(DiagnosticEntry {
         check: "root-ca".into(),
         status: if ca.exists() {
@@ -1331,6 +1356,13 @@ async fn doctor(state: &Arc<DaemonState>) -> Vec<DiagnosticEntry> {
             "no root CA generated yet".into()
         },
     });
+    if let Some((status, detail)) = ca_scope {
+        out.push(DiagnosticEntry {
+            check: "root-ca-scope".into(),
+            status,
+            detail,
+        });
+    }
 
     out.push(DiagnosticEntry {
         check: "privileges".into(),
