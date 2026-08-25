@@ -87,7 +87,7 @@ pub fn resolve(paths: &GrovePaths, build: &PhpBuild) -> XdebugPlan {
 /// Best-effort lookup of `<extension_dir>/xdebug.so` by asking `php -i`.
 fn extension_dir_so(build: &PhpBuild) -> Option<PathBuf> {
     let cli = build.cli_binary.as_ref().or(Some(&build.fpm_binary))?;
-    let output = std::process::Command::new(cli).arg("-i").output().ok()?;
+    let output = crate::probe::output(cli, &["-i"])?;
     let text = String::from_utf8_lossy(&output.stdout);
     let dir = text.lines().find_map(|line| {
         let rest = line.strip_prefix("extension_dir")?.trim_start();

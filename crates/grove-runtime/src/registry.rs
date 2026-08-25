@@ -28,7 +28,7 @@ impl PhpBuild {
         let Some(cli) = self.cli_binary.as_ref().or(Some(&self.fpm_binary)) else {
             return Vec::new();
         };
-        let Ok(output) = std::process::Command::new(cli).arg("-m").output() else {
+        let Some(output) = crate::probe::output(cli, &["-m"]) else {
             return Vec::new();
         };
         String::from_utf8_lossy(&output.stdout)
@@ -95,10 +95,7 @@ impl PhpRegistry {
 
 /// Probe a php-fpm binary for its version → build descriptor.
 fn probe(fpm: &Path) -> Option<PhpBuild> {
-    let output = std::process::Command::new(fpm)
-        .arg("--version")
-        .output()
-        .ok()?;
+    let output = crate::probe::output(fpm, &["--version"])?;
     let text = String::from_utf8_lossy(&output.stdout);
     // e.g. "PHP 8.4.3 (fpm-fcgi) ..."
     let version = text.split_whitespace().nth(1).and_then(|v| {

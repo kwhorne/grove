@@ -101,19 +101,10 @@ pub fn install(
     extract_fpm(&bytes, &fpm_path)?;
     make_executable(&fpm_path)?;
 
-    // Verify it actually runs.
-    let actual = std::process::Command::new(&fpm_path)
-        .arg("--version")
-        .output()
-        .ok()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .next()
-                .unwrap_or("")
-                .to_string()
-        })
-        .unwrap_or_default();
+    // Verify it actually runs — as the user, not as root. This is the first
+    // time anything execs a binary that arrived over the network a moment ago,
+    // which is exactly where a compromised mirror would want a root exec.
+    let actual = crate::probe::first_stdout_line(&fpm_path, &["--version"]).unwrap_or_default();
     progress(&format!("installed: {actual}"));
 
     let build = PhpBuild {

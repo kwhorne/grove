@@ -8,6 +8,7 @@
 pub mod fpm;
 pub mod install;
 pub mod node;
+pub mod probe;
 pub mod registry;
 pub mod scaffold;
 pub mod xdebug;
