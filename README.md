@@ -276,7 +276,7 @@ Licenses are verified offline. See [Pro & Teams](docs/PRO.md).
 
 ## Documentation
 
-- [Installation guide](docs/INSTALL.md) · [Pro & Teams](docs/PRO.md) · [Docker](docs/DOCKER.md) · [Tunnels](docs/TUNNEL.md) · [Debugging](docs/DEBUGGING.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md)
+- [Installation guide](docs/INSTALL.md) · [Pro & Teams](docs/PRO.md) · [Docker](docs/DOCKER.md) · [Tunnels](docs/TUNNEL.md) · [Debugging](docs/DEBUGGING.md) · [Architecture](docs/ARCHITECTURE.md) · [Configuration](docs/CONFIGURATION.md) · [Commands](docs/COMMANDS.md) · [Testing](docs/TESTING.md) · [Security](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 
 ## Contributing

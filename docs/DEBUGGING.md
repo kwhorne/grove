@@ -40,20 +40,32 @@ $ eval "$(grove debug env)"
 $ php artisan queue:work    # now connects to your editor's listener
 ```
 
-## The static-PHP limitation
+## Grove's own PHP builds don't ship Xdebug
 
-Grove's bundled PHP builds are **fully static**, and a fully-static PHP can't
-load Xdebug (it can't `dlopen` an external `.so`, and static-php-cli can't
-compile Xdebug in). So Grove's own builds report **unavailable** in
-`grove debug status`.
+Grove's bundled PHP does not include Xdebug — it is in the extension catalogue
+as *optional* (`grove php ext` lists it), and not in the set Grove builds. So
+Grove's own builds report **unavailable** in `grove debug status`.
 
-To step-debug, register a PHP that **has** Xdebug — e.g. a dynamic Homebrew PHP:
+Grove looks for it in three places, in order:
+
+1. **Built into the PHP** — a user-registered or custom build that already has
+   it. Only the mode directives are then needed.
+2. **A drop-in at `<runtimes>/xdebug/<version>/xdebug.so`** — loaded with
+   `-d zend_extension=`. This is the escape hatch for a Grove build.
+3. **`xdebug.so` in the build's own `extension_dir`**, found by asking `php -i`.
+
+Whether (2) works depends on the platform, and it is worth being precise rather
+than optimistic. On Linux the builds are genuinely static and cannot `dlopen`
+anything. On macOS they are not fully static — they link dynamically against
+system libraries and report `enable_dl => On` — so a `.so` *can* be loaded in
+principle. The real obstacle there is ABI: the extension has to be compiled
+against the same PHP version and build flags, and Grove does not ship one.
+
+So the reliable route is to register a PHP that **has** Xdebug — e.g. a dynamic
+Homebrew PHP:
 
 ```console
 $ grove php register 8.5 /opt/homebrew/opt/php/sbin/php-fpm
 $ grove isolate myapp 8.5     # use it for a site
 $ grove debug on
 ```
-
-Grove auto-detects Xdebug that's built into that PHP, or a loadable `xdebug.so`
-in its `extension_dir`.

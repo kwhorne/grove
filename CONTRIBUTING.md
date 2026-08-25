@@ -32,6 +32,10 @@ cd crates/grove-gui/ui && pnpm run build   # svelte-check + vite build
 
 - **Format** with `cargo fmt` and keep `clippy` clean (no warnings).
 - **Add tests** for new behaviour where it makes sense.
+- Two suites are **not** in that run and CI being green does not cover them: the
+  root-gated privilege tests and the `#[ignore]`d network/checksum tests. If you
+  touch privilege dropping, file ownership or download verification, run them —
+  see [docs/TESTING.md](docs/TESTING.md#2b-the-suites-that-dont-run-by-default).
 - Keep commits focused; conventional-commit-style messages
   (`feat:`, `fix:`, `docs:`, `ci:` …) are appreciated.
 - Update `CHANGELOG.md` under an *Unreleased* heading for user-facing changes.

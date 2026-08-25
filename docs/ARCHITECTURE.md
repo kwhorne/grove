@@ -30,16 +30,16 @@ local Unix-socket JSON-RPC.
 
 | Crate | Responsibility |
 | --- | --- |
-| `grove-core` | Site registry, driver detection, TOML config, paths. Pure — no OS I/O or port binding. |
+| `grove-core` | Site registry, driver detection, TOML config, paths — and the primitives the privileged parts need: `securefs` (mode-at-`open`, `O_NOFOLLOW`), `privdrop` (setuid/setgid for spawned children), `checksum` (SHA-256 verification), `redact` (stripping secrets out of logs). No port binding, no supervision. |
 | `grove-ipc` | JSON-RPC protocol types + newline-delimited transport, and the client used by CLI/GUI. |
-| `grove-tls` | Root CA generation + on-demand leaf issuance (rcgen/rustls). |
+| `grove-tls` | Root CA generation, `NameConstraints`-scoped to the configured TLD, + on-demand leaf issuance and renewal (rcgen/rustls). |
 | `grove-dns` | Embedded authoritative resolver for `*.<tld>` (hickory). |
 | `grove-proxy` | HTTP/HTTPS listeners, per-driver dispatch, SNI cert resolution, and a minimal FastCGI client. |
 | `grove-runtime` | PHP version management + lazy FPM pools; Node version management; project scaffolding; the bundled toolchain (Composer, Laravel installer) exposed by `grove path`. |
 | `grove-services` | Bundled service manager (PostgreSQL/MySQL/Redis) + the SMTP mail-catcher + cross-dialect database conversion + point-in-time database snapshots. |
 | `grove-tunnel` | Native public tunnels: `grove share` client + the self-hostable `grove-tunnel` server (yamux + hyper). |
 | `grove-license` | Offline Ed25519 verification of Grove Pro/Teams license keys against a baked-in public key. |
-| `grove-secrets` | End-to-end encrypted team secrets (age/X25519): identities, `EnvSecrets`, `SecretStore` (file mock + HTTP), `SecretsClient`. |
+| `grove-secrets` | End-to-end encrypted team secrets (age/X25519): identities, `EnvSecrets`, `SecretStore` (file mock + HTTP), `SecretsClient`, and the local recipient/version pins that keep the backend from choosing who can decrypt. |
 | `grove-os` | Platform integration: resolver setup, trust store, OS service install, elevation checks. |
 | `grove-daemon` | The long-running process: boots listeners, supervises runtimes/services, serves IPC. |
 | `grove-cli` | clap frontend (binary `grove`). |
@@ -134,6 +134,91 @@ be able to end the process:
   headers 30 s; without a deadline, a peer that connects and says nothing holds a
   task and a descriptor indefinitely.
 
+## Trust boundaries
+
+Grove's shape follows from one fact: a small part of it runs as **root** — it has
+to, to bind 53/80/443, install the system resolver and add a CA to the trust
+store — while everything it supervises runs as **you**. That line is where the
+interesting failure modes live, so it is drawn explicitly.
+
+### Root supervises, but nothing it starts stays root
+
+The daemon spawns PHP-FPM pools, PostgreSQL, MySQL, Redis, `grove dev` servers,
+and the scaffolding tools (Composer, the Laravel installer). Every one of them is
+dropped to the invoking user before `exec`: `setgroups` (so root's
+supplementary groups do not survive), then `setgid`, then `setuid` — in that
+order, because the reverse leaves no privilege to drop the others. The identity
+comes from `GROVE_RUN_USER_ID`/`GROVE_RUN_GROUP_ID` (written into the service
+unit at install time), falling back to `GROVE_RUN_USER`/`SUDO_USER` resolved
+through `id`. After dropping, the child verifies its own `geteuid`/`getegid`: a
+*partial* drop fails the spawn rather than quietly running a database as root.
+
+The same applies to Grove probing its own runtimes — `php -m`, `php -i` and
+friends exec a binary out of `$GROVE_HOME`, so they go through the same drop.
+(The mail-catcher needs none of this: it is an in-process Rust SMTP listener, not
+a child process.)
+
+### The IPC socket is the authorization boundary
+
+Every privileged operation the daemon can perform is reachable through
+`run/groved.sock`, which makes the socket — not any individual command — the
+thing that has to be right:
+
+- it is chowned to the run user and set to `0o660`, so mode alone excludes
+  other local users;
+- the daemon reads the peer's credentials (`SO_PEERCRED` / `LOCAL_PEERCRED`)
+  **before it reads the request**, so an unauthorized caller's bytes are never
+  parsed;
+- an unauthorized peer gets an error *response* rather than a dropped
+  connection, because a hangup is indistinguishable from a crashed daemon and
+  sends people debugging the wrong thing.
+
+Permitted: root (it can already do everything the daemon can), the daemon's own
+uid, the configured run user, and the owner of `$GROVE_HOME`. Both of the last
+two are needed, and neither alone would do: the owner covers a daemon someone
+started by hand in their own tree, but after `sudo grove install` the owner *is*
+root — so trusting only the owner would lock the user out of the daemon that
+exists to serve them.
+
+### Two trees, two owners
+
+| Tree | Owner | Holds |
+| --- | --- | --- |
+| `$GROVE_HOME` | shared, root-writable | config, runtimes, services, certs, sockets |
+| `~/.grove` | you | identity, secret pins, `cpx.phar`, PATH shims |
+
+The split is load-bearing in both directions. Anything recording *your* trust
+decisions stays in `~/.grove`, where the root daemon has no part in it — and
+root never reads from there. Conversely, anything root *does* read out of
+`$GROVE_HOME` is as privileged as root itself. `php-builds.json` is the sharp
+example: it is a JSON file that names the `php-fpm` binary root will execute, so
+being able to write it is being able to choose that binary. Replacing a binary is
+the obvious attack; naming a different one is the cheaper one.
+
+### Files are created with the mode they need
+
+`grove-core::securefs` passes the mode to `open(2)` rather than `chmod`-ing
+afterwards, so there is no window — however short — in which a freshly written
+private key is world-readable. It also opens with `O_NOFOLLOW` and refuses a
+symlink at the destination, so a planted link cannot redirect a privileged write
+into a file of the attacker's choosing.
+
+### What is not trusted from the wire
+
+- **Downloads are verified before they are executed** — SHA-256, against a
+  document from the same publisher. The exceptions, and what the check does and
+  does not prove, are in [SECURITY.md](../SECURITY.md).
+- **Forwarded headers are honoured only from loopback.** `X-Forwarded-Proto` and
+  `X-Grove-Site` decide how a request is routed and whether it looks like HTTPS
+  to the app, so off-loopback they are ignored rather than believed.
+- **A client-supplied `Proxy:` header never becomes a CGI variable** — that is
+  httpoxy (CVE-2016-5385): as `HTTP_PROXY` it would redirect the *application's*
+  outbound HTTP through an attacker's host.
+- **The tunnel server refuses to start open.** `grove-tunnel` is the one
+  component meant to face the public internet, so it requires `--token` or an
+  explicit `--allow-anonymous`; it rejects reserved subdomains, overwrites
+  `X-Forwarded-For` with the real peer, and puts a timeout on header reads.
+
 ## Beyond native sites
 
 - **Docker / OrbStack** — `grove-daemon` polls the Docker socket and merges
@@ -163,11 +248,23 @@ be able to end the process:
 - **Request timeline** — the proxy handler records every request (method, path,
   status, duration) into a bounded in-memory ring buffer in `grove-core`
   (`RequestLog`), shared with the daemon so `grove requests` and the GUI panel
-  can read it. Framework-agnostic; nothing is persisted to disk.
+  can read it. Framework-agnostic; nothing is persisted to disk. What *leaves*
+  the daemon is redacted — `Authorization`, `Cookie`, `Set-Cookie`, API-key
+  headers, and query/body fields whose name looks like a credential are replaced
+  with `[redacted]`, so `grove request --as curl`, the `.http`/Pest exports, the
+  MCP tools and webhook payloads are all safe to paste. Replay is the deliberate
+  exception: it reads the unredacted copy that never left the process, so a
+  replayed request still authenticates.
 - **Local HTTPS** — `grove-tls` keeps the root CA that was generated on first run
   and trusted once, and signs per-site leaves from it on demand. The certificate
   it reports is the one on disk, which is the one the OS trust store was pointed
-  at; leaves are short-lived (397 days) and renewed by the daemon.
+  at. The CA carries an X.509 `NameConstraints` extension permitting only
+  `.<tld>`, so a machine that trusts it cannot be served a valid certificate for
+  `google.com` even if the CA key leaks — the TLD it was constrained to is
+  recorded in `ca-meta.json`, and changing `tld` therefore requires
+  `grove ca rotate`. Leaves last 397 days and are re-issued once they are within
+  30 days of expiry, so a long-lived site does not silently serve an expired
+  certificate.
 
 ## Licensing & Teams (Grove Pro)
 
@@ -199,10 +296,24 @@ default such as `~/Library/Application Support/Grove`):
 
 ```
 config.toml            declarative source of truth
-certs/                 root CA + issued leaf certs (incl. certs/dev for Vite HTTPS)
+certs/                 root CA + ca-meta.json + issued leaf certs (incl. certs/dev for Vite HTTPS)
 runtimes/              PHP/Node builds, FPM configs, php-builds.json, composer.phar
 services/              bundled DB/cache binaries + data dirs + state.json
 snapshots/             database snapshots (SQL dumps) + index.json
 logs/                  per-service logs
-run/                   daemon IPC socket, pidfile, FPM/service sockets
+run/                   daemon IPC socket (groved.sock), pidfile, FPM/service sockets
+```
+
+`ca-meta.json` records the TLD the CA was name-constrained to; it is what lets
+Grove notice that `tld` changed and tell you to `grove ca rotate` rather than
+issue leaves the CA is not permitted to sign.
+
+A second, **user-owned** tree holds the things root should have no part in —
+see [Trust boundaries](#trust-boundaries):
+
+```
+~/.grove/identity      your age/X25519 secret-sync key pair (0600)
+~/.grove/secrets/      per-project recipient + version pins
+~/.grove/cpx.phar      the Composer Package Executor
+~/.grove/bin/          PATH shims written by `grove path`
 ```

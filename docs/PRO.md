@@ -98,6 +98,38 @@ grove secret members myapp            # who has access
 grove secret revoke myapp age1teammatekey…   # remove + re-encrypt
 ```
 
+### What your client actually trusts
+
+The encryption was never the weak part — it's real age/X25519. The question is
+*who gets to decide the recipient list*. If the answer were "whatever the server
+sends back", then a compromised backend could add its own public key and your
+next `grove secret set` would encrypt the whole `.env` to it, producing
+ciphertext that looks perfectly valid.
+
+So it doesn't. Your machine keeps its own record, in `~/.grove/secrets/`, of the
+recipients you deliberately agreed to. The server's list seeds that record the
+first time you see a project and is never again allowed to decide anything.
+`grove secret share` / `grove secret revoke` are what change it.
+
+If the two ever disagree, Grove stops rather than guessing:
+
+```console
+$ grove secret set myapp DB_PASSWORD=…
+error: the recipient list for "myapp" does not match what you agreed to
+       (added: ["age1attacker…"], removed: []). Refusing to encrypt. If this
+       change is expected, run `grove secret share`/`revoke` to record it; if
+       it is not, your backend may be compromised.
+```
+
+The cost is real and intentional: **a legitimate new teammate is refused until
+somebody runs `grove secret share`.** That is the whole point — widening who can
+read your secrets should be a decision a person makes, not an announcement a
+server can make on their behalf.
+
+Payloads are also versioned, and the highest version seen is remembered
+alongside the pins, so a backend replaying an older `.env` at you is an error
+rather than a silent downgrade to a rotated-away password.
+
 ### A typical team workflow
 
 ```bash
