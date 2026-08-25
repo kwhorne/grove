@@ -10,6 +10,7 @@ pub mod driver;
 pub mod error;
 pub mod httpgen;
 pub mod paths;
+pub mod privdrop;
 pub mod project;
 pub mod registry;
 pub mod reqlog;
