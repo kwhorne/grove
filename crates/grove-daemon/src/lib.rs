@@ -32,6 +32,7 @@ use grove_tls::CertificateAuthority;
 /// start the IPC listener. Runs until cancelled.
 pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     paths.ensure()?;
+    guard_single_instance(&paths)?;
     let config = Config::load(&paths).context("loading config")?;
     let general = config.general.clone();
     let general_services = config.services.clone();
@@ -44,6 +45,10 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         let _ = php_registry.save(&paths);
     }
     let fpm = Arc::new(FpmManager::new(paths.clone(), php_registry));
+    // A previous daemon that was SIGKILLed left its php-fpm masters running.
+    // Find them by pid file and stop them before any request spawns a new one
+    // on the same socket path.
+    fpm.reap_orphans();
     // Restore the persisted Xdebug setting so pools spawn correctly after a
     // daemon restart.
     fpm.set_xdebug(general.xdebug, general.xdebug_port);
@@ -68,7 +73,9 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     // Bundled service supervisor (downloads + runs PostgreSQL, …).
     let services = Arc::new(grove_services::ServiceManager::new(paths.clone()));
-    // Auto-start only services that are installed and were left running.
+    // Same for databases: stop what the previous daemon left behind, then
+    // auto-start what is installed and was left running.
+    services.reap_orphans();
     services.autostart_installed();
 
     let daemon = Arc::new(DaemonState::new(
@@ -89,9 +96,10 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     // Auto-discover Docker / OrbStack containers as `*.test` sites and keep the
     // registry in sync as containers come and go.
+    let mut docker_task = None;
     if general.docker {
         let daemon = daemon.clone();
-        tokio::spawn(async move {
+        docker_task = Some(tokio::spawn(async move {
             let mut current: Vec<docker::DockerContainer> = Vec::new();
             loop {
                 let found = docker::discover().await;
@@ -106,7 +114,7 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(8)).await;
             }
-        });
+        }));
     }
 
     // Spawn network listeners. A failure to bind a privileged port does not
@@ -204,13 +212,27 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     // IPC listener (foreground task). Returns when shutdown is requested.
     let dev = daemon.dev.clone();
+    let daemon_for_shutdown = daemon.clone();
     ipc::serve(paths.ipc_socket(), daemon).await?;
 
-    // Don't orphan per-site dev processes (Vite/queue) when we exit/restart.
+    // Shut down in an order that leaves nothing behind. Before this, only the
+    // dev processes were stopped explicitly; php-fpm pools and databases were
+    // left to the runtime's `Drop`s during teardown, the docker poller held its
+    // `Arc<DaemonState>` forever, and the listeners were aborted mid-request.
     dev.stop_all().await;
+    daemon_for_shutdown.fpm.stop_all();
+    daemon_for_shutdown.services.stop_all_processes();
+    if let Some(t) = docker_task {
+        t.abort();
+    }
+    // Stop accepting. In-flight requests run on their own tasks, so aborting
+    // the accept loops does not cut them off; give them a moment to finish
+    // before the runtime is torn down. A real drain would track them — this
+    // is the bounded, honest version.
     for t in tasks {
         t.abort();
     }
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let _ = std::fs::remove_file(paths.pid_file());
     tracing::info!("groved stopped");
     Ok(())
@@ -222,6 +244,35 @@ fn bind_reason(e: &grove_proxy::server::ServerError) -> String {
     match e {
         grove_proxy::server::ServerError::Bind { source, .. } => source.to_string(),
     }
+}
+
+/// Refuse to start over a daemon that is already running, and clear a pidfile
+/// that no longer names one.
+///
+/// `grove start` only probed the socket. A second `grove daemon` — from a
+/// launchd restart racing a manual start, say — unlinked the live socket,
+/// overwrote the pidfile, and then merely logged its failed binds. The pid
+/// is only trusted when the process it names is alive *and* is a grove binary:
+/// pids are recycled, and the file may be from a machine that has rebooted.
+fn guard_single_instance(paths: &GrovePaths) -> anyhow::Result<()> {
+    use grove_core::process;
+    let file = paths.pid_file();
+    let Some(pid) = process::read_pid_file(&file) else {
+        return Ok(());
+    };
+    if pid == std::process::id() {
+        return Ok(());
+    }
+    if process::is_alive_and_named(pid, "grove") {
+        anyhow::bail!(
+            "another Grove daemon is already running (pid {pid}, per {}). \
+             Run `grove stop` first, or `grove restart`.",
+            file.display()
+        );
+    }
+    tracing::info!(pid, file = %file.display(), "removing stale pidfile from a previous run");
+    let _ = std::fs::remove_file(&file);
+    Ok(())
 }
 
 fn write_pidfile(paths: &GrovePaths) -> anyhow::Result<()> {

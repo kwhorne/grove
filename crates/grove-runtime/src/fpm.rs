@@ -96,6 +96,33 @@ impl FpmManager {
         self.pools.lock().unwrap().clear();
     }
 
+    /// Stop every pool now — the daemon is shutting down. Same mechanism as
+    /// [`reload_pools`], named for the intent: before this, pools were left to
+    /// die with the runtime's `Drop`s during teardown, which a SIGKILL skips.
+    pub fn stop_all(&self) {
+        self.reload_pools();
+    }
+
+    /// Terminate php-fpm masters left over from a previous daemon that did not
+    /// get to shut down. Each pool writes `run/fpm/php-fpm-<v>.pid`; a pid there
+    /// that is alive and *is* a php-fpm is killed and its pid file removed. The
+    /// socket path is left for `ensure_pool` to unlink as it always has.
+    ///
+    /// Without this, a daemon restarted after SIGKILL unlinked the orphan's
+    /// socket and spawned a second master; orphans accumulated one per restart.
+    pub fn reap_orphans(&self) -> usize {
+        let reaped = grove_core::process::reap_pid_files(
+            &self.fpm_run_dir(),
+            "php-fpm-",
+            "php-fpm",
+            std::time::Duration::from_secs(3),
+        );
+        if !reaped.is_empty() {
+            tracing::warn!(count = reaped.len(), pids = ?reaped, "reaped orphaned php-fpm masters");
+        }
+        reaped.len()
+    }
+
     /// Look up a build, reloading the on-disk registry once if it is missing
     /// (e.g. just installed via the GUI while the daemon is running).
     fn build_for(&self, version: &str) -> Option<crate::registry::PhpBuild> {

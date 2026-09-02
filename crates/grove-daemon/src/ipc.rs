@@ -138,6 +138,18 @@ pub async fn serve(socket: PathBuf, state: Arc<DaemonState>) -> anyhow::Result<(
     if let Some(parent) = socket.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // sun_path is 104 bytes on macOS and 108 on Linux, NUL included. A long
+    // GROVE_HOME hit this as a bare "path must be shorter than SUN_LEN" with no
+    // path in it. Say which path, and what to do.
+    const SUN_PATH_MAX: usize = if cfg!(target_os = "linux") { 107 } else { 103 };
+    let len = socket.as_os_str().len();
+    if len > SUN_PATH_MAX {
+        anyhow::bail!(
+            "IPC socket path is {len} bytes, and unix sockets allow at most {SUN_PATH_MAX}: {}. \
+             Use a shorter GROVE_HOME.",
+            socket.display()
+        );
+    }
     let policy = PeerPolicy::discover(&state.paths);
     let listener = UnixListener::bind(&socket)?;
     restrict_socket(&socket, &policy);
@@ -148,10 +160,26 @@ pub async fn serve(socket: PathBuf, state: Arc<DaemonState>) -> anyhow::Result<(
     );
 
     let shutdown = state.shutdown.clone();
+    // Like the proxy's accept loop: a transient accept error (out of file
+    // descriptors, a connection reset in the backlog) backs off and retries.
+    // It used to `?` out of this loop, which ended the daemon and skipped the
+    // socket and pidfile cleanup below.
+    let mut backoff = std::time::Duration::from_millis(5);
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let (stream, _addr) = accepted?;
+                let stream = match accepted {
+                    Ok((stream, _addr)) => {
+                        backoff = std::time::Duration::from_millis(5);
+                        stream
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, backoff_ms = backoff.as_millis(), "IPC accept failed");
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
+                        continue;
+                    }
+                };
                 let state = state.clone();
                 tokio::spawn(async move {
                     if let Err(e) = handle_conn(stream, state, policy).await {
