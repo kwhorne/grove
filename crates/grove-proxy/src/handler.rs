@@ -381,6 +381,21 @@ pub async fn handle(
     // where a truncated capture is already what the timeline would have kept.
     let exact = body.size_hint().exact();
 
+    // The 2 GiB ceiling was enforced only while *measuring* a chunked body; a
+    // request that declared its length up front streamed through unchecked.
+    if let Some(n) = exact {
+        if n > MAX_REQUEST_BODY {
+            return Ok(error_page(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                &format!(
+                    "The request body exceeds Grove's {} MiB limit",
+                    MAX_REQUEST_BODY / (1024 * 1024)
+                ),
+                None,
+            ));
+        }
+    }
+
     let buffered = |bytes: Bytes| {
         let tap = BodyTap::default();
         tap.push(&bytes);
@@ -418,26 +433,29 @@ pub async fn handle(
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "reading spooled request body failed");
-                    return Ok(text_response(
+                    return Ok(error_page(
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        "Grove: could not read the spooled request body",
+                        "Grove could not read the spooled request body",
+                        Some("Check free disk space and the daemon log (`grove logs daemon`)."),
                     ));
                 }
             },
             Ok(Unsized::TooLarge) => {
-                return Ok(text_response(
+                return Ok(error_page(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     &format!(
-                        "Grove: request body exceeds the {} MiB limit",
+                        "The request body exceeds Grove's {} MiB limit",
                         MAX_REQUEST_BODY / (1024 * 1024)
                     ),
+                    None,
                 ));
             }
             Err(e) => {
                 tracing::warn!(error = %e, "reading request body failed");
-                return Ok(text_response(
+                return Ok(error_page(
                     StatusCode::BAD_REQUEST,
-                    "Grove: could not read the request body",
+                    "Grove could not read the request body",
+                    None,
                 ));
             }
         },
@@ -492,9 +510,10 @@ pub async fn handle(
             body: tap.take(),
             body_truncated: tap.truncated(),
         });
-        return Ok(text_response(
+        return Ok(error_page(
             StatusCode::NOT_FOUND,
-            &format!("Grove: no site registered for host {route_host:?}"),
+            &format!("No site is registered for {route_host}"),
+            Some("grove link          # in the project directory\ngrove park ~/Code   # every subdirectory becomes a site"),
         ));
     };
 
@@ -536,12 +555,10 @@ pub async fn handle(
             body: tap.take(),
             body_truncated: tap.truncated(),
         });
-        return Ok(text_response(
+        return Ok(error_page(
             StatusCode::SERVICE_UNAVAILABLE,
-            &format!(
-                "Grove: the container for {} is stopped — start it from the Sites list.",
-                site.hostname
-            ),
+            &format!("The container behind {} is stopped", site.hostname),
+            Some("Start it from Grove's Sites list, or with `docker start`."),
         ));
     }
 
@@ -549,7 +566,7 @@ pub async fn handle(
 
     let result = if is_hidden_path(&sanitize_path(req.uri().path())) {
         // `.env`, `.git/config`, editor backups: never served, never executed.
-        Ok(text_response(StatusCode::NOT_FOUND, "Grove: not found"))
+        Ok(error_page(StatusCode::NOT_FOUND, "Not found", None))
     } else {
         match site.driver {
             Driver::Proxy => serve_proxy(req, &site, body_len).await,
@@ -586,7 +603,7 @@ pub async fn handle(
 
     let response = result.unwrap_or_else(|e| {
         tracing::error!(error = %e, site = %site.name, "request failed");
-        text_response(StatusCode::BAD_GATEWAY, &format!("Grove: {e}"))
+        upstream_error_page(&site, &e)
     });
     state.log.record(Record {
         site: &site.name,
@@ -680,17 +697,24 @@ async fn serve_static(
     let meta = match meta {
         Some(m) => m,
         None => {
-            // SPA-style fallback to a root index if present.
+            // SPA fallback to the root index — but only for what a browser
+            // navigation looks like: a path with no file extension, from a
+            // client that accepts HTML. It used to apply to *every* missing
+            // path, so a stale hashed asset (`/assets/app-abc123.js`) came
+            // back as `200 text/html` and the browser said "expected a
+            // JavaScript MIME type" instead of the 404 that names the problem.
             let fallback = site.document_root.join("index.html");
+            let navigation = !has_extension(req.uri().path()) && accepts_html(&req);
             match tokio::fs::metadata(&fallback).await {
-                Ok(m) => {
+                Ok(m) if navigation => {
                     target = fallback;
                     m
                 }
-                Err(_) => {
-                    return Ok(text_response(
+                _ => {
+                    return Ok(error_page(
                         StatusCode::NOT_FOUND,
-                        "Grove: file not found",
+                        &format!("{} has no file at {}", site.hostname, req.uri().path()),
+                        None,
                     ))
                 }
             }
@@ -706,7 +730,12 @@ async fn serve_static(
             .headers()
             .get(hyper::header::IF_NONE_MATCH)
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v.split(',').any(|c| c.trim() == etag.as_str()));
+            .is_some_and(|v| {
+                let gz = format!("{}-gz\"", etag.trim_end_matches('"'));
+                v.split(',')
+                    .map(str::trim)
+                    .any(|c| c == etag.as_str() || c == gz)
+            });
         if matches {
             return Ok(Response::builder()
                 .status(StatusCode::NOT_MODIFIED)
@@ -715,43 +744,200 @@ async fn serve_static(
         }
     }
 
-    let mut builder = Response::builder()
-        .status(StatusCode::OK)
-        .header(hyper::header::CONTENT_TYPE, mime_for(&target))
-        .header(hyper::header::CONTENT_LENGTH, meta.len())
-        // Local development: never let a stale asset outlive an edit. The
-        // validator above is what makes repeat loads cheap, not a max-age.
-        .header(hyper::header::CACHE_CONTROL, "no-cache");
-    if let Some(etag) = etag {
-        builder = builder.header(hyper::header::ETAG, etag);
+    let mime = mime_for(&target);
+    let total = meta.len();
+    let base = || {
+        Response::builder()
+            .header(hyper::header::CONTENT_TYPE, mime)
+            // Local development: never let a stale asset outlive an edit. The
+            // validator above is what makes repeat loads cheap, not a max-age.
+            .header(hyper::header::CACHE_CONTROL, "no-cache")
+            // Safari refuses to play <video> from a server that will not do 206.
+            .header(hyper::header::ACCEPT_RANGES, "bytes")
+    };
+    // The ETag is per representation: the gzip variant must carry a different
+    // validator, and `Builder::header` appends rather than replaces, so it is
+    // added last, once, by whichever branch answers.
+    let with_etag = |b: hyper::http::response::Builder, suffix: &str| match &etag {
+        Some(e) => b.header(
+            hyper::header::ETAG,
+            format!("{}{suffix}\"", e.trim_end_matches('"')),
+        ),
+        None => b,
+    };
+
+    // Range requests: video/audio scrubbing, resumed downloads. One range only,
+    // which is all browsers send.
+    if let Some(range) = req
+        .headers()
+        .get(hyper::header::RANGE)
+        .and_then(|v| v.to_str().ok())
+    {
+        return match parse_byte_range(range, total) {
+            Some((start, end)) => {
+                let len = end - start + 1;
+                let mut file = tokio::fs::File::open(&target).await?;
+                {
+                    use tokio::io::AsyncSeekExt;
+                    file.seek(std::io::SeekFrom::Start(start)).await?;
+                }
+                Ok(with_etag(base(), "")
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(
+                        hyper::header::CONTENT_RANGE,
+                        format!("bytes {start}-{end}/{total}"),
+                    )
+                    .header(hyper::header::CONTENT_LENGTH, len)
+                    .body(file_body_limited(file, len))?)
+            }
+            None => Ok(Response::builder()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header(hyper::header::CONTENT_RANGE, format!("bytes */{total}"))
+                .body(full(Bytes::new()))?),
+        };
     }
 
-    if meta.len() > STATIC_STREAM_THRESHOLD {
+    if total > STATIC_STREAM_THRESHOLD {
         let file = tokio::fs::File::open(&target).await?;
-        return Ok(builder.body(file_body(file))?);
+        return Ok(with_etag(base(), "")
+            .status(StatusCode::OK)
+            .header(hyper::header::CONTENT_LENGTH, total)
+            .body(file_body(file))?);
     }
 
     let bytes = tokio::fs::read(&target).await?;
-    Ok(builder.body(full(bytes))?)
+
+    // Compress what compresses, for clients that ask. A 2 MB dev bundle went
+    // out as 2 MB. Only the in-memory path — anything larger streams as-is —
+    // and only when it actually gets smaller.
+    if is_compressible(mime) && accepts_gzip(&req) {
+        if let Some(gz) = gzip(&bytes) {
+            return Ok(with_etag(base(), "-gz")
+                .status(StatusCode::OK)
+                .header(hyper::header::CONTENT_ENCODING, "gzip")
+                .header(hyper::header::VARY, "Accept-Encoding")
+                .header(hyper::header::CONTENT_LENGTH, gz.len())
+                .body(full(gz))?);
+        }
+    }
+
+    Ok(with_etag(base(), "")
+        .status(StatusCode::OK)
+        .header(hyper::header::CONTENT_LENGTH, total)
+        .header(hyper::header::VARY, "Accept-Encoding")
+        .body(full(bytes))?)
+}
+
+/// Whether the last path segment carries a file extension — the cheap signal
+/// that a request is for an asset rather than a route.
+fn has_extension(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .map(|seg| seg.contains('.') && !seg.ends_with('.'))
+        .unwrap_or(false)
+}
+
+/// A browser navigation says `text/html` (or `*/*` from older clients).
+/// `fetch()` of a module says `*/*`, but it also has an extension — see
+/// [`has_extension`]; both conditions gate the SPA fallback.
+fn accepts_html<B>(req: &Request<B>) -> bool {
+    match req
+        .headers()
+        .get(hyper::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+    {
+        None => true,
+        Some(a) => a.contains("text/html") || a.contains("*/*"),
+    }
+}
+
+fn accepts_gzip<B>(req: &Request<B>) -> bool {
+    req.headers()
+        .get(hyper::header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| {
+            v.split(',')
+                .any(|e| e.trim().split(';').next() == Some("gzip"))
+        })
+        .unwrap_or(false)
+}
+
+fn is_compressible(mime: &str) -> bool {
+    mime.starts_with("text/")
+        || mime.starts_with("application/json")
+        || mime.starts_with("application/javascript")
+        || mime.starts_with("application/xml")
+        || mime.starts_with("application/manifest+json")
+        || mime == "image/svg+xml"
+}
+
+/// gzip `bytes`, or `None` when compression would not help.
+fn gzip(bytes: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Write;
+    let mut enc = flate2::write::GzEncoder::new(
+        Vec::with_capacity(bytes.len() / 2),
+        flate2::Compression::fast(),
+    );
+    enc.write_all(bytes).ok()?;
+    let out = enc.finish().ok()?;
+    (out.len() < bytes.len()).then_some(out)
+}
+
+/// Parse a single `bytes=` range against a resource of `total` bytes into an
+/// inclusive `(start, end)`. `None` means unsatisfiable (or a multi-range,
+/// which nothing in local development sends).
+fn parse_byte_range(header: &str, total: u64) -> Option<(u64, u64)> {
+    let spec = header.trim().strip_prefix("bytes=")?;
+    if spec.contains(',') || total == 0 {
+        return None;
+    }
+    let (a, b) = spec.split_once('-')?;
+    let (start, end) = match (a.trim(), b.trim()) {
+        ("", n) => {
+            // Suffix: the last n bytes.
+            let n: u64 = n.parse().ok()?;
+            if n == 0 {
+                return None;
+            }
+            (total.saturating_sub(n), total - 1)
+        }
+        (s, "") => (s.parse().ok()?, total - 1),
+        (s, e) => (s.parse().ok()?, e.parse::<u64>().ok()?.min(total - 1)),
+    };
+    (start <= end && start < total).then_some((start, end))
+}
+
+/// Stream at most `limit` bytes of `file`, for a range response.
+fn file_body_limited(file: tokio::fs::File, limit: u64) -> BoxBody {
+    use tokio::io::AsyncReadExt;
+    file_body_from_reader(file.take(limit))
 }
 
 /// Stream a file as a response body in fixed-size chunks.
 fn file_body(file: tokio::fs::File) -> BoxBody {
+    file_body_from_reader(file)
+}
+
+fn file_body_from_reader<R>(reader: R) -> BoxBody
+where
+    R: tokio::io::AsyncRead + Unpin + Send + Sync + 'static,
+{
     use futures::StreamExt;
     use tokio::io::AsyncReadExt;
 
-    let stream = futures::stream::unfold(Some((file, vec![0u8; 64 * 1024])), |state| async move {
-        let (mut file, mut buf) = state?;
-        match file.read(&mut buf).await {
-            Ok(0) => None,
-            Ok(n) => {
-                let chunk = Bytes::copy_from_slice(&buf[..n]);
-                Some((Ok(chunk), Some((file, buf))))
+    let stream =
+        futures::stream::unfold(Some((reader, vec![0u8; 64 * 1024])), |state| async move {
+            let (mut file, mut buf) = state?;
+            match file.read(&mut buf).await {
+                Ok(0) => None,
+                Ok(n) => {
+                    let chunk = Bytes::copy_from_slice(&buf[..n]);
+                    Some((Ok(chunk), Some((file, buf))))
+                }
+                Err(e) => Some((Err(e), None)),
             }
-            Err(e) => Some((Err(e), None)),
-        }
-    })
-    .map(|chunk| chunk.map(hyper::body::Frame::data));
+        })
+        .map(|chunk| chunk.map(hyper::body::Frame::data));
 
     BodyExt::boxed(http_body_util::StreamBody::new(stream))
 }
@@ -817,9 +1003,14 @@ async fn serve_php(
             .unwrap_or(None)
     };
     let Some(addr) = addr else {
-        return Ok(text_response(
+        return Ok(error_page(
             StatusCode::SERVICE_UNAVAILABLE,
-            &format!("Grove: no PHP-FPM pool for php@{}", site.php),
+            &format!("No PHP {} is available for {}", site.php, site.hostname),
+            Some(&format!(
+                "grove php install {v}        # install it\ngrove isolate {s} <version>   # or pin this site to one you have",
+                v = site.php,
+                s = site.name
+            )),
         ));
     };
 
@@ -879,9 +1070,13 @@ async fn serve_proxy(
     body_len: u64,
 ) -> Result<Response<BoxBody>, anyhow::Error> {
     let Some(upstream) = &site.proxy_to else {
-        return Ok(text_response(
+        return Ok(error_page(
             StatusCode::BAD_GATEWAY,
-            "Grove: proxy site has no upstream configured",
+            &format!("{} is a proxy site with no upstream", site.hostname),
+            Some(&format!(
+                "grove proxy {} http://127.0.0.1:<port>",
+                site.name
+            )),
         ));
     };
 
@@ -1060,8 +1255,21 @@ fn mime_for(path: &Path) -> &'static str {
         Some("ico") => "image/x-icon",
         Some("woff2") => "font/woff2",
         Some("woff") => "font/woff",
+        Some("ttf") => "font/ttf",
+        Some("otf") => "font/otf",
         Some("wasm") => "application/wasm",
         Some("txt") => "text/plain; charset=utf-8",
+        Some("xml") => "application/xml; charset=utf-8",
+        Some("map") => "application/json",
+        Some("webmanifest") => "application/manifest+json",
+        Some("csv") => "text/csv; charset=utf-8",
+        Some("pdf") => "application/pdf",
+        Some("avif") => "image/avif",
+        Some("mp4" | "m4v") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        Some("wav") => "audio/wav",
         _ => "application/octet-stream",
     }
 }
@@ -1118,12 +1326,98 @@ fn https_redirect(method: &str, host: &str, path: &str, https_port: u16) -> Resp
         .expect("static redirect response builds")
 }
 
-fn text_response(status: StatusCode, msg: &str) -> Response<BoxBody> {
+/// Minimal HTML escaping for the few user-controlled strings that reach an
+/// error page (a hostname, an upstream URL, a PHP version).
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// An error page that says what happened and what to do about it.
+///
+/// Every Grove-generated error used to be a bare `text/plain` line — "Grove:
+/// client error (Connect): tcp connect error … (os error 61)" in the browser
+/// when a Vite server was not running. Herd and Valet ship pages that name the
+/// fix; so does Grove now. `detail` is the specific situation, `hint` the
+/// command or action that resolves it. Both are escaped.
+fn error_page(status: StatusCode, detail: &str, hint: Option<&str>) -> Response<BoxBody> {
+    let reason = status.canonical_reason().unwrap_or("Error");
+    let hint_html = hint
+        .map(|h| format!("<p class=\"hint\">{}</p>", html_escape(h)))
+        .unwrap_or_default();
+    let body = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<title>{code} {reason} — Grove</title>\
+<style>\
+:root{{color-scheme:light dark}}\
+body{{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.5 ui-sans-serif,system-ui,sans-serif;\
+background:#f6f7f5;color:#1d221c}}\
+@media(prefers-color-scheme:dark){{body{{background:#161a15;color:#e6e9e3}}}}\
+main{{max-width:36rem;padding:2rem 2.5rem}}\
+.code{{font-size:.8rem;letter-spacing:.08em;text-transform:uppercase;opacity:.6}}\
+h1{{margin:.25rem 0 1rem;font-size:1.5rem;font-weight:600}}\
+p{{margin:.5rem 0}}\
+.hint{{margin-top:1.25rem;padding:.75rem 1rem;border-left:3px solid #4c8a4a;background:rgba(76,138,74,.08);\
+font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9rem;white-space:pre-wrap}}\
+footer{{margin-top:2rem;font-size:.8rem;opacity:.5}}\
+</style></head><body><main>\
+<div class=\"code\">{code} {reason}</div>\
+<h1>{detail}</h1>\
+{hint_html}\
+<footer>Grove</footer>\
+</main></body></html>",
+        code = status.as_u16(),
+        reason = html_escape(reason),
+        detail = html_escape(detail),
+    );
     Response::builder()
         .status(status)
-        .header(hyper::header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .body(full(msg.to_string()))
-        .expect("static response builds")
+        .header(hyper::header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(hyper::header::CACHE_CONTROL, "no-store")
+        .body(full(body))
+        .expect("static error page builds")
+}
+
+/// The 502 a proxy or FastCGI failure turns into. A refused connection on a
+/// proxy site is by far the most common cause — the dev server is simply not
+/// running — and that case names the upstream and how to start it.
+fn upstream_error_page(site: &ResolvedSite, err: &anyhow::Error) -> Response<BoxBody> {
+    let text = format!("{err:#}");
+    let refused = text.contains("Connection refused")
+        || text.contains("os error 61")
+        || text.contains("os error 111")
+        || text.contains("tcp connect error");
+    match (&site.driver, &site.proxy_to) {
+        (Driver::Proxy, Some(upstream)) if refused => error_page(
+            StatusCode::BAD_GATEWAY,
+            &format!("Nothing is listening at {upstream}"),
+            Some(&format!(
+                "The dev server behind {} isn't running.\n\ngrove dev start {}   # if Grove manages it\nnpm run dev            # or start it yourself",
+                site.hostname, site.name
+            )),
+        ),
+        (Driver::Proxy, Some(upstream)) => error_page(
+            StatusCode::BAD_GATEWAY,
+            &format!("The upstream at {upstream} failed"),
+            Some(&text),
+        ),
+        _ => error_page(
+            StatusCode::BAD_GATEWAY,
+            &format!("{} could not be served", site.hostname),
+            Some(&text),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -1440,5 +1734,208 @@ mod tests {
             .body(full(Bytes::new()))
             .unwrap();
         assert_eq!(request_host(&req), "myapp.test");
+    }
+
+    fn static_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("grove-static-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        std::fs::write(dir.join("index.html"), "<h1>app</h1>").unwrap();
+        std::fs::write(dir.join("assets/app.js"), "console.log(1)".repeat(200)).unwrap();
+        std::fs::write(dir.join("clip.mp4"), (0u8..=255).collect::<Vec<u8>>()).unwrap();
+        dir
+    }
+
+    fn get_with(path: &str, headers: &[(&str, &str)]) -> Request<BoxBody> {
+        let mut b = Request::builder().uri(path);
+        for (k, v) in headers {
+            b = b.header(*k, *v);
+        }
+        b.body(full(Bytes::new())).unwrap()
+    }
+
+    /// A route with no extension, from a browser → the SPA index. A missing
+    /// hashed asset → 404, not the index as text/html (which made the browser
+    /// say "expected a JavaScript MIME type" instead of naming the file).
+    #[tokio::test]
+    async fn spa_fallback_serves_routes_but_not_missing_assets() {
+        let dir = static_dir("spa");
+        let site = static_site(dir.clone());
+
+        let route = serve_static(
+            get_with("/dashboard/users", &[("accept", "text/html,*/*")]),
+            &site,
+        )
+        .await
+        .unwrap();
+        assert_eq!(route.status(), StatusCode::OK);
+        assert!(route.headers()[hyper::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html"));
+
+        let asset = serve_static(
+            get_with("/assets/app-abc123.js", &[("accept", "*/*")]),
+            &site,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            asset.status(),
+            StatusCode::NOT_FOUND,
+            "a missing asset is a 404"
+        );
+
+        // An API-style client asking for JSON on an unknown route gets a 404 too.
+        let api = serve_static(
+            get_with("/api/things", &[("accept", "application/json")]),
+            &site,
+        )
+        .await
+        .unwrap();
+        assert_eq!(api.status(), StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn compressible_assets_are_gzipped_only_when_asked() {
+        let dir = static_dir("gzip");
+        let site = static_site(dir.clone());
+
+        let plain = serve_static(get_with("/assets/app.js", &[]), &site)
+            .await
+            .unwrap();
+        assert!(plain
+            .headers()
+            .get(hyper::header::CONTENT_ENCODING)
+            .is_none());
+        let plain_len: usize = plain.headers()[hyper::header::CONTENT_LENGTH]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        let gz = serve_static(
+            get_with("/assets/app.js", &[("accept-encoding", "gzip, br")]),
+            &site,
+        )
+        .await
+        .unwrap();
+        assert_eq!(gz.headers()[hyper::header::CONTENT_ENCODING], "gzip");
+        assert_eq!(gz.headers()[hyper::header::VARY], "Accept-Encoding");
+        let gz_len: usize = gz.headers()[hyper::header::CONTENT_LENGTH]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(gz_len < plain_len, "{gz_len} < {plain_len}");
+        assert_ne!(
+            gz.headers()[hyper::header::ETAG],
+            plain.headers()[hyper::header::ETAG],
+            "a different representation needs a different validator"
+        );
+
+        // Already-compressed media is left alone even when gzip is accepted.
+        let media = serve_static(get_with("/clip.mp4", &[("accept-encoding", "gzip")]), &site)
+            .await
+            .unwrap();
+        assert!(media
+            .headers()
+            .get(hyper::header::CONTENT_ENCODING)
+            .is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn byte_ranges_are_honoured() {
+        let dir = static_dir("range");
+        let site = static_site(dir.clone());
+
+        let whole = serve_static(get_with("/clip.mp4", &[]), &site)
+            .await
+            .unwrap();
+        assert_eq!(whole.headers()[hyper::header::ACCEPT_RANGES], "bytes");
+
+        let part = serve_static(get_with("/clip.mp4", &[("range", "bytes=10-19")]), &site)
+            .await
+            .unwrap();
+        assert_eq!(part.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            part.headers()[hyper::header::CONTENT_RANGE],
+            "bytes 10-19/256"
+        );
+        let body = part.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], &(10u8..=19).collect::<Vec<u8>>()[..]);
+
+        let tail = serve_static(get_with("/clip.mp4", &[("range", "bytes=-4")]), &site)
+            .await
+            .unwrap();
+        assert_eq!(
+            tail.headers()[hyper::header::CONTENT_RANGE],
+            "bytes 252-255/256"
+        );
+
+        let open_ended = serve_static(get_with("/clip.mp4", &[("range", "bytes=250-")]), &site)
+            .await
+            .unwrap();
+        assert_eq!(
+            open_ended.headers()[hyper::header::CONTENT_RANGE],
+            "bytes 250-255/256"
+        );
+
+        let bad = serve_static(get_with("/clip.mp4", &[("range", "bytes=300-400")]), &site)
+            .await
+            .unwrap();
+        assert_eq!(bad.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(bad.headers()[hyper::header::CONTENT_RANGE], "bytes */256");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn range_parsing_edge_cases() {
+        assert_eq!(parse_byte_range("bytes=0-0", 10), Some((0, 0)));
+        assert_eq!(
+            parse_byte_range("bytes=5-100", 10),
+            Some((5, 9)),
+            "end is clamped"
+        );
+        assert_eq!(
+            parse_byte_range("bytes=-20", 10),
+            Some((0, 9)),
+            "suffix larger than file"
+        );
+        assert_eq!(
+            parse_byte_range("bytes=10-", 10),
+            None,
+            "start past the end"
+        );
+        assert_eq!(
+            parse_byte_range("bytes=0-1,5-6", 10),
+            None,
+            "multi-range unsupported"
+        );
+        assert_eq!(parse_byte_range("items=0-1", 10), None);
+        assert_eq!(parse_byte_range("bytes=0-", 0), None, "empty file");
+    }
+
+    #[test]
+    fn error_pages_escape_what_the_request_controlled() {
+        let resp = error_page(
+            StatusCode::NOT_FOUND,
+            "No site for <script>evil</script>",
+            Some("a & b"),
+        );
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert!(resp.headers()[hyper::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/html"));
+        let body = futures::executor::block_on(resp.into_body().collect())
+            .unwrap()
+            .to_bytes();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("&lt;script&gt;"), "{html}");
+        assert!(!html.contains("<script>evil"), "{html}");
+        assert!(html.contains("a &amp; b"));
     }
 }

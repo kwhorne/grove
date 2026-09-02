@@ -313,6 +313,17 @@ pm.process_idle_timeout = 10s
 pm.max_requests = 500
 catch_workers_output = yes
 clear_env = no
+; A worker wedged in an infinite loop or a hung socket is recycled rather than
+; held forever; with 16 workers, 16 of those was a site that hung with no error.
+request_terminate_timeout = 600s
+; Grove writes no php.ini, so PHP's compiled-in defaults applied: 8M uploads,
+; 128M memory, 30s scripts. A Laravel app importing a CSV or running a long
+; artisan job through the web hit all three. These are `php_value`, not
+; `php_admin_value`, so an app's own ini_set() and .user.ini still win.
+php_value[upload_max_filesize] = 512M
+php_value[post_max_size] = 512M
+php_value[memory_limit] = 512M
+php_value[max_execution_time] = 300
 "#,
             pid = pid.display(),
             log = log.display(),
