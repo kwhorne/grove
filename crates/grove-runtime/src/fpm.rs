@@ -144,6 +144,16 @@ impl FpmManager {
             }
         }
 
+        // A dead pool is still in the map, and it is about to be replaced. Take
+        // it out *now*, before the new master binds. `FpmPool`'s Drop removes
+        // its socket file, and the new pool binds the very same path — so if
+        // the old pool were left for `pools.insert` to hand back and drop, it
+        // would delete the socket the new master had just created. The new
+        // child is alive, so nothing would ever respawn, and every request for
+        // this PHP version would 502 until the daemon restarted. The first
+        // crash was recovered from; the recovery itself was the outage.
+        drop(pools.remove(version));
+
         let build = self
             .build_for(version)
             .ok_or_else(|| FpmError::UnknownVersion(version.to_string()))?;
@@ -308,5 +318,118 @@ impl FpmLocator for FpmManager {
                 None
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::registry::PhpBuild;
+    use std::path::Path;
+
+    /// A stand-in for php-fpm. It is handed `--nodaemonize --fpm-config <conf>`
+    /// like the real thing; it reads the `listen` path out of the config,
+    /// creates it so the manager sees the pool come up, then waits to be killed.
+    fn fake_fpm(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("fake-fpm.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nsock=$(sed -n 's/^listen = //p' \"$3\")\n: > \"$sock\"\nexec sleep 300\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
+    fn manager(name: &str) -> (FpmManager, PathBuf) {
+        let base = std::env::temp_dir().join(format!("grove-fpm-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let paths = GrovePaths::with_base(&base);
+        paths.ensure().unwrap();
+        let mut registry = PhpRegistry::load(&paths);
+        registry.register(PhpBuild {
+            version: "8.9".into(),
+            fpm_binary: fake_fpm(&base),
+            cli_binary: None,
+            variant: None,
+            user_registered: false,
+        });
+        (FpmManager::new(paths, registry), base)
+    }
+
+    fn kill_master(mgr: &FpmManager, version: &str) {
+        let mut pools = mgr.pools.lock().unwrap();
+        let child = pools
+            .get_mut(version)
+            .and_then(|p| p.child.as_mut())
+            .expect("a pool with a child");
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    /// The bug: a master dies, the next request respawns it — and the *old*
+    /// pool, handed back by `pools.insert`, is dropped and removes the socket
+    /// file the new master just bound. The map then holds a live child, so
+    /// nothing ever respawns again, and that PHP version 502s until restart.
+    ///
+    /// Two reviews called the respawn path correct. They checked that a dead
+    /// child is detected, not what happens to the one being replaced.
+    #[test]
+    fn a_respawned_pool_keeps_the_socket_it_just_bound() {
+        let (mgr, base) = manager("respawn");
+
+        let FpmAddr::Unix(socket) = mgr.ensure_pool("8.9").expect("first spawn") else {
+            panic!("pools listen on unix sockets");
+        };
+        assert!(socket.exists(), "the first master creates its socket");
+
+        // OOM, a stray `killall php-fpm`, a crash: the master is gone.
+        kill_master(&mgr, "8.9");
+
+        let FpmAddr::Unix(again) = mgr.ensure_pool("8.9").expect("respawn") else {
+            panic!("pools listen on unix sockets");
+        };
+        assert_eq!(again, socket, "the same version binds the same path");
+        assert!(
+            socket.exists(),
+            "the respawned master's socket must survive the dead pool being dropped"
+        );
+
+        let pools = mgr.pools.lock().unwrap();
+        let alive = pools["8.9"]
+            .child
+            .as_ref()
+            .map(|c| c.id() > 0)
+            .unwrap_or(false);
+        assert!(alive, "the map holds the new master");
+        drop(pools);
+
+        drop(mgr);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The happy path the fix must not break: a live pool is reused, not
+    /// respawned, and its socket stays.
+    #[test]
+    fn a_live_pool_is_reused() {
+        let (mgr, base) = manager("reuse");
+        let first = mgr.ensure_pool("8.9").expect("spawn");
+        let pid = mgr.pools.lock().unwrap()["8.9"]
+            .child
+            .as_ref()
+            .map(|c| c.id());
+        let second = mgr.ensure_pool("8.9").expect("lookup");
+        let pid_after = mgr.pools.lock().unwrap()["8.9"]
+            .child
+            .as_ref()
+            .map(|c| c.id());
+        assert_eq!(pid, pid_after, "no respawn while the master is alive");
+        assert!(
+            matches!((first, second), (FpmAddr::Unix(a), FpmAddr::Unix(b)) if a == b && a.exists())
+        );
+        drop(mgr);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
