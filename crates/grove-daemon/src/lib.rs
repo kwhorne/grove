@@ -51,7 +51,7 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     // Build the site registry and shared proxy state.
     let registry = grove_core::SiteRegistry::build(&config);
     tracing::info!(sites = registry.len(), tld = %general.tld, "registry built");
-    let shared = SharedState::new(registry);
+    let shared = SharedState::new(registry).with_https_port(general.https_port);
 
     // Local CA + SNI resolver for HTTPS.
     let ca = Arc::new(CertificateAuthority::load_or_create(&paths)?);

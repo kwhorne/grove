@@ -492,6 +492,31 @@ pub async fn handle(
         ));
     };
 
+    // A site the user ran `grove secure` on is meant to be reached over TLS,
+    // but a typed hostname still defaults to http:// in every browser. Serving
+    // that request in plaintext handed PHP `HTTPS=""`, so Laravel built
+    // http:// asset URLs — mixed content against the HTTPS Vite server — and
+    // apps set their session cookie without `Secure`. Valet redirects; so does
+    // Grove. `https` here already accounts for the tunnel's trusted
+    // X-Forwarded-Proto, so a request that arrived over TLS somewhere upstream
+    // is not bounced.
+    if site.secure && !https {
+        let resp = https_redirect(&method, &host, &path, state.https_port);
+        state.log.record(Record {
+            site: &site.name,
+            host: &host,
+            method: &method,
+            path: &path,
+            status: resp.status().as_u16(),
+            duration_ms: start.elapsed().as_millis() as u64,
+            https,
+            headers: req_headers,
+            body: tap.take(),
+            body_truncated: tap.truncated(),
+        });
+        return Ok(resp);
+    }
+
     if site.docker && !site.docker_running {
         state.log.record(Record {
             site: &site.name,
@@ -1035,6 +1060,35 @@ fn mime_for(path: &Path) -> &'static str {
     }
 }
 
+/// Send a plaintext request for a secured site to its HTTPS origin.
+///
+/// The `Host` header may carry the HTTP listener's port; the redirect must
+/// carry the HTTPS one instead, and omit it when it is the default. `301` for
+/// GET/HEAD so browsers cache the upgrade; `308` otherwise so a POST that hit
+/// the wrong scheme keeps its method and body rather than turning into a GET.
+fn https_redirect(method: &str, host: &str, path: &str, https_port: u16) -> Response<BoxBody> {
+    let hostname = match host.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => host,
+    };
+    let location = if https_port == 443 {
+        format!("https://{hostname}{path}")
+    } else {
+        format!("https://{hostname}:{https_port}{path}")
+    };
+    let status = if method == "GET" || method == "HEAD" {
+        StatusCode::MOVED_PERMANENTLY
+    } else {
+        StatusCode::PERMANENT_REDIRECT
+    };
+    Response::builder()
+        .status(status)
+        .header(hyper::header::LOCATION, &location)
+        .header(hyper::header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(full(format!("Redirecting to {location}\n")))
+        .expect("static redirect response builds")
+}
+
 fn text_response(status: StatusCode, msg: &str) -> Response<BoxBody> {
     Response::builder()
         .status(status)
@@ -1281,5 +1335,47 @@ mod tests {
             PathBuf::from("etc/passwd")
         );
         assert_eq!(sanitize_path("/css/app.css"), PathBuf::from("css/app.css"));
+    }
+
+    fn location_of(resp: &Response<BoxBody>) -> String {
+        resp.headers()[hyper::header::LOCATION]
+            .to_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// The everyday case: `myapp.test` typed into a browser, secured site,
+    /// standard ports. The redirect must not carry `:443`, and must keep the
+    /// path and query so a deep link survives the bounce.
+    #[test]
+    fn a_secured_site_over_http_redirects_to_its_https_origin() {
+        let resp = https_redirect("GET", "myapp.test", "/admin?tab=2", 443);
+        assert_eq!(resp.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(location_of(&resp), "https://myapp.test/admin?tab=2");
+    }
+
+    /// The sudo-less smoke-test setup runs on high ports. A redirect to
+    /// `https://myapp.test/` would then point at nothing, and the Host header
+    /// carries the *HTTP* port, which must not leak into the Location.
+    #[test]
+    fn a_redirect_uses_the_https_port_not_the_one_in_host() {
+        let resp = https_redirect("GET", "myapp.test:18080", "/", 18443);
+        assert_eq!(location_of(&resp), "https://myapp.test:18443/");
+    }
+
+    /// A POST that hit the wrong scheme keeps its method and body.
+    #[test]
+    fn non_get_requests_redirect_with_308() {
+        let resp = https_redirect("POST", "myapp.test", "/login", 443);
+        assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(location_of(&resp), "https://myapp.test/login");
+    }
+
+    /// An IPv6 literal without a port has colons of its own and must not be
+    /// mistaken for `host:port`.
+    #[test]
+    fn an_ipv6_host_is_not_split_on_its_colons() {
+        let resp = https_redirect("GET", "[::1]", "/", 443);
+        assert_eq!(location_of(&resp), "https://[::1]/");
     }
 }
