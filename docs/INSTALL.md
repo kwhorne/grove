@@ -91,12 +91,15 @@ sudo grove init
 
 ```text
 Password:
-✓ config        created at /Users/you/Library/Application Support/Grove/config.toml
-✓ root CA       generated at …/Grove/certs/grove-ca.pem
-✓ root CA       added to the system trust store
-✓ PHP 8.5       downloaded and registered
-✓ resolver      /etc/resolver/test → 127.0.0.1:53
-init complete — next run: sudo grove install
+Grove setup:
+  ✓ parked ~/Code (existing projects auto-imported)
+  ✓ created config at /Users/you/Library/Application Support/Grove/config.toml
+  ✓ root CA at /Users/you/Library/Application Support/Grove/certs/grove-ca.pem
+  ✓ installed php@8.5
+  ✓ resolver installed for .test
+  ✓ root CA trusted in system store
+
+Next: `sudo grove install` to run Grove as a service on 80/443/53, then open https://<project>.test
 ```
 
 > **Why `sudo`?** Trusting the CA and writing `/etc/resolver/test` require
@@ -155,10 +158,24 @@ grove doctor
 
 ```text
 ✓ config         loaded from /Users/you/Library/Application Support/Grove/config.toml
-✓ root-ca        present at …/Grove/certs/grove-ca.pem
+✓ root-ca        present at /Users/you/Library/Application Support/Grove/certs/grove-ca.pem
+✓ root-ca-scope  constrained to .test
+✓ resolver       *.test resolves to 127.0.0.1
+✓ dns            listening on :53
+✓ http           listening on :80
+✓ https          listening on :443
+✓ mail           listening on :1025
 ✓ privileges     http_port=80, elevated=true
-✓ resolver       /etc/resolver/test present
-✓ dns            127.0.0.1:53 answering
+✓ php-extensions 1 build(s), nothing required missing
+```
+
+`doctor` exits non-zero if anything shows `✗`, so it can gate a script. It
+works with the daemon stopped too: the config, CA and resolver checks run
+locally and the daemon line says so. When another server already holds a port,
+the listener line names it:
+
+```text
+✗ http           could not bind :80: Address already in use (os error 48) — held by httpd (pid 412)
 ```
 
 Confirm DNS resolution goes through Grove:

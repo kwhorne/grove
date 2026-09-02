@@ -2144,7 +2144,14 @@ mod lifecycle {
             for (ok, msg) in &steps {
                 println!("  {} {msg}", if *ok { "✓" } else { "!" });
             }
-            println!("\nNext: `grove start`, then `grove park ~/Code` and open a site.");
+            // `grove start` cannot bind 80/443/53 without root, and a failed
+            // bind used to be silent — so pointing people there after a sudo
+            // init produced a "started" daemon that served nothing. The
+            // service is the path that works, and init already parked ~/Code.
+            println!(
+                "\nNext: `sudo grove install` to run Grove as a service on 80/443/53, \
+                 then open https://<project>.test"
+            );
         }
         Ok(())
     }
