@@ -22,6 +22,13 @@ not actually serving.
 
 ### Added
 
+- **`grove uninstall --purge`** also removes `GROVE_HOME` and the PATH shims.
+  Without it, uninstall now lists what it left in place and where.
+- **A version check on every command.** The CLI pings the daemon first and
+  warns when the two versions differ, naming both and `grove restart`. A
+  daemon that receives a request it cannot parse now answers with its version
+  and the same advice, instead of closing the connection — which the CLI
+  reported as "connection closed before a full message was received".
 - **WebSocket passthrough for proxy sites.** The listeners accepted upgrades
   all along, but nothing pumped the bytes: the browser got a `101` and a dead
   socket, so Vite HMR on a proxy site, Next/Nuxt dev servers and Reverb over
@@ -95,6 +102,17 @@ not actually serving.
 
 ### Fixed
 
+- **`grove uninstall` without `sudo` printed "removed" having removed
+  nothing.** Every step was `let _ =`. It now refuses without elevation,
+  stops the daemon first, reports each step, and exits non-zero if any failed.
+- **`grove init` exited 0 when the PHP download or CA generation failed**, so
+  a script wrapping it saw success. Real failures now show `✗` and exit 1; the
+  elevation notice is advice (`!`) and does not. Under `sudo`, the
+  `config.toml` init writes is chowned to the invoking user, so a later plain
+  `grove init` or `grove import` no longer fails on a root-owned file.
+- **`grove path show` said Grove's toolchain was on PATH when Homebrew's
+  `php` still won.** It checked membership, not order; it now names the `php`
+  that actually resolves first and how to move Grove ahead of it.
 - **The SPA fallback served `index.html` as `200 text/html` for *any* missing
   path**, so a stale hashed asset produced "expected a JavaScript MIME type"
   instead of a 404 naming the file. It now applies only to extension-less
