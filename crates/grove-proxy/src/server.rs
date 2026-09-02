@@ -266,6 +266,14 @@ mod tests {
             let service =
                 hyper::service::service_fn(|req: Request<hyper::body::Incoming>| async move {
                     assert_eq!(req.version(), hyper::Version::HTTP_2);
+                    // What h2 hands a handler: no Host header, authority on the
+                    // URI. `handler::handle` must read the latter or every site
+                    // 404s the moment a browser negotiates h2.
+                    assert!(req.headers().get(hyper::header::HOST).is_none());
+                    assert_eq!(
+                        req.uri().authority().map(|a| a.as_str()),
+                        Some("probe.test")
+                    );
                     Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(
                         b"served over h2",
                     ))))

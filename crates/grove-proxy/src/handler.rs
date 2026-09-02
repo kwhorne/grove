@@ -313,7 +313,7 @@ fn shared_client() -> &'static hyper_util::client::legacy::Client<
 /// Handle one incoming request end to end. Never panics — every error path
 /// becomes an HTTP status so one bad site can't take down the daemon.
 pub async fn handle(
-    req: Request<Incoming>,
+    mut req: Request<Incoming>,
     state: SharedState,
     fpm: Arc<dyn FpmLocator>,
     https: bool,
@@ -327,12 +327,18 @@ pub async fn handle(
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| req.uri().path().to_string());
 
-    let host = req
-        .headers()
-        .get(hyper::header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let host = request_host(&req);
+    // HTTP/2 carries the host in the `:authority` pseudo-header and has no
+    // `Host` at all. Everything downstream — FastCGI's HTTP_HOST, the proxy
+    // driver's X-Forwarded-Host, the timeline capture that replay rebuilds
+    // from — reads the header map, so put it there once rather than teaching
+    // each of them about h2. (Only when absent: a client that sent both is
+    // left alone.)
+    if !host.is_empty() && !req.headers().contains_key(hyper::header::HOST) {
+        if let Ok(hv) = hyper::header::HeaderValue::from_str(&host) {
+            req.headers_mut().insert(hyper::header::HOST, hv);
+        }
+    }
 
     // A tunnel keeps the public Host (so the app builds correct asset URLs) and
     // carries the local site name in X-Grove-Site purely for routing.
@@ -1060,6 +1066,29 @@ fn mime_for(path: &Path) -> &'static str {
     }
 }
 
+/// The host a request is for, whichever way the protocol carried it.
+///
+/// HTTP/1.1 sends a `Host` header. HTTP/2 sends `:authority` instead — hyper
+/// surfaces that as the request URI's authority and leaves `Host` unset — so a
+/// handler that only reads the header sees `""` for every h2 request and 404s
+/// each site the moment a browser negotiates h2. Enabling HTTP/2 without this
+/// was exactly that: green in unit tests whose service ignored the host, a
+/// 404 on the first real curl.
+fn request_host<B>(req: &Request<B>) -> String {
+    if let Some(h) = req
+        .headers()
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .filter(|h| !h.is_empty())
+    {
+        return h.to_string();
+    }
+    req.uri()
+        .authority()
+        .map(|a| a.as_str().to_string())
+        .unwrap_or_default()
+}
+
 /// Send a plaintext request for a secured site to its HTTPS origin.
 ///
 /// The `Host` header may carry the HTTP listener's port; the redirect must
@@ -1377,5 +1406,39 @@ mod tests {
     fn an_ipv6_host_is_not_split_on_its_colons() {
         let resp = https_redirect("GET", "[::1]", "/", 443);
         assert_eq!(location_of(&resp), "https://[::1]/");
+    }
+
+    /// HTTP/1.1: the Host header is the host.
+    #[test]
+    fn host_comes_from_the_header_on_http1() {
+        let req = Request::builder()
+            .uri("/")
+            .header(hyper::header::HOST, "myapp.test")
+            .body(full(Bytes::new()))
+            .unwrap();
+        assert_eq!(request_host(&req), "myapp.test");
+    }
+
+    /// HTTP/2: no Host header; the host is the URI authority (`:authority`).
+    /// This is the case that 404'd every site the moment h2 was enabled.
+    #[test]
+    fn host_comes_from_the_authority_on_http2() {
+        let req = Request::builder()
+            .uri("https://myapp.test:18443/admin")
+            .body(full(Bytes::new()))
+            .unwrap();
+        assert!(req.headers().get(hyper::header::HOST).is_none());
+        assert_eq!(request_host(&req), "myapp.test:18443");
+    }
+
+    /// A client that sent both is left alone: the header wins, as on HTTP/1.1.
+    #[test]
+    fn an_explicit_host_header_wins_over_the_authority() {
+        let req = Request::builder()
+            .uri("https://other.test/")
+            .header(hyper::header::HOST, "myapp.test")
+            .body(full(Bytes::new()))
+            .unwrap();
+        assert_eq!(request_host(&req), "myapp.test");
     }
 }
