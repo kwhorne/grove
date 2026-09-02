@@ -1080,6 +1080,12 @@ async fn serve_proxy(
         ));
     };
 
+    // A protocol switch cannot go through the pooled client: it has no way to
+    // hand the raw connection back. WebSockets get their own connection.
+    if is_upgrade_request(&req) {
+        return proxy_upgrade(req, site, upstream).await;
+    }
+
     // The upstream sees the body as a stream; the length is only of interest to
     // the FastCGI path.
     let _ = body_len;
@@ -1125,6 +1131,145 @@ async fn serve_proxy(
     // or a Node SSE endpoint reaches the client as it arrives.
     let body = body.map_err(std::io::Error::other).boxed();
     Ok(Response::from_parts(parts, body))
+}
+
+/// Whether a request asks to switch protocols — a WebSocket handshake, in
+/// practice. Both headers are required by RFC 9110 §7.8; checking only
+/// `Upgrade` would catch clients that advertise without asking.
+fn is_upgrade_request<B>(req: &Request<B>) -> bool {
+    let wants_upgrade = req.headers().contains_key(hyper::header::UPGRADE);
+    let connection_says_so = req
+        .headers()
+        .get_all(hyper::header::CONNECTION)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|v| {
+            v.split(',')
+                .any(|t| t.trim().eq_ignore_ascii_case("upgrade"))
+        });
+    wants_upgrade && connection_says_so
+}
+
+/// Pass a WebSocket (or any HTTP Upgrade) through to a proxy site's upstream.
+///
+/// The listeners have accepted upgrades all along (`with_upgrades`), but
+/// nothing consumed them: `serve_proxy` used the pooled `Client`, which cannot
+/// upgrade, so the browser got a `101` with no byte pump behind it — the
+/// socket opened and died, and Vite HMR on a proxy site, Next/Nuxt dev
+/// servers, Reverb over `wss://myapp.test`, all reconnect-looped.
+///
+/// Dedicated connection instead: send the handshake over a fresh HTTP/1.1
+/// connection to the upstream, and if it answers `101`, wait for both sides'
+/// upgrades to complete and copy bytes between them until either closes.
+/// Anything other than `101` is passed back as an ordinary response.
+async fn proxy_upgrade(
+    mut req: Request<BoxBody>,
+    site: &ResolvedSite,
+    upstream: &str,
+) -> Result<Response<BoxBody>, anyhow::Error> {
+    use anyhow::Context as _;
+    use hyper_util::rt::TokioIo;
+
+    // Must be taken before the request is consumed; it is the handle to the
+    // client's connection once the 101 goes out.
+    let client_upgrade = hyper::upgrade::on(&mut req);
+
+    let target: hyper::Uri = upstream.parse().context("upstream URL")?;
+    if target.scheme_str() == Some("https") {
+        anyhow::bail!("WebSocket upgrade to an https upstream is not supported yet ({upstream})");
+    }
+    let host = target
+        .host()
+        .context("upstream URL has no host")?
+        .to_string();
+    let port = target.port_u16().unwrap_or(80);
+    let stream = tokio::net::TcpStream::connect((host.as_str(), port))
+        .await
+        .with_context(|| format!("tcp connect error to {host}:{port}"))?;
+    let _ = stream.set_nodelay(true);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .context("upstream HTTP/1.1 handshake")?;
+    tokio::spawn(async move {
+        if let Err(e) = conn.with_upgrades().await {
+            tracing::debug!(error = %e, "upstream websocket connection ended");
+        }
+    });
+
+    // Origin-form request line and the upstream's own Host, as for any proxied
+    // request; the forwarding headers so the app knows its public name.
+    let (mut parts, body) = req.into_parts();
+    let path_q = parts
+        .uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
+    let public_host = parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .map(str::to_string);
+    parts.uri = path_q.parse().context("request path")?;
+    let authority = if port == 80 {
+        host.clone()
+    } else {
+        format!("{host}:{port}")
+    };
+    parts.headers.insert(
+        hyper::header::HOST,
+        hyper::header::HeaderValue::from_str(&authority)?,
+    );
+    if let Some(h) = public_host.and_then(|h| hyper::header::HeaderValue::from_str(&h).ok()) {
+        parts.headers.insert("x-forwarded-host", h);
+    }
+    parts.headers.insert(
+        "x-forwarded-proto",
+        hyper::header::HeaderValue::from_static("https"),
+    );
+    let upstream_req = Request::from_parts(parts, body);
+
+    let mut resp = sender
+        .send_request(upstream_req)
+        .await
+        .with_context(|| format!("websocket handshake with {upstream}"))?;
+
+    if resp.status() != StatusCode::SWITCHING_PROTOCOLS {
+        // The upstream declined (or answered the request normally). Hand its
+        // answer back unchanged; the client never switched.
+        let (parts, body) = resp.into_parts();
+        return Ok(Response::from_parts(
+            parts,
+            body.map_err(std::io::Error::other).boxed(),
+        ));
+    }
+
+    let upstream_upgrade = hyper::upgrade::on(&mut resp);
+    let site_name = site.name.clone();
+    tokio::spawn(async move {
+        match tokio::try_join!(client_upgrade, upstream_upgrade) {
+            Ok((client, upstream)) => {
+                let mut client = TokioIo::new(client);
+                let mut upstream = TokioIo::new(upstream);
+                match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
+                    Ok((up, down)) => tracing::debug!(
+                        site = %site_name,
+                        bytes_up = up,
+                        bytes_down = down,
+                        "websocket closed"
+                    ),
+                    Err(e) => tracing::debug!(site = %site_name, error = %e, "websocket ended"),
+                }
+            }
+            Err(e) => {
+                tracing::debug!(site = %site_name, error = %e, "websocket upgrade did not complete")
+            }
+        }
+    });
+
+    // The 101 goes back with the upstream's headers (Sec-WebSocket-Accept and
+    // friends); hyper performs the client-side switch once it is written.
+    let (parts, _) = resp.into_parts();
+    Ok(Response::from_parts(parts, full(Bytes::new())))
 }
 
 /// Build the CGI/1.1 environment FastCGI expects.
@@ -1937,5 +2082,138 @@ mod tests {
         assert!(html.contains("&lt;script&gt;"), "{html}");
         assert!(!html.contains("<script>evil"), "{html}");
         assert!(html.contains("a &amp; b"));
+    }
+
+    /// A WebSocket handshake through a proxy site, end to end: a real hyper
+    /// server connection built like the listeners, `proxy_upgrade` as the
+    /// service, and a bare TCP upstream that answers 101 and then echoes. The
+    /// bytes written after the 101 must come back — that is the byte pump that
+    /// was missing, and the reason HMR on proxy sites reconnect-looped.
+    #[tokio::test]
+    async fn a_websocket_upgrade_is_pumped_through_to_the_upstream() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // Upstream: read the handshake, answer 101, echo everything after.
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream.local_addr().unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let seen_by_upstream = seen.clone();
+        tokio::spawn(async move {
+            let (mut sock, _) = upstream.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut byte = [0u8; 1];
+            while !buf.ends_with(b"\r\n\r\n") {
+                sock.read_exact(&mut byte).await.unwrap();
+                buf.push(byte[0]);
+            }
+            *seen_by_upstream.lock().unwrap() = String::from_utf8_lossy(&buf).into_owned();
+            sock.write_all(
+                b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
+                  Connection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
+            )
+            .await
+            .unwrap();
+            let mut chunk = [0u8; 256];
+            loop {
+                match sock.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if sock.write_all(&chunk[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        // Grove's side: the listeners' connection builder, serving proxy_upgrade.
+        let site = ResolvedSite {
+            driver: Driver::Proxy,
+            proxy_to: Some(format!("http://{upstream_addr}")),
+            ..static_site(PathBuf::from("/nonexistent"))
+        };
+        let (client_io, server_io) = tokio::io::duplex(16 * 1024);
+        tokio::spawn(async move {
+            let site = site.clone();
+            let service = hyper::service::service_fn(move |req: Request<Incoming>| {
+                let site = site.clone();
+                async move {
+                    let req = req.map(|b| b.map_err(std::io::Error::other).boxed());
+                    let upstream = site.proxy_to.clone().unwrap();
+                    Ok::<_, std::convert::Infallible>(
+                        proxy_upgrade(req, &site, &upstream)
+                            .await
+                            .unwrap_or_else(|e| upstream_error_page(&site, &e)),
+                    )
+                }
+            });
+            let _ = crate::server::connection_builder()
+                .serve_connection_with_upgrades(hyper_util::rt::TokioIo::new(server_io), service)
+                .await;
+        });
+
+        // The browser: a raw handshake, then bytes.
+        let mut client = client_io;
+        client
+            .write_all(
+                b"GET /app?token=abc HTTP/1.1\r\nHost: myapp.test\r\nUpgrade: websocket\r\n\
+                  Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+                  Sec-WebSocket-Version: 13\r\n\r\n",
+            )
+            .await
+            .unwrap();
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            client.read_exact(&mut byte).await.unwrap();
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8_lossy(&head).into_owned();
+        assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+        assert!(
+            head.to_ascii_lowercase()
+                .contains("sec-websocket-accept: s3pplmbitxaq9kygzzhzrbk+xoo="),
+            "the upstream's handshake headers reach the client: {head}"
+        );
+
+        // After the switch, bytes flow both ways through Grove.
+        client.write_all(b"ping from the browser").await.unwrap();
+        let mut echoed = [0u8; 21];
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.read_exact(&mut echoed),
+        )
+        .await
+        .expect("the echo arrives")
+        .unwrap();
+        assert_eq!(&echoed[..], b"ping from the browser");
+
+        // The upstream saw a proper proxied handshake: origin-form path with the
+        // query, its own address as Host, the public host forwarded.
+        let seen = seen.lock().unwrap().clone();
+        assert!(
+            seen.starts_with("GET /app?token=abc HTTP/1.1\r\n"),
+            "{seen}"
+        );
+        let lower = seen.to_ascii_lowercase();
+        assert!(lower.contains(&format!("host: {upstream_addr}")), "{seen}");
+        assert!(lower.contains("x-forwarded-host: myapp.test"), "{seen}");
+        assert!(lower.contains("upgrade: websocket"), "{seen}");
+    }
+
+    #[test]
+    fn upgrade_detection_needs_both_headers() {
+        let both = get_with(
+            "/",
+            &[
+                ("upgrade", "websocket"),
+                ("connection", "keep-alive, Upgrade"),
+            ],
+        );
+        assert!(is_upgrade_request(&both));
+        let only_upgrade = get_with("/", &[("upgrade", "websocket")]);
+        assert!(!is_upgrade_request(&only_upgrade));
+        let plain = get_with("/", &[("connection", "keep-alive")]);
+        assert!(!is_upgrade_request(&plain));
     }
 }
