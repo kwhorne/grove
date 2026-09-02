@@ -56,18 +56,18 @@ impl PhpRegistry {
         paths.runtimes_dir().join("php-builds.json")
     }
 
+    /// Load the registry. A file that exists but does not parse is moved aside
+    /// (`php-builds.json.corrupt-<ts>`) and logged rather than silently read
+    /// as empty — an empty registry here means the daemon re-discovers only
+    /// Homebrew/system PHPs and every Grove-installed build is forgotten.
     pub fn load(paths: &GrovePaths) -> Self {
-        let file = Self::file(paths);
-        match std::fs::read_to_string(&file) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-            Err(_) => Self::default(),
-        }
+        grove_core::securefs::read_json_or_quarantine(&Self::file(paths))
     }
 
     pub fn save(&self, paths: &GrovePaths) -> std::io::Result<()> {
         paths.ensure()?;
         let body = serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".into());
-        std::fs::write(Self::file(paths), body)
+        grove_core::securefs::write_public_atomic(&Self::file(paths), body)
     }
 
     pub fn register(&mut self, build: PhpBuild) {

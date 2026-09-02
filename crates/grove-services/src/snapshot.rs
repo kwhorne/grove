@@ -43,16 +43,13 @@ impl SnapshotStore {
     }
 
     pub fn list(&self) -> Vec<Snapshot> {
-        std::fs::read_to_string(self.index())
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        grove_core::securefs::read_json_or_quarantine(&self.index())
     }
 
     fn save(&self, list: &[Snapshot]) -> Result<()> {
         std::fs::create_dir_all(&self.dir)?;
         let json = serde_json::to_string_pretty(list).unwrap_or_else(|_| "[]".into());
-        grove_core::securefs::write_public(&self.index(), json)?;
+        grove_core::securefs::write_public_atomic(&self.index(), json)?;
         Ok(())
     }
 
