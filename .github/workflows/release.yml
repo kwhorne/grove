@@ -128,12 +128,41 @@ jobs:
           fi
           echo "grove-pro declares no git deps of its own."
 
+      # tauri-action creates the release if it is missing — and in this repo
+      # the Actions token is refused for exactly that call ("Resource not
+      # accessible by integration") while uploads to an existing release
+      # succeed. v1.5.0 found this out after a 14-minute build. Create it up
+      # front, before compiling anything, with a token that can: RELEASE_TOKEN
+      # (a fine-grained PAT with contents: write) when set, else the Actions
+      # token, and fail here with the fix spelled out if neither may.
+      - name: Ensure the GitHub Release exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            echo "release $TAG exists"; exit 0
+          fi
+          if gh release create "$TAG" -R "$REPO" --title "Grove $TAG" --notes "Assets are uploading; see CHANGELOG.md." 2>err.txt; then
+            echo "created release $TAG"; exit 0
+          fi
+          # Two matrix jobs race to create it; the loser sees "already exists".
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            echo "release $TAG was created by the other job"; exit 0
+          fi
+          echo "::error::Could not create the GitHub Release for $TAG: $(cat err.txt)"
+          echo "::error::The Actions token in this repository is not allowed to create releases. Add a repository secret RELEASE_TOKEN — a fine-grained personal access token with 'Contents: read and write' on this repo — and re-run. Uploads to an existing release work with either token."
+          exit 1
+
       # Builds + signs the GUI, generates latest.json, creates/updates the
       # GitHub Release and uploads the bundles + updater artifacts.
       - name: Build & release GUI (Tauri)
         uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           # Updater signing (minisign).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -164,7 +193,7 @@ jobs:
       - name: Attach CLI tarball to the release
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" dist/*.tar.gz --clobber
 
   # tauri-action writes api.github.com asset URLs into latest.json, which the
@@ -182,7 +211,7 @@ jobs:
     steps:
       - name: Rewrite latest.json to direct download URLs
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |

@@ -45,8 +45,10 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::MacOs as Platform;
 
-#[cfg(target_os = "linux")]
-mod linux;
+// Not gated: the resolver and trust *plans* are pure functions the service
+// installer and the tests use on every platform; only the `Platform` alias is
+// Linux-only.
+pub mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::Linux as Platform;
 

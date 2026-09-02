@@ -1796,14 +1796,23 @@ mod lifecycle {
         // `$GROVE_HOME`'s owner, because the CA setup a few lines below creates
         // that directory *as root* on a fresh install.
         let run_ids = numeric_ids_from_sudo();
-        let unit = grove_os::service::install(&exe, &service_home, run_user.as_deref(), run_ids)
-            .context("installing service")?;
+        // The Linux unit recreates the systemd-resolved routing on every start,
+        // so it needs the TLD and port up front; macOS ignores them.
+        let svc_paths = GrovePaths::with_base(&service_home);
+        let cfg = Config::load(&svc_paths).unwrap_or_default();
+        let unit = grove_os::service::install(
+            &exe,
+            &service_home,
+            run_user.as_deref(),
+            run_ids,
+            &cfg.general.tld,
+            cfg.general.dns_port,
+        )
+        .context("installing service")?;
 
         // Self-heal the system resolver (other tools like Herd can remove
         // /etc/resolver/<tld>); ensure the root CA exists too.
         use grove_os::PlatformIntegration;
-        let svc_paths = GrovePaths::with_base(&service_home);
-        let cfg = Config::load(&svc_paths).unwrap_or_default();
         let platform = grove_os::current();
         let _ = grove_tls::CertificateAuthority::load_or_create(&svc_paths);
         match platform.install_resolver(&cfg.general.tld, cfg.general.dns_port) {

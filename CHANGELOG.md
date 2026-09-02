@@ -22,6 +22,25 @@ not actually serving.
 
 ### Added
 
+- **Linux, for real (beta).** `sudo grove install` writes a *system* unit
+  (root, children dropped to you) instead of a `--user` unit that could not
+  bind 53/80/443; DNS is routed through systemd-resolved via a `grove0` dummy
+  link that the unit recreates on boot — the previous code referenced a link
+  nothing created; the CA goes into the distro's store (Debian or p11-kit
+  layouts) **and** into Chrome's and Firefox's NSS databases, which is where
+  browsers on Linux actually look. The README badge says macOS | Linux (beta)
+  and no longer claims Windows.
+- **The GUI CI job builds against the real `grove-pro`** when the deploy key is
+  available, with the same dependency guard as the release build. v1.5.0's
+  release broke on a dependency that only that crate declared differently.
+- **Release pre-flight.** The release job now creates the GitHub Release before
+  building anything, with `RELEASE_TOKEN` when set, and fails immediately with
+  the exact fix if the token cannot — instead of after a 14-minute build.
+- **Daily PHP builds that build only what changed.** The php-build workflow asks
+  php.net for each minor's latest patch and skips minors already published, so
+  a PHP security release lands in a day, not a month, and most days nothing runs.
+- **IPC protocol compatibility tests** — the tag shape, unknown commands as
+  named errors, unknown fields tolerated, older `status` shapes still parsing.
 - **`grove uninstall --purge`** also removes `GROVE_HOME` and the PATH shims.
   Without it, uninstall now lists what it left in place and where.
 - **A version check on every command.** The CLI pings the daemon first and
@@ -65,6 +84,8 @@ not actually serving.
 
 ### Changed
 
+- The mail-catcher's accept loop backs off on error like the proxy's, instead of
+  spinning on a descriptor-exhausted socket.
 - **State files are written atomically** (`config.toml`, `php-builds.json`,
   service and snapshot indexes): temp file, fsync, rename. A crash mid-write
   used to leave a truncated file.
