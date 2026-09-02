@@ -1323,20 +1323,22 @@ async fn doctor(state: &Arc<DaemonState>) -> Vec<DiagnosticEntry> {
     // saying out loud rather than leaving to be discovered.
     let ca_scope = if ca.exists() {
         match grove_tls::constrained_tld(&state.paths) {
-            Some(tld) if tld == config.general.tld => Some((
-                DiagnosticStatus::Pass,
-                format!("constrained to .{tld}"),
-            )),
+            Some(tld) if tld == config.general.tld => {
+                Some((DiagnosticStatus::Pass, format!("constrained to .{tld}")))
+            }
             Some(tld) => Some((
                 DiagnosticStatus::Warn,
                 format!(
-                    "constrained to .{tld} but the configured TLD is .{} —                      sites will fail TLS until `sudo grove ca rotate`",
+                    "constrained to .{tld} but the configured TLD is .{} — \
+                     sites will fail TLS until `sudo grove ca rotate`",
                     config.general.tld
                 ),
             )),
             None => Some((
                 DiagnosticStatus::Warn,
-                "unconstrained: it can sign any hostname, and it is in the system                  trust store. `sudo grove ca rotate` replaces it with one limited                  to your TLD"
+                "unconstrained: it can sign any hostname, and it is in the system \
+                 trust store. `sudo grove ca rotate` replaces it with one limited \
+                 to your TLD"
                     .to_string(),
             )),
         }

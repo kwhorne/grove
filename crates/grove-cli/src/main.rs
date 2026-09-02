@@ -2262,6 +2262,19 @@ mod local {
                 );
             }
             CaAction::Rotate => {
+                // Every step below is destructive and the last one needs root.
+                // Check first. Without this an unprivileged run untrusts nothing
+                // (warn only), deletes the old CA from disk, mints a new one,
+                // then fails to trust it: old CA still in the keychain, an
+                // untrusted one on disk, HTTPS broken for every site. This is
+                // the command the 1.5.0 upgrade notes tell people to run, so it
+                // has to refuse before it touches anything.
+                if !grove_os::is_elevated() {
+                    anyhow::bail!(
+                        "rotating the root CA replaces it in the system trust store, which \
+                         needs elevation — nothing was changed. Run `sudo grove ca rotate`."
+                    );
+                }
                 // Untrust the outgoing certificate before removing it: once the
                 // file is gone the platform has nothing to match on, and the old
                 // CA would stay trusted forever — which is the opposite of the
@@ -2283,7 +2296,8 @@ mod local {
                     .unwrap_or_default();
                 output::print_message(
                     &format!(
-                        "Grove root CA replaced and trusted ({} store{scope}).                          Restart Grove so sites pick up new certificates.",
+                        "Grove root CA replaced and trusted ({} store{scope}). \
+                         Restart Grove so sites pick up new certificates.",
                         platform.name()
                     ),
                     json,

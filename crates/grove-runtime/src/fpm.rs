@@ -221,7 +221,8 @@ impl FpmManager {
             // behaviour rather than refusing to serve: php-fpm will not start as
             // root without this, and the pool config drops the workers.
             tracing::warn!(
-                "running the PHP-FPM master as root: no run user is known                  (re-run `sudo grove install` to record one)"
+                "running the PHP-FPM master as root: no run user is known \
+                 (re-run `sudo grove install` to record one)"
             );
             cmd.arg("--allow-to-run-as-root");
         }
