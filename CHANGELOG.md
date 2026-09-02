@@ -22,6 +22,24 @@ not actually serving.
 
 ### Added
 
+- **WebSocket passthrough for proxy sites.** The listeners accepted upgrades
+  all along, but nothing pumped the bytes: the browser got a `101` and a dead
+  socket, so Vite HMR on a proxy site, Next/Nuxt dev servers and Reverb over
+  `wss://myapp.test` reconnect-looped. Upgrades now get a dedicated upstream
+  connection and a bidirectional copy until either side closes.
+- **Error pages that name the fix.** Every Grove-generated error was a bare
+  `text/plain` line — a Vite server that wasn't running showed the browser
+  "client error (Connect): tcp connect error … (os error 61)". A refused
+  upstream now names the URL and offers `grove dev start <site>`; an unknown
+  host offers `grove link`; a missing PHP offers `grove php install <v>`.
+- **Static files: `Range` requests (206), gzip, and the MIME types that were
+  missing.** Safari refused to play `<video>` without 206; a 2 MB dev bundle
+  was a 2 MB transfer; sitemaps, PDFs, fonts beyond woff and source maps went
+  out as `application/octet-stream`.
+- **Dev-sized PHP defaults via the pool config:** 512M uploads, post size and
+  memory, 300s scripts, and a 600s `request_terminate_timeout` so a wedged
+  worker is recycled. PHP's compiled-in 8M/128M/30s applied before, since Grove
+  writes no php.ini. Set with `php_value`, so an app's own `ini_set()` wins.
 - **`grove reload`** re-reads `config.toml` and rebuilds the site list without a
   restart. A `grove link`/`secure` that would overwrite a hand edit the daemon
   has not read refuses and points here; before, the edit was silently lost.
@@ -77,6 +95,12 @@ not actually serving.
 
 ### Fixed
 
+- **The SPA fallback served `index.html` as `200 text/html` for *any* missing
+  path**, so a stale hashed asset produced "expected a JavaScript MIME type"
+  instead of a 404 naming the file. It now applies only to extension-less
+  paths from clients that accept HTML.
+- **The 2 GiB request-body limit was enforced only on chunked bodies**; a
+  declared `Content-Length` streamed through unchecked. Both paths now `413`.
 - **A php-fpm master that died stayed dead.** The respawn worked, then the
   dropped old pool removed the socket file the new master had just bound — the
   same path. With a live child in the map nothing respawned again, and every
