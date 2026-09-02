@@ -21,7 +21,11 @@ pub fn unit_path() -> Option<PathBuf> {
     }
     #[cfg(target_os = "linux")]
     {
-        dirs_home().map(|h| h.join(".config/systemd/user/grove.service"))
+        // A *system* unit. The first version wrote a `--user` unit, which
+        // cannot bind 53/80/443 (no capabilities in the user manager) and
+        // stops with the session. Root here mirrors the macOS LaunchDaemon:
+        // the daemon binds the ports and drops every child to the run user.
+        Some(PathBuf::from("/etc/systemd/system/grove.service"))
     }
     #[cfg(target_os = "windows")]
     {
@@ -72,9 +76,14 @@ pub fn install(
     grove_home: &std::path::Path,
     run_user: Option<&str>,
     run_uid: Option<(u32, u32)>,
+    tld: &str,
+    dns_port: u16,
 ) -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
+        // The resolver on macOS is a file under /etc/resolver, written by
+        // `install_resolver`; the unit does not need it.
+        let _ = (tld, dns_port);
         if !crate::is_elevated() {
             return Err(OsError::Unsupported(
                 "installing the system service needs root — run `sudo grove install`".into(),
@@ -144,38 +153,60 @@ pub fn install(
     }
     #[cfg(target_os = "linux")]
     {
-        let path = unit_path().ok_or_else(|| OsError::Unsupported("no HOME".into()))?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        if !crate::is_elevated() {
+            return Err(OsError::Unsupported(
+                "installing the system service needs root — run `sudo grove install`".into(),
+            ));
         }
-        let _ = run_user;
-        let run_id_env = run_uid
-            .map(|(uid, gid)| {
-                format!(
-                    "Environment=GROVE_RUN_USER_ID={uid}\nEnvironment=GROVE_RUN_GROUP_ID={gid}\n"
-                )
-            })
-            .unwrap_or_default();
-        let unit = format!(
-            "[Unit]\nDescription=Elyra Grove daemon\nAfter=network.target\n\n\
-             [Service]\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\n{run_id_env}Restart=on-failure\n\n\
-             [Install]\nWantedBy=default.target\n",
-            exe = exe.display(),
-            home = grove_home.display(),
-            run_id_env = run_id_env,
-        );
+        let path = unit_path().expect("linux unit path is static");
+        let unit = linux_unit(exe, grove_home, run_user, run_uid, tld, dns_port);
         std::fs::write(&path, unit)?;
-        run("systemctl", &["--user", "daemon-reload"])?;
-        run("systemctl", &["--user", "enable", "--now", "grove.service"])?;
+        run("systemctl", &["daemon-reload"])?;
+        run("systemctl", &["enable", "--now", "grove.service"])?;
         Ok(path)
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = (exe, grove_home, run_user, run_uid);
+        let _ = (exe, grove_home, run_user, run_uid, tld, dns_port);
         Err(OsError::Unsupported(
             "Windows service install not yet implemented".into(),
         ))
     }
+}
+
+/// The systemd unit for Grove's daemon.
+///
+/// Root, so it can bind 53/80/443 — every child is dropped to the run user,
+/// recorded here numerically for the daemon's IPC authorization and privilege
+/// drop. `ExecStartPre=+` (the `+` runs it as root even if `User=` were set)
+/// recreates the systemd-resolved dummy link and its routing on every start,
+/// because neither survives a reboot on its own.
+pub fn linux_unit(
+    exe: &std::path::Path,
+    grove_home: &std::path::Path,
+    run_user: Option<&str>,
+    run_uid: Option<(u32, u32)>,
+    tld: &str,
+    dns_port: u16,
+) -> String {
+    let run_env = match (run_user, run_uid) {
+        (Some(user), Some((uid, gid))) => format!(
+            "Environment=GROVE_RUN_USER={user}\nEnvironment=GROVE_RUN_USER_ID={uid}\nEnvironment=GROVE_RUN_GROUP_ID={gid}\n"
+        ),
+        (Some(user), None) => format!("Environment=GROVE_RUN_USER={user}\n"),
+        (None, Some((uid, gid))) => {
+            format!("Environment=GROVE_RUN_USER_ID={uid}\nEnvironment=GROVE_RUN_GROUP_ID={gid}\n")
+        }
+        (None, None) => String::new(),
+    };
+    format!(
+        "[Unit]\nDescription=Elyra Grove daemon\nAfter=network-online.target systemd-resolved.service\nWants=network-online.target\n\n\
+         [Service]\nExecStartPre=+{pre}\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\n{run_env}Restart=on-failure\nRestartSec=2\n\n\
+         [Install]\nWantedBy=multi-user.target\n",
+        pre = crate::linux::resolver_exec_start_pre(tld, dns_port),
+        exe = exe.display(),
+        home = grove_home.display(),
+    )
 }
 
 /// Uninstall (and unload) the service.
@@ -211,19 +242,21 @@ pub fn uninstall() -> Result<bool> {
     }
     #[cfg(target_os = "linux")]
     {
+        if !crate::is_elevated() {
+            return Err(OsError::Unsupported(
+                "removing the system service needs root — run `sudo grove uninstall`".into(),
+            ));
+        }
         let Some(path) = unit_path() else {
             return Ok(false);
         };
         let existed = path.exists();
         if existed {
-            if let Err(e) = run(
-                "systemctl",
-                &["--user", "disable", "--now", "grove.service"],
-            ) {
+            if let Err(e) = run("systemctl", &["disable", "--now", "grove.service"]) {
                 tracing::warn!(error = %e, "systemctl disable (service may not have been enabled)");
             }
             std::fs::remove_file(&path)?;
-            let _ = run("systemctl", &["--user", "daemon-reload"]);
+            let _ = run("systemctl", &["daemon-reload"]);
         }
         Ok(existed)
     }
@@ -282,5 +315,37 @@ mod tests {
         assert_eq!(xml_escape("a'b"), "a&apos;b");
         // `&` must be escaped once, not twice.
         assert_eq!(xml_escape("&amp;"), "&amp;amp;");
+    }
+}
+
+#[cfg(test)]
+mod linux_unit_tests {
+    use super::*;
+
+    #[test]
+    fn the_unit_binds_as_root_records_the_run_user_and_recreates_the_resolver_link() {
+        let unit = linux_unit(
+            std::path::Path::new("/usr/local/bin/grove"),
+            std::path::Path::new("/home/u/.local/share/grove"),
+            Some("u"),
+            Some((1000, 1000)),
+            "test",
+            53,
+        );
+        assert!(
+            unit.contains("WantedBy=multi-user.target"),
+            "a system unit, not a user one: {unit}"
+        );
+        assert!(
+            !unit.contains("User="),
+            "root, so it can bind 53/80/443; children are dropped"
+        );
+        assert!(unit.contains("ExecStartPre=+/bin/sh -c 'ip link add grove0 type dummy 2>/dev/null || true; ip link set grove0 up; resolvectl dns grove0 127.0.0.1:53; resolvectl domain grove0 ~test'"), "{unit}");
+        assert!(unit.contains("ExecStart=/usr/local/bin/grove daemon"));
+        assert!(unit.contains("Environment=GROVE_HOME=/home/u/.local/share/grove"));
+        assert!(unit.contains("Environment=GROVE_RUN_USER=u\n"));
+        assert!(unit.contains("Environment=GROVE_RUN_USER_ID=1000\n"));
+        assert!(unit.contains("Environment=GROVE_RUN_GROUP_ID=1000\n"));
+        assert!(unit.contains("After=network-online.target systemd-resolved.service"));
     }
 }
