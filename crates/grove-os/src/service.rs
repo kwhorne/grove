@@ -34,6 +34,8 @@ pub fn unit_path() -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
+// Only the macOS plist needs the home directory; the Linux unit path is static.
+#[cfg(target_os = "macos")]
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
