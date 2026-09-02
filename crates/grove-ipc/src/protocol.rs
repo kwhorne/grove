@@ -601,3 +601,67 @@ pub enum DiagnosticStatus {
     Warn,
     Fail,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire shape both frontends and the daemon agree on: a tagged `cmd`
+    /// in snake_case. Changing the tag or casing breaks every installed CLI.
+    #[test]
+    fn requests_are_tagged_by_cmd_in_snake_case() {
+        let json = serde_json::to_string(&Request::Ping).unwrap();
+        assert_eq!(json, r#"{"cmd":"ping"}"#);
+        let json = serde_json::to_string(&Request::ListSites).unwrap();
+        assert_eq!(json, r#"{"cmd":"list_sites"}"#);
+        let back: Request = serde_json::from_str(r#"{"cmd":"doctor"}"#).unwrap();
+        assert!(matches!(back, Request::Doctor));
+    }
+
+    /// What the daemon leans on to answer "your CLI is newer than me": an
+    /// unknown command is a serde error naming the variant, not a panic and
+    /// not a silently defaulted request.
+    #[test]
+    fn an_unknown_command_is_a_named_error() {
+        let err = serde_json::from_str::<Request>(r#"{"cmd":"from_the_future"}"#).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("unknown variant"), "{msg}");
+        assert!(msg.contains("from_the_future"), "{msg}");
+    }
+
+    /// Forward compatibility the other way: a response from a newer daemon
+    /// may carry fields this client has never heard of, and must still parse.
+    #[test]
+    fn responses_with_unknown_fields_still_parse() {
+        let raw = r#"{"ok":true,"data":{"pong":{"version":"9.9.9","build":"abc","shiny":true}},"trace_id":"x"}"#;
+        let resp: Response = serde_json::from_str(raw).unwrap();
+        assert!(resp.ok);
+        match resp.data {
+            Some(ResponseData::Pong { version }) => assert_eq!(version, "9.9.9"),
+            other => panic!("expected pong, got {other:?}"),
+        }
+    }
+
+    /// Backward compatibility: a field added later (`ServiceState.detail`) is
+    /// optional on the wire, so a status from an older daemon still parses.
+    #[test]
+    fn a_status_from_before_listener_details_still_parses() {
+        let raw = r#"{"name":"dns","running":true,"port":53}"#;
+        let s: ServiceState = serde_json::from_str(raw).unwrap();
+        assert_eq!(s.name, "dns");
+        assert!(s.running);
+        assert_eq!(s.detail, None);
+        // …and is not emitted when absent, so older clients see what they always did.
+        let out = serde_json::to_string(&s).unwrap();
+        assert!(!out.contains("detail"), "{out}");
+    }
+
+    #[test]
+    fn error_responses_carry_the_message() {
+        let r = Response::err("nope");
+        assert!(!r.ok);
+        assert_eq!(r.error.as_deref(), Some("nope"));
+        let round: Response = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(round.error.as_deref(), Some("nope"));
+    }
+}

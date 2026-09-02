@@ -37,11 +37,19 @@ pub async fn serve_smtp_on(listener: TcpListener, store: MailStore) -> Result<()
         tracing::info!(%addr, "mail-catcher (SMTP) listening");
     }
 
+    // Out of file descriptors, `accept` fails instantly and forever; a bare
+    // `continue` was a busy loop burning a core. Back off like the proxy does.
+    let mut backoff = std::time::Duration::from_millis(5);
     loop {
         let (stream, peer) = match listener.accept().await {
-            Ok(p) => p,
+            Ok(p) => {
+                backoff = std::time::Duration::from_millis(5);
+                p
+            }
             Err(e) => {
-                tracing::warn!(error = %e, "SMTP accept failed");
+                tracing::warn!(error = %e, backoff_ms = backoff.as_millis(), "SMTP accept failed");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(std::time::Duration::from_secs(1));
                 continue;
             }
         };
