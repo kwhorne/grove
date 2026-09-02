@@ -37,6 +37,11 @@ pub fn is_alive(_pid: u32) -> bool {
 
 /// The executable name of `pid` (`php-fpm`, `postgres`, `groved`…), without
 /// path or arguments. `None` if the process is gone or the OS will not say.
+///
+/// One caveat: for a *freshly spawned* child the name is the parent's until
+/// the child has `exec`ed, and on Linux `spawn()` can return before that. The
+/// daemon only asks about pids read from files of long-running processes, so
+/// it never sees that window; anything spawning and then asking must wait.
 #[cfg(target_os = "linux")]
 pub fn command_name(pid: u32) -> Option<String> {
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
@@ -166,10 +171,44 @@ mod tests {
     use std::time::Duration;
 
     fn sleeper() -> std::process::Child {
-        std::process::Command::new("sleep")
+        let child = std::process::Command::new("sleep")
             .arg("30")
             .spawn()
-            .expect("sleep is everywhere")
+            .expect("sleep is everywhere");
+        wait_for_name(child.id(), "sleep");
+        child
+    }
+
+    /// Block until `pid` reports `expected` as its command name.
+    ///
+    /// Right after `spawn()` the child may not have `exec`ed yet, so
+    /// `/proc/<pid>/comm` still shows the parent — this test thread's name,
+    /// truncated to 15 bytes: `process::tests:`. That is exactly what CI saw
+    /// on Ubuntu while Alpine and macOS, with different spawn paths, passed.
+    fn wait_for_name(pid: u32, expected: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            if command_name(pid).as_deref() == Some(expected) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!(
+            "pid {pid} never became {expected:?} (last seen {:?})",
+            command_name(pid)
+        );
+    }
+
+    /// A sleeper nobody in this process tree will wait for, as an orphaned
+    /// php-fpm after a daemon SIGKILL would be. Waits for it to exec.
+    fn orphan_sleeper() -> u32 {
+        let out = std::process::Command::new("sh")
+            .args(["-c", "sleep 30 >/dev/null 2>&1 & echo $!"])
+            .output()
+            .expect("sh");
+        let pid: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        wait_for_name(pid, "sleep");
+        pid
     }
 
     #[test]
@@ -231,11 +270,7 @@ mod tests {
     /// init, exactly like an orphaned php-fpm after a daemon SIGKILL.
     #[test]
     fn terminate_takes_an_orphan_down() {
-        let out = std::process::Command::new("sh")
-            .args(["-c", "sleep 30 >/dev/null 2>&1 & echo $!"])
-            .output()
-            .expect("sh");
-        let pid: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        let pid = orphan_sleeper();
         assert!(is_alive(pid), "the orphan is running");
         assert!(terminate(pid, Duration::from_millis(500)));
         assert!(!is_alive(pid), "init reaped it");
@@ -250,11 +285,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        let out = std::process::Command::new("sh")
-            .args(["-c", "sleep 30 >/dev/null 2>&1 & echo $!"])
-            .output()
-            .unwrap();
-        let orphan: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        let orphan = orphan_sleeper();
         std::fs::write(dir.join("svc-a.pid"), orphan.to_string()).unwrap();
         // A recycled pid: alive, but running something else entirely.
         std::fs::write(dir.join("svc-b.pid"), std::process::id().to_string()).unwrap();
