@@ -89,6 +89,8 @@ jobs:
 
   gui:
     name: GUI (Tauri)
+    env:
+      HAS_PRO_KEY: ${{ secrets.GROVE_PRO_SSH_KEY != '' }}
     runs-on: ubuntu-latest
     needs: frontend
     steps:
@@ -122,5 +124,30 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm run build
+      # The proprietary grove-pro is cloned in only at release time, so the
+      # open-source CI never compiled the GUI against it — which is how a
+      # dependency it declared differently from the workspace reached the
+      # release build and nowhere before (v1.5.0: eight E0308s, two attempts).
+      # When the deploy key is available (not on forks), build what release
+      # builds. The step is skipped, not failed, without it.
+      - name: Inject Grove Pro (proprietary), when the key is available
+        if: ${{ env.HAS_PRO_KEY == 'true' }}
+        env:
+          GROVE_PRO_SSH_KEY: ${{ secrets.GROVE_PRO_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$GROVE_PRO_SSH_KEY" > ~/.ssh/grove_pro
+          chmod 600 ~/.ssh/grove_pro
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/grove_pro -o IdentitiesOnly=yes -o StrictHostKeyChecking=no"
+          rm -rf crates/grove-pro
+          git clone --depth 1 git@github.com:kwhorne/grove-pro.git crates/grove-pro
+          rm -rf crates/grove-pro/.git ~/.ssh/grove_pro
+          echo "Injected proprietary grove-pro."
+          bad=$(grep -nE '^[a-zA-Z0-9_-]+ *= *\{[^}]*git *=' crates/grove-pro/Cargo.toml || true)
+          if [ -n "$bad" ]; then
+            echo "::error::grove-pro declares a git dependency directly (use <dep>.workspace = true):"
+            echo "$bad"; exit 1
+          fi
       - name: Clippy (GUI)
         run: cargo clippy -p grove-gui --all-targets -- -D warnings

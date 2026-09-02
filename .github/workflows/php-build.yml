@@ -23,10 +23,16 @@ on:
         description: 'PHP minor versions to build, comma separated'
         required: false
         default: '8.5,8.4,8.3'
-  # Upstream cuts patch releases monthly; rebuild after they land so
-  # `grove php install` keeps resolving to a current patch.
+      force:
+        description: 'Build even if the latest patch is already published'
+        type: boolean
+        default: false
+  # Daily. A PHP security release used to wait up to a month for the monthly
+  # build; now the plan job asks php.net for each minor's latest patch and
+  # builds only the minors whose current patch is not yet in `php-runtimes`.
+  # Most days that is nothing, and the build matrix is skipped.
   schedule:
-    - cron: '0 5 8 * *'
+    - cron: '0 5 * * *'
 
 permissions:
   contents: write
@@ -49,7 +55,7 @@ jobs:
     name: Plan
     runs-on: ubuntu-latest
     outputs:
-      versions: ${{ steps.split.outputs.versions }}
+      versions: ${{ steps.filter.outputs.versions }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -71,13 +77,44 @@ jobs:
           print("versions=" + json.dumps(versions))
           PY
 
-      - name: Generate a craft.yml per version
+      - id: filter
+        name: Drop minors whose latest patch is already published
         env:
-          RAW: ${{ inputs.php-versions || '8.5,8.4,8.3' }}
+          REQUESTED: ${{ steps.split.outputs.versions }}
+          FORCE: ${{ inputs.force == true || inputs.force == 'true' }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          published=$(gh release view php-runtimes -R "$REPO" --json assets --jq '.assets[].name' 2>/dev/null || true)
+          keep='[]'
+          for minor in $(echo "$REQUESTED" | jq -r '.[]'); do
+            if [ "$FORCE" = "true" ]; then
+              keep=$(echo "$keep" | jq -c --arg v "$minor" '. + [$v]'); continue
+            fi
+            latest=$(curl -fsSL "https://www.php.net/releases/index.php?json&version=$minor" | jq -r '.version // empty')
+            if [ -z "$latest" ]; then
+              echo "::warning::php.net gave no latest patch for $minor; building it to be safe"
+              keep=$(echo "$keep" | jq -c --arg v "$minor" '. + [$v]'); continue
+            fi
+            if echo "$published" | grep -qx "php-$latest-cli-linux-x86_64.tar.gz"; then
+              echo "$minor: latest patch $latest is already published — skipping"
+            else
+              echo "$minor: latest patch $latest is not published yet — building"
+              keep=$(echo "$keep" | jq -c --arg v "$minor" '. + [$v]')
+            fi
+          done
+          echo "versions=$keep" >> "$GITHUB_OUTPUT"
+          echo "will build: $keep"
+
+      - name: Generate a craft.yml per version
+        if: ${{ steps.filter.outputs.versions != '[]' }}
+        env:
+          RAW: ${{ steps.filter.outputs.versions }}
         run: |
           set -euo pipefail
           mkdir -p craft
-          echo "$RAW" | tr ',' '\n' | while read -r v; do
+          echo "$RAW" | jq -r '.[]' | while read -r v; do
             v=$(echo "$v" | tr -d '[:space:]')
             [ -n "$v" ] || continue
             ./target/release/grove php craft --php "$v" > "craft/craft-$v.yml"
@@ -86,6 +123,7 @@ jobs:
           done
 
       - uses: actions/upload-artifact@v4
+        if: ${{ steps.filter.outputs.versions != '[]' }}
         with:
           name: craft-configs
           path: craft/
@@ -94,6 +132,7 @@ jobs:
   build:
     name: ${{ matrix.target.name }} · php ${{ matrix.php }}
     needs: plan
+    if: ${{ needs.plan.outputs.versions != '[]' }}
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
@@ -199,7 +238,8 @@ jobs:
 
   publish:
     name: Publish
-    needs: build
+    needs: [plan, build]
+    if: ${{ needs.plan.outputs.versions != '[]' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
