@@ -11,7 +11,8 @@ use grove_ipc::protocol::{
     SettingsView, SiteStatus,
 };
 
-use crate::state::DaemonState;
+use crate::doctor;
+use crate::state::{DaemonState, ListenerHealth};
 use grove_tunnel::ShareConfig;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -276,18 +277,38 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 https_port: config.general.https_port,
                 dns_port: config.general.dns_port,
                 site_count: registry.len(),
-                services: vec![
-                    ServiceState {
-                        name: "dns".into(),
-                        running: true,
-                        port: Some(config.general.dns_port),
-                    },
-                    ServiceState {
-                        name: "mail".into(),
-                        running: config.services.mail_enabled,
-                        port: Some(config.services.mail_port),
-                    },
-                ],
+                services: {
+                    // What the listeners recorded at bind time — not what the
+                    // config says should be listening.
+                    let l = &state.listeners;
+                    let listener = |name: &str, port: u16, health: ListenerHealth| ServiceState {
+                        name: name.into(),
+                        running: health == ListenerHealth::Up,
+                        port: Some(port),
+                        detail: match health {
+                            ListenerHealth::Up => None,
+                            ListenerHealth::Pending => Some("starting".into()),
+                            ListenerHealth::Failed(err) => {
+                                Some(doctor::explain_bind_failure(port, &err))
+                            }
+                        },
+                    };
+                    vec![
+                        listener("dns", config.general.dns_port, l.dns()),
+                        listener("http", config.general.http_port, l.http()),
+                        listener("https", config.general.https_port, l.https()),
+                        if config.services.mail_enabled {
+                            listener("mail", config.services.mail_port, l.mail())
+                        } else {
+                            ServiceState {
+                                name: "mail".into(),
+                                running: false,
+                                port: Some(config.services.mail_port),
+                                detail: Some("disabled in config".into()),
+                            }
+                        },
+                    ]
+                },
             };
             Ok(Response::ok(ResponseData::Status(status)))
         }
@@ -1308,62 +1329,45 @@ fn build_env_snippet(
 }
 
 async fn doctor(state: &Arc<DaemonState>) -> Vec<DiagnosticEntry> {
-    let mut out = Vec::new();
-    let config = state.config.lock().await;
+    let config = state.config.lock().await.clone();
+    let (dns_port, http_port, https_port) = (
+        config.general.dns_port,
+        config.general.http_port,
+        config.general.https_port,
+    );
 
-    out.push(DiagnosticEntry {
-        check: "config".into(),
-        status: DiagnosticStatus::Pass,
-        detail: format!("loaded from {}", state.paths.config_file().display()),
-    });
+    // The filesystem + resolver checks are shared with the CLI's daemon-down
+    // path (`doctor::local_checks`). The resolver probe is a blocking
+    // `getaddrinfo`, so it runs off the runtime.
+    let paths = state.paths.clone();
+    let cfg = config.clone();
+    let mut out = tokio::task::spawn_blocking(move || doctor::local_checks(&paths, Some(&cfg)))
+        .await
+        .unwrap_or_default();
 
-    let ca = state.paths.ca_cert();
-    // A CA that can sign any name is trusted by the whole machine, so whether
-    // this one is constrained — and to the TLD actually in use — is worth
-    // saying out loud rather than leaving to be discovered.
-    let ca_scope = if ca.exists() {
-        match grove_tls::constrained_tld(&state.paths) {
-            Some(tld) if tld == config.general.tld => {
-                Some((DiagnosticStatus::Pass, format!("constrained to .{tld}")))
-            }
-            Some(tld) => Some((
-                DiagnosticStatus::Warn,
-                format!(
-                    "constrained to .{tld} but the configured TLD is .{} — \
-                     sites will fail TLS until `sudo grove ca rotate`",
-                    config.general.tld
-                ),
-            )),
-            None => Some((
-                DiagnosticStatus::Warn,
-                "unconstrained: it can sign any hostname, and it is in the system \
-                 trust store. `sudo grove ca rotate` replaces it with one limited \
-                 to your TLD"
-                    .to_string(),
-            )),
-        }
-    } else {
-        None
-    };
-    out.push(DiagnosticEntry {
-        check: "root-ca".into(),
-        status: if ca.exists() {
-            DiagnosticStatus::Pass
-        } else {
-            DiagnosticStatus::Warn
-        },
-        detail: if ca.exists() {
-            format!("present at {}", ca.display())
-        } else {
-            "no root CA generated yet".into()
-        },
-    });
-    if let Some((status, detail)) = ca_scope {
-        out.push(DiagnosticEntry {
-            check: "root-ca-scope".into(),
-            status,
-            detail,
-        });
+    // What actually bound. A daemon that lost :80 to another server used to
+    // report itself healthy here.
+    out.push(doctor::listener_entry(
+        "dns",
+        dns_port,
+        &state.listeners.dns(),
+    ));
+    out.push(doctor::listener_entry(
+        "http",
+        http_port,
+        &state.listeners.http(),
+    ));
+    out.push(doctor::listener_entry(
+        "https",
+        https_port,
+        &state.listeners.https(),
+    ));
+    if config.services.mail_enabled {
+        out.push(doctor::listener_entry(
+            "mail",
+            config.services.mail_port,
+            &state.listeners.mail(),
+        ));
     }
 
     out.push(DiagnosticEntry {
@@ -1379,8 +1383,6 @@ async fn doctor(state: &Arc<DaemonState>) -> Vec<DiagnosticEntry> {
             grove_os::is_elevated()
         ),
     });
-    // Don't hold the config lock across the blocking `php -m` calls below.
-    drop(config);
 
     // Extension coverage. Worth a check of its own because the prebuilt static
     // PHP sets each have a real hole — `common` has no `intl`/`mysqli`, `bulk`

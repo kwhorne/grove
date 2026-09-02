@@ -77,10 +77,31 @@ pub async fn serve_http(
     state: SharedState,
     fpm: Arc<dyn FpmLocator>,
 ) -> Result<(), ServerError> {
-    let listener = TcpListener::bind(addr)
+    let listener = bind(addr).await?;
+    serve_http_on(listener, state, fpm).await
+}
+
+/// Bind `addr`, so a caller can learn whether the port was actually taken
+/// before the accept loop begins. `serve_http`/`serve_https` bind and serve in
+/// one step; the daemon binds first, records the result for `grove status`, and
+/// then hands the listener to `serve_http_on`/`serve_https_on`. Without that
+/// split a failed bind was one log line, and the daemon went on reporting a
+/// listener it did not have.
+pub async fn bind(addr: SocketAddr) -> Result<TcpListener, ServerError> {
+    TcpListener::bind(addr)
         .await
-        .map_err(|source| ServerError::Bind { addr, source })?;
-    tracing::info!(%addr, "HTTP listener bound");
+        .map_err(|source| ServerError::Bind { addr, source })
+}
+
+/// Serve plain HTTP on an already-bound listener.
+pub async fn serve_http_on(
+    listener: TcpListener,
+    state: SharedState,
+    fpm: Arc<dyn FpmLocator>,
+) -> Result<(), ServerError> {
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(%addr, "HTTP listener bound");
+    }
 
     loop {
         let (stream, peer) = accept(&listener).await;
@@ -112,17 +133,26 @@ pub async fn serve_https(
     fpm: Arc<dyn FpmLocator>,
     sni: Arc<SniResolver>,
 ) -> Result<(), ServerError> {
-    let listener = TcpListener::bind(addr)
-        .await
-        .map_err(|source| ServerError::Bind { addr, source })?;
+    let listener = bind(addr).await?;
+    serve_https_on(listener, state, fpm, sni).await
+}
 
+/// Serve HTTPS on an already-bound listener; see [`bind`].
+pub async fn serve_https_on(
+    listener: TcpListener,
+    state: SharedState,
+    fpm: Arc<dyn FpmLocator>,
+    sni: Arc<SniResolver>,
+) -> Result<(), ServerError> {
     let mut server_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_cert_resolver(sni);
     server_config.alpn_protocols = vec![b"http/1.1".to_vec()];
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
 
-    tracing::info!(%addr, "HTTPS listener bound");
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(%addr, "HTTPS listener bound");
+    }
 
     loop {
         let (stream, peer) = accept(&listener).await;

@@ -31,6 +31,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Command::Ca { action } => local::ca(&paths, action, args.json),
+        Command::Doctor => local::doctor(&paths, args.json).await,
         Command::Php { action } => local::php(&paths, action, args.json),
         Command::Path { action } => {
             let action = action.unwrap_or(PathAction::Show);
@@ -2239,6 +2240,41 @@ mod local {
     use grove_runtime::{PhpBuild, PhpRegistry};
     use grove_tls::CertificateAuthority;
     use std::path::{Path, PathBuf};
+
+    /// `grove doctor`, with or without a daemon.
+    ///
+    /// The checks that matter most are the ones that fail when the daemon is
+    /// down — a config that no longer parses, a resolver a VPN client rewrote —
+    /// and doctor used to be an IPC call, so a down daemon answered "not
+    /// running" instead of diagnosing anything. Now: daemon up, ask it (its
+    /// answer includes everything below plus what only it knows — listener
+    /// binds, PHP extensions); daemon down, run the local checks here and say
+    /// so. Exits non-zero on any failure either way, so it can gate a script.
+    pub async fn doctor(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
+        use grove_ipc::protocol::{DiagnosticStatus, Response};
+
+        let socket = paths.ipc_socket();
+        let response = if client::is_running(&socket).await {
+            client::send(&socket, &Request::Doctor)
+                .await
+                .context("talking to daemon")?
+        } else {
+            let mut entries = grove_daemon::doctor::local_checks(paths, None);
+            entries.push(grove_daemon::doctor::daemon_down_entry(&socket));
+            Response::ok(ResponseData::Doctor(entries))
+        };
+        output::print_response(&response, json);
+
+        let failed = matches!(
+            &response.data,
+            Some(ResponseData::Doctor(entries))
+                if entries.iter().any(|e| e.status == DiagnosticStatus::Fail)
+        );
+        if !response.ok || failed {
+            std::process::exit(1);
+        }
+        Ok(())
+    }
 
     pub fn ca(paths: &GrovePaths, action: CaAction, json: bool) -> anyhow::Result<()> {
         let platform = grove_os::current();

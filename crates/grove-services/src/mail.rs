@@ -21,8 +21,21 @@ pub enum MailError {
 
 /// Bind and serve the SMTP catcher on `addr` until the task is dropped.
 pub async fn serve_smtp(addr: SocketAddr, store: MailStore) -> Result<(), MailError> {
-    let listener = TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "mail-catcher (SMTP) listening");
+    let listener = bind_smtp(addr).await?;
+    serve_smtp_on(listener, store).await
+}
+
+/// Bind the SMTP port, so the daemon can record whether it got it before the
+/// accept loop starts. See `grove_proxy::bind` for why this is split.
+pub async fn bind_smtp(addr: SocketAddr) -> Result<TcpListener, MailError> {
+    Ok(TcpListener::bind(addr).await?)
+}
+
+/// Serve the SMTP catcher on an already-bound listener.
+pub async fn serve_smtp_on(listener: TcpListener, store: MailStore) -> Result<(), MailError> {
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(%addr, "mail-catcher (SMTP) listening");
+    }
 
     loop {
         let (stream, peer) = match listener.accept().await {
