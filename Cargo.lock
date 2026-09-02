@@ -2457,6 +2457,7 @@ version = "1.5.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "flate2",
  "futures",
  "grove-core",
  "grove-tls",

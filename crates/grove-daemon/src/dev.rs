@@ -909,7 +909,15 @@ mod tests {
 
         let mut cmd = Command::new("/bin/sh");
         // Report our own process group; the parent asserts it equals our pid.
-        cmd.args(["-c", "ps -o pgid= -p $$"]);
+        // /proc is authoritative on Linux and does not depend on which `ps` is
+        // installed — busybox's has no `-o pgid=`, which failed this test in
+        // an Alpine container while proving nothing about process groups.
+        let report = if cfg!(target_os = "linux") {
+            "cut -d' ' -f5 /proc/self/stat"
+        } else {
+            "ps -o pgid= -p $$"
+        };
+        cmd.args(["-c", report]);
         cmd.stdout(std::process::Stdio::piped());
         new_process_group(&mut cmd);
         // Stand in for `apply_env`'s hook, registered after ours.

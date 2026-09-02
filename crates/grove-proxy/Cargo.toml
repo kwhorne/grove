@@ -12,6 +12,8 @@ grove-tls = { path = "../grove-tls" }
 tokio.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+# gzip for static assets — already in the lockfile via grove-cli.
+flate2 = "1"
 http-body-util.workspace = true
 bytes.workspace = true
 rustls.workspace = true

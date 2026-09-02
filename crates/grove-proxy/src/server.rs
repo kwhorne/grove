@@ -60,7 +60,7 @@ async fn accept(listener: &TcpListener) -> (TcpStream, SocketAddr) {
 /// panics unwind, that took down every site while the daemon stayed up and
 /// reported itself healthy. The tests below put a request through each protocol
 /// on a connection built exactly this way.
-fn connection_builder() -> auto::Builder<TokioExecutor> {
+pub(crate) fn connection_builder() -> auto::Builder<TokioExecutor> {
     let mut builder = auto::Builder::new(TokioExecutor::new());
     builder
         .http1()

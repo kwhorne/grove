@@ -56,6 +56,25 @@ local Unix-socket JSON-RPC.
    FPM pool for the site's PHP version; static → serve files; proxy → forward
    to the upstream dev server.
 
+### Protocols and upgrades
+
+Both listeners speak HTTP/1.1 and HTTP/2, chosen per connection — by ALPN on
+the TLS listener, by preface sniffing on the plain one. h2 requests carry the
+host as `:authority` rather than a `Host` header; the handler reads either and
+puts a `Host` into the header map so FastCGI's `HTTP_HOST`, the proxy driver
+and the timeline all see it.
+
+A request that asks to switch protocols (`Upgrade: websocket` with
+`Connection: upgrade`) on a proxy-driver site bypasses the pooled upstream
+client, which cannot hand a connection back: it gets a dedicated HTTP/1.1
+connection to the upstream, and if that answers `101`, both sides' upgraded
+streams are copied bidirectionally until either closes. That is what lets Vite
+HMR on a proxy site, Next/Nuxt dev servers and Reverb over `wss://` work.
+
+A secured site reached over plain HTTP is redirected to its HTTPS origin
+(`301` for GET/HEAD, `308` otherwise), with the configured HTTPS port in the
+`Location`.
+
 ### Bodies are streamed, not buffered
 
 Neither direction is held whole in memory:
@@ -93,6 +112,17 @@ built assets under `/build/` do not go through PHP), with two rules:
 
 Anything else falls through to the site's front controller, which receives the
 request path as `PATH_INFO`.
+
+Static files carry `Accept-Ranges: bytes` and answer single-range requests with
+`206`, are gzipped when the client accepts it and the type compresses (with a
+distinct `ETag` for that representation), and fall back to the root
+`index.html` only for extension-less paths from clients that accept HTML — a
+missing asset is a `404` that names the file, not the SPA shell as `text/html`.
+
+Every error Grove generates itself — no site for the host, an upstream that
+refused the connection, no PHP for the version, a request too large — is an
+HTML page that states the situation and, where Grove knows it, the command
+that fixes it.
 
 ### What is not repeated per request
 
