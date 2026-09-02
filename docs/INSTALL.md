@@ -497,6 +497,41 @@ grove requests
 
 ---
 
+## Linux (beta)
+
+Grove's core — the daemon, DNS, HTTPS, PHP-FPM, the bundled databases — is
+platform-neutral Rust and builds and tests on Linux in CI. The OS integration is
+newer than on macOS and has had less real-world use, so: beta.
+
+```bash
+sudo grove init            # config, CA, PHP; resolver + trust need root
+sudo grove install         # /etc/systemd/system/grove.service
+grove doctor
+```
+
+What `sudo grove install` sets up, and the assumptions behind it:
+
+- **A system unit**, run as root so it can bind 53/80/443. Every child —
+  php-fpm, PostgreSQL, MySQL, Redis — is dropped to your user, whose ids the
+  unit records. Earlier versions wrote a `systemctl --user` unit, which cannot
+  bind privileged ports at all.
+- **DNS through systemd-resolved.** Grove creates a dummy link `grove0`, points
+  it at its own DNS on `127.0.0.1:53`, and routes `~test` to it; the unit
+  recreates that on every boot (the settings do not persist on their own).
+  Without `resolvectl` — some NetworkManager-only or musl setups — the install
+  says so and you add sites to `/etc/hosts` or point your resolver at Grove.
+- **CA trust in two places.** The system store (Debian/Ubuntu via
+  `update-ca-certificates`, Fedora/RHEL/Arch via `update-ca-trust`) is what
+  `curl`, PHP and OpenSSL read. **Chrome and Firefox do not read it** — they
+  keep their own NSS databases — so Grove also adds the CA to `~/.pki/nssdb`
+  and to each Firefox profile it finds, using `certutil`. Install
+  `libnss3-tools` (Debian/Ubuntu) or `nss-tools` (Fedora) first, or the
+  padlock stays red in the browser however green `curl` is.
+
+`grove doctor` reports the resolver and the listeners on Linux the same way it
+does on macOS. Windows is not supported: the code has stubs, nothing works
+end to end, and the badge no longer claims otherwise.
+
 ## 12. Troubleshooting
 
 ### `DNS_PROBE_FINISHED_NXDOMAIN` / `ERR_NAME_NOT_RESOLVED` in the browser
