@@ -7,68 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Follow-ups from a robustness review of 1.5.0. One real bug, one upgrade
-hazard in 1.5.0's own instructions, and the daemon learning to say when it is
-not actually serving.
+## [1.6.0] — 2026-09-02
+
+Everything from a robustness review of 1.5.0, in five rounds: one real bug in
+the request path, one upgrade hazard in 1.5.0's own instructions, a daemon that
+learns to say when it is not actually serving, a proxy that behaves the way
+browsers expect, a CLI that reports what happened rather than what it meant to
+do, and a Linux integration that exists.
 
 ### Upgrade notes
 
-- **`grove doctor` now exits non-zero when anything fails**, and reports a
-  missing resolver or a port held by another server as a failure. A script
-  that gated on doctor's exit code will start failing where it should have.
-- **Secured sites now redirect `http://` to `https://`.** Anything that relied
-  on reaching a `grove secure`d site over plaintext — a curl in a script, a
-  webhook target — gets a `301`/`308` and should use the HTTPS URL.
+- **`grove doctor` exits non-zero when anything fails**, and a missing resolver
+  or a port held by another server is a failure. A script gating on its exit
+  code will start failing where it should have.
+- **Secured sites redirect `http://` to `https://`** (`301` for GET/HEAD, `308`
+  otherwise). A curl in a script or a webhook target that reached a
+  `grove secure`d site over plaintext should use the HTTPS URL.
+- **`grove uninstall` needs `sudo`** and leaves `GROVE_HOME` (config, PHP
+  builds, databases) and the PATH shims in place unless you pass `--purge`.
+- **`grove init` exits 1 when a step fails** — a PHP download, the CA. The
+  elevation notice is advice and does not fail the command.
+- **Linux: re-run `sudo grove install`.** The unit moved from a `--user` unit
+  to `/etc/systemd/system/grove.service`. If an old user unit is present,
+  install says so and gives the command to disable it.
+- **After upgrading the binary, `grove restart`.** The CLI now warns on every
+  command when the daemon is a different version; the daemon answers a request
+  it cannot parse with its version and the same advice.
 
 ### Added
 
-- **Linux, for real (beta).** `sudo grove install` writes a *system* unit
-  (root, children dropped to you) instead of a `--user` unit that could not
-  bind 53/80/443; DNS is routed through systemd-resolved via a `grove0` dummy
-  link that the unit recreates on boot — the previous code referenced a link
-  nothing created; the CA goes into the distro's store (Debian or p11-kit
-  layouts) **and** into Chrome's and Firefox's NSS databases, which is where
-  browsers on Linux actually look. The README badge says macOS | Linux (beta)
-  and no longer claims Windows.
-- **The GUI CI job builds against the real `grove-pro`** when the deploy key is
-  available, with the same dependency guard as the release build. v1.5.0's
-  release broke on a dependency that only that crate declared differently.
-- **Release pre-flight.** The release job now creates the GitHub Release before
-  building anything, with `RELEASE_TOKEN` when set, and fails immediately with
-  the exact fix if the token cannot — instead of after a 14-minute build.
-- **Daily PHP builds that build only what changed.** The php-build workflow asks
-  php.net for each minor's latest patch and skips minors already published, so
-  a PHP security release lands in a day, not a month, and most days nothing runs.
-- **IPC protocol compatibility tests** — the tag shape, unknown commands as
-  named errors, unknown fields tolerated, older `status` shapes still parsing.
-- **`grove uninstall --purge`** also removes `GROVE_HOME` and the PATH shims.
-  Without it, uninstall now lists what it left in place and where.
-- **A version check on every command.** The CLI pings the daemon first and
-  warns when the two versions differ, naming both and `grove restart`. A
-  daemon that receives a request it cannot parse now answers with its version
-  and the same advice, instead of closing the connection — which the CLI
-  reported as "connection closed before a full message was received".
+- **HTTP/2** on both listeners. ALPN offered only `http/1.1`, so browsers fell
+  back to six connections per origin and loaded Vite modules in batches.
 - **WebSocket passthrough for proxy sites.** The listeners accepted upgrades
   all along, but nothing pumped the bytes: the browser got a `101` and a dead
   socket, so Vite HMR on a proxy site, Next/Nuxt dev servers and Reverb over
-  `wss://myapp.test` reconnect-looped. Upgrades now get a dedicated upstream
+  `wss://myapp.test` reconnect-looped. Upgrades get a dedicated upstream
   connection and a bidirectional copy until either side closes.
+- **`http://` → `https://` redirect for secured sites.** `site.secure` was set
+  by `grove secure` and never read on the request path; a typed hostname served
+  plaintext, PHP saw `HTTPS=""`, and Laravel built `http://` asset URLs — mixed
+  content against the HTTPS Vite server. The `Location` carries the configured
+  HTTPS port.
 - **Error pages that name the fix.** Every Grove-generated error was a bare
   `text/plain` line — a Vite server that wasn't running showed the browser
   "client error (Connect): tcp connect error … (os error 61)". A refused
   upstream now names the URL and offers `grove dev start <site>`; an unknown
   host offers `grove link`; a missing PHP offers `grove php install <v>`.
 - **Static files: `Range` requests (206), gzip, and the MIME types that were
-  missing.** Safari refused to play `<video>` without 206; a 2 MB dev bundle
-  was a 2 MB transfer; sitemaps, PDFs, fonts beyond woff and source maps went
-  out as `application/octet-stream`.
+  missing.** Safari refused to play `<video>` without 206; a 2 MB dev bundle was
+  a 2 MB transfer; sitemaps, PDFs, fonts beyond woff and source maps went out as
+  `application/octet-stream`.
 - **Dev-sized PHP defaults via the pool config:** 512M uploads, post size and
   memory, 300s scripts, and a 600s `request_terminate_timeout` so a wedged
   worker is recycled. PHP's compiled-in 8M/128M/30s applied before, since Grove
   writes no php.ini. Set with `php_value`, so an app's own `ini_set()` wins.
-- **`grove reload`** re-reads `config.toml` and rebuilds the site list without a
-  restart. A `grove link`/`secure` that would overwrite a hand edit the daemon
+- **`grove status` and `grove doctor` report what actually bound.** Each of
+  dns/http/https/mail is recorded at bind time and shown with the OS error and,
+  where `lsof`/`ss` will say, the process holding the port:
+  `○ http  Address already in use — held by httpd (pid 412)`. Previously DNS
+  was hardcoded as running and a failed bind was one line in `daemon.log`.
+- **`grove doctor` works without the daemon.** The config, CA and resolver
+  checks run locally when the socket does not answer, followed by an explicit
+  `daemon` failure, instead of the old "not running" and nothing else. It also
+  reports state files that were set aside as unparsable.
+- **A `resolver` check** that asks the OS to resolve a name under the TLD and
+  expects loopback back — the question a user actually has, and the one a VPN
+  client rewriting DNS order breaks without touching `/etc/resolver`.
+- **`grove reload`** re-reads `config.toml` and rebuilds the site list without
+  a restart. A `grove link`/`secure` that would overwrite a hand edit the daemon
   has not read refuses and points here; before, the edit was silently lost.
+- **`grove uninstall --purge`** also removes `GROVE_HOME` and the PATH shims.
+  Without it, uninstall lists what it left in place and where.
+- **A version check on every command.** The CLI pings the daemon first and
+  warns when the two versions differ, naming both and `grove restart`.
 - **Orphans from a killed daemon are reaped at boot.** php-fpm masters and
   bundled databases left running after a SIGKILL are found by pid file, checked
   by name, and stopped before anything new is spawned. Previously a restart
@@ -80,12 +91,30 @@ not actually serving.
   line, instead of "daemon did not come up in time" — which under launchd's
   KeepAlive was a silent restart loop. When the daemon does fail to start, the
   last lines of its log are shown inline.
-- **`grove doctor` reports state files that were set aside** as unparsable.
+- **Linux, for real (beta).** `sudo grove install` writes a *system* unit
+  (root, children dropped to you) instead of a `--user` unit that could not
+  bind 53/80/443; DNS is routed through systemd-resolved via a `grove0` dummy
+  link that the unit recreates on boot — the previous code referenced a link
+  nothing created; the CA goes into the distro's store (Debian or p11-kit
+  layouts) **and** into Chrome's and Firefox's NSS databases, which is where
+  browsers on Linux actually look. The README badge says macOS | Linux (beta)
+  and no longer claims Windows.
+- **CI builds the GUI against the real `grove-pro`** when the deploy key is
+  available, with the release's dependency guard. 1.5.0's release broke on a
+  dependency only that crate declared differently; nothing before release had
+  compiled it.
+- **Release pre-flight.** The release job creates the GitHub Release before
+  building anything — with `RELEASE_TOKEN` when set, else the Actions token —
+  and fails immediately with the exact fix if neither may, instead of after a
+  14-minute build.
+- **Daily PHP builds that build only what changed.** The php-build workflow asks
+  php.net for each minor's latest patch and skips minors already published, so
+  a PHP security release lands in a day, not a month.
+- **IPC protocol compatibility tests** — the tag shape, unknown commands as
+  named errors, unknown fields tolerated, older `status` shapes still parsing.
 
 ### Changed
 
-- The mail-catcher's accept loop backs off on error like the proxy's, instead of
-  spinning on a descriptor-exhausted socket.
 - **State files are written atomically** (`config.toml`, `php-builds.json`,
   service and snapshot indexes): temp file, fsync, rename. A crash mid-write
   used to leave a truncated file.
@@ -98,48 +127,12 @@ not actually serving.
   aborting listeners mid-request.
 - **`grove stop` only signals a pid that is alive and is a Grove process.** A
   stale pidfile from before a reboot is removed, not sent SIGTERM.
-- The IPC accept loop backs off on a transient error instead of exiting the
-  daemon, and a too-long `GROVE_HOME` now fails with the path and the limit
-  rather than a bare "path must be shorter than SUN_LEN".
-
-- **`grove status` and `grove doctor` report what actually bound.** Each of
-  dns/http/https/mail is recorded at bind time and shown with the OS error
-  and, where `lsof`/`ss` will say, the process holding the port:
-  `○ http  Address already in use — held by httpd (pid 412)`. Previously DNS
-  was hardcoded as running and a failed bind was one line in `daemon.log`.
-- **`grove doctor` works without the daemon.** The config, CA and resolver
-  checks run locally when the socket does not answer, followed by an explicit
-  `daemon` failure, instead of the old "not running" and nothing else.
-- **A `resolver` check** that asks the OS to resolve a name under the TLD and
-  expects loopback back — the question a user actually has, and the one a VPN
-  client rewriting DNS order breaks without touching `/etc/resolver`.
-- **HTTP/2** on both listeners. ALPN offered only `http/1.1`, so browsers fell
-  back to six connections per origin and loaded Vite modules in batches.
-- **`http://` → `https://` redirect for secured sites.** `site.secure` was set
-  by `grove secure` and never read on the request path; a typed hostname
-  served plaintext, PHP saw `HTTPS=""`, and Laravel built `http://` asset URLs
-  — mixed content against the HTTPS Vite server. `301` for GET/HEAD, `308`
-  otherwise, with the configured HTTPS port in the `Location`.
+- The IPC and mail-catcher accept loops back off on a transient error instead
+  of exiting the daemon or spinning; a too-long `GROVE_HOME` fails with the path
+  and the limit rather than a bare "path must be shorter than SUN_LEN".
 
 ### Fixed
 
-- **`grove uninstall` without `sudo` printed "removed" having removed
-  nothing.** Every step was `let _ =`. It now refuses without elevation,
-  stops the daemon first, reports each step, and exits non-zero if any failed.
-- **`grove init` exited 0 when the PHP download or CA generation failed**, so
-  a script wrapping it saw success. Real failures now show `✗` and exit 1; the
-  elevation notice is advice (`!`) and does not. Under `sudo`, the
-  `config.toml` init writes is chowned to the invoking user, so a later plain
-  `grove init` or `grove import` no longer fails on a root-owned file.
-- **`grove path show` said Grove's toolchain was on PATH when Homebrew's
-  `php` still won.** It checked membership, not order; it now names the `php`
-  that actually resolves first and how to move Grove ahead of it.
-- **The SPA fallback served `index.html` as `200 text/html` for *any* missing
-  path**, so a stale hashed asset produced "expected a JavaScript MIME type"
-  instead of a 404 naming the file. It now applies only to extension-less
-  paths from clients that accept HTML.
-- **The 2 GiB request-body limit was enforced only on chunked bodies**; a
-  declared `Content-Length` streamed through unchecked. Both paths now `413`.
 - **A php-fpm master that died stayed dead.** The respawn worked, then the
   dropped old pool removed the socket file the new master had just bound — the
   same path. With a live child in the map nothing respawned again, and every
@@ -150,14 +143,35 @@ not actually serving.
   (warn only), deleted the old CA, minted a new one, then failed to trust it:
   old CA still in the keychain, untrusted one on disk. It now refuses before
   touching anything. This is the command 1.5.0's upgrade notes tell everyone
-  to run, so anyone who forgot `sudo` hit it.
+  to run.
+- **HTTP/2 requests routed as host `""`.** h2 carries the host as `:authority`
+  and has no `Host` header; the handler read only the header. Caught by the
+  end-to-end smoke test the same day h2 was enabled, before release.
+- **`grove uninstall` without `sudo` printed "removed" having removed
+  nothing.** Every step was `let _ =`. It now refuses without elevation, stops
+  the daemon first, reports each step, and exits non-zero if any failed.
+- **`grove init` exited 0 when the PHP download or CA generation failed.**
+  Under `sudo`, the `config.toml` it writes is now chowned to the invoking
+  user, so a later plain `grove init` or `grove import` no longer fails on a
+  root-owned file.
+- **`grove path show` said Grove's toolchain was on PATH when Homebrew's `php`
+  still won.** It checked membership, not order; it now names the `php` that
+  actually resolves first and how to move Grove ahead of it.
+- **The SPA fallback served `index.html` as `200 text/html` for *any* missing
+  path**, so a stale hashed asset produced "expected a JavaScript MIME type"
+  instead of a 404 naming the file. It applies only to extension-less paths
+  from clients that accept HTML.
+- **The 2 GiB request-body limit was enforced only on chunked bodies**; a
+  declared `Content-Length` streamed through unchecked.
+- **A hand edit to `config.toml` was silently overwritten** by the next
+  `grove link`; `Request::Reload` rebuilt from memory and never saw it.
+- **A daemon that could not parse a request closed the connection**, which the
+  CLI reported as "connection closed before a full message was received".
 - **Five user-visible messages** whose line continuations had been flattened
   into runs of spaces (`store).                          Restart Grove`).
 - **`docs/INSTALL.md` showed `grove init` and `grove doctor` output that was
   never what they printed** — including `✓ resolver` and `✓ dns` doctor lines
-  that did not exist. Both examples now come from real runs, and init's
-  closing hint says `sudo grove install` rather than `grove start`, which
-  cannot bind the privileged ports.
+  that did not exist. Both examples now come from real runs.
 
 ### Security
 
@@ -1028,7 +1042,8 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
-[Unreleased]: https://github.com/kwhorne/grove/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/kwhorne/grove/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/kwhorne/grove/releases/tag/v1.6.0
 [1.5.0]: https://github.com/kwhorne/grove/releases/tag/v1.5.0
 [1.4.2]: https://github.com/kwhorne/grove/releases/tag/v1.4.2
 [1.4.1]: https://github.com/kwhorne/grove/releases/tag/v1.4.1

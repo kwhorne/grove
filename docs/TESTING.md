@@ -152,6 +152,29 @@ The cheapest of them (`published_checksum_documents_still_parse`) fetches only
 the manifests, and is the one that catches a publisher changing format from
 under us. Worth running before a release even if you skip the rest.
 
+## 2c. Releasing
+
+A release is a `v*` tag. Pushing it runs `.github/workflows/release.yml`,
+which builds and notarizes the macOS app, builds the Linux bundles, uploads
+everything to the GitHub Release for that tag, and rewrites the updater's
+`latest.json` to direct download URLs.
+
+```bash
+# on main, after bumping Cargo.toml + tauri.conf.json and dating the changelog
+git tag -a v1.6.0 -m "Grove 1.6.0"
+git push origin v1.6.0
+```
+
+The first job step, **Ensure the GitHub Release exists**, creates the release
+before anything is compiled. It uses the `RELEASE_TOKEN` secret if one is set
+and the Actions token otherwise. If neither is allowed to create a release, the
+job fails there, within seconds, with the fix in the error — that is the point
+of doing it first. 1.5.0 learned after a 14-minute build that the Actions token
+was refused for *creating* a release while uploads to an existing one worked;
+1.4.x had been created by the Actions token without trouble, so this is not a
+fixed property of the repository. Do not add `RELEASE_TOKEN` pre-emptively;
+add it if the pre-flight tells you to.
+
 ## 3. What to verify
 
 - [ ] `*.test` resolves and serves (Laravel / static / proxy drivers)
