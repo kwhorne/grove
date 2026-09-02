@@ -22,5 +22,5 @@ once_cell.workspace = true
 # crate with no C code, already in the lockfile transitively.
 libc = "0.2"
 # SHA-256 for verifying downloaded runtimes. Already in the lockfile.
-sha2 = "0.10"
+sha2 = "0.11"
 
