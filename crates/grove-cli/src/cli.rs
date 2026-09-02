@@ -34,6 +34,9 @@ pub enum Command {
     Stop,
     /// Restart the daemon.
     Restart,
+    /// Re-read config.toml and rebuild the site list, without restarting.
+    /// Use after editing the file by hand.
+    Reload,
     /// Install Grove as an OS service (starts at login, restarts on crash).
     Install,
     /// Uninstall the Grove OS service and remove resolver + CA trust.

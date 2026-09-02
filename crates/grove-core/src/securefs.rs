@@ -62,6 +62,122 @@ pub fn write_public(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<
     create_public(path)?.write_all(contents.as_ref())
 }
 
+/// Write `contents` to `path` so that neither a concurrent reader nor a crash
+/// can observe a half-written file: the bytes go to a sibling temp file with the
+/// final mode, are fsynced, and are renamed over `path` in one step.
+///
+/// Every state file Grove owns — `config.toml`, `php-builds.json`, the service
+/// and snapshot indexes — used to be written in place with truncate + write. A
+/// crash between the two left a zero-length or truncated file, which the next
+/// boot parsed as "corrupt", replaced with defaults, and saved: every site,
+/// every registered PHP build, every port override, gone silently.
+pub fn write_public_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    write_atomic(path, contents.as_ref(), MODE_PUBLIC)
+}
+
+/// As [`write_public_atomic`], with mode `0600`.
+pub fn write_private_atomic(path: &Path, contents: impl AsRef<[u8]>) -> std::io::Result<()> {
+    write_atomic(path, contents.as_ref(), MODE_PRIVATE)
+}
+
+fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> std::io::Result<()> {
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        std::fs::create_dir_all(parent)?;
+    }
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".into());
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let tmp = path.with_file_name(format!(".{name}.tmp-{}-{nanos}", std::process::id()));
+
+    let result = (|| {
+        let mut f = create_with_mode(&tmp, mode)?;
+        f.write_all(contents)?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+/// Move a file Grove could not parse aside as `<name>.corrupt-<unix-seconds>`,
+/// so it is kept for inspection instead of being overwritten by the defaults
+/// that replace it. Returns where it went.
+pub fn quarantine(path: &Path) -> std::io::Result<std::path::PathBuf> {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".into());
+    let dest = path.with_file_name(format!("{name}.corrupt-{secs}"));
+    std::fs::rename(path, &dest)?;
+    Ok(dest)
+}
+
+/// Read and parse a JSON state file, treating a file that exists but does not
+/// parse as an *event*: it is quarantined and logged at error level, and the
+/// caller gets `T::default()`. A missing file is simply the default.
+///
+/// The old shape everywhere was `serde_json::from_str(..).unwrap_or_default()`,
+/// which turned a truncated `php-builds.json` into an empty registry and then
+/// saved the empty registry over it.
+pub fn read_json_or_quarantine<T>(path: &Path) -> T
+where
+    T: serde::de::DeserializeOwned + Default,
+{
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(_) => return T::default(),
+    };
+    match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            match quarantine(path) {
+                Ok(dest) => tracing::error!(
+                    file = %path.display(),
+                    moved_to = %dest.display(),
+                    error = %e,
+                    "state file does not parse; moved aside and continuing with defaults"
+                ),
+                Err(mv) => tracing::error!(
+                    file = %path.display(),
+                    error = %e,
+                    move_error = %mv,
+                    "state file does not parse and could not be moved aside"
+                ),
+            }
+            T::default()
+        }
+    }
+}
+
+/// Files a [`read_json_or_quarantine`] has set aside under `dir` (one level).
+/// `grove doctor` reports them so the event is not only a log line.
+pub fn quarantined_files(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.contains(".corrupt-") {
+                out.push(e.path());
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 #[cfg(unix)]
 fn create_with_mode(path: &Path, mode: u32) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -217,6 +333,73 @@ mod tests {
         assert!(!parent_is_symlink(&real.join("key.pem")));
         // A parent we cannot stat is not reported as a symlink.
         assert!(!parent_is_symlink(&dir.join("missing/key.pem")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_atomic_write_lands_whole_with_the_right_mode_and_no_leftovers() {
+        let dir = std::env::temp_dir().join(format!("grove-atomic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("state.json");
+        write_private_atomic(&path, b"{\"a\":1}").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"a\":1}");
+        #[cfg(unix)]
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            MODE_PRIVATE
+        );
+        // Overwrite: the new content replaces the old in one step.
+        write_public_atomic(&path, b"{\"a\":2}").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"{\"a\":2}");
+        // Nothing but the file itself remains in the directory.
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["state.json".to_string()],
+            "no temp files left: {names:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[derive(Default, serde::Deserialize, PartialEq, Debug)]
+    struct Toy {
+        n: u32,
+    }
+
+    /// The shape that lost people their PHP builds: a truncated JSON file
+    /// parsed as empty and then saved over. Now it is moved aside and shows up
+    /// in `quarantined_files`.
+    #[test]
+    fn a_corrupt_state_file_is_quarantined_not_silently_defaulted() {
+        let dir = std::env::temp_dir().join(format!("grove-quar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("builds.json");
+        std::fs::write(&path, "{\"n\": 4").unwrap(); // truncated mid-write
+
+        let got: Toy = read_json_or_quarantine(&path);
+        assert_eq!(got, Toy::default(), "the caller proceeds with defaults");
+        assert!(!path.exists(), "the corrupt file is no longer at its path");
+        let set_aside = quarantined_files(&dir);
+        assert_eq!(set_aside.len(), 1, "{set_aside:?}");
+        assert_eq!(
+            std::fs::read_to_string(&set_aside[0]).unwrap(),
+            "{\"n\": 4",
+            "its bytes are preserved for inspection"
+        );
+
+        // A valid file parses and is left alone; a missing one is the default.
+        std::fs::write(&path, "{\"n\": 7}").unwrap();
+        assert_eq!(read_json_or_quarantine::<Toy>(&path), Toy { n: 7 });
+        assert!(path.exists());
+        assert_eq!(
+            read_json_or_quarantine::<Toy>(&dir.join("nope.json")),
+            Toy::default()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -228,10 +228,10 @@ impl Config {
 
     pub fn save_to(&self, path: &Path) -> Result<()> {
         let body = toml::to_string_pretty(self)?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, body)?;
+        // Atomic: a crash mid-write used to leave a truncated config.toml, and
+        // the next boot refused to start on it — or `grove import` replaced it
+        // with defaults, losing every site.
+        crate::securefs::write_public_atomic(path, body)?;
         Ok(())
     }
 

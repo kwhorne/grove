@@ -22,6 +22,40 @@ not actually serving.
 
 ### Added
 
+- **`grove reload`** re-reads `config.toml` and rebuilds the site list without a
+  restart. A `grove link`/`secure` that would overwrite a hand edit the daemon
+  has not read refuses and points here; before, the edit was silently lost.
+- **Orphans from a killed daemon are reaped at boot.** php-fpm masters and
+  bundled databases left running after a SIGKILL are found by pid file, checked
+  by name, and stopped before anything new is spawned. Previously a restart
+  spawned duplicates on the same socket, or failed the port bind and reported
+  the service as "not running" while the orphan kept serving.
+- **One daemon at a time.** A second `grove daemon` refuses to start over a
+  live one instead of unlinking its socket and overwriting its pidfile.
+- **`grove start` parses `config.toml` first** and shows the error with its
+  line, instead of "daemon did not come up in time" — which under launchd's
+  KeepAlive was a silent restart loop. When the daemon does fail to start, the
+  last lines of its log are shown inline.
+- **`grove doctor` reports state files that were set aside** as unparsable.
+
+### Changed
+
+- **State files are written atomically** (`config.toml`, `php-builds.json`,
+  service and snapshot indexes): temp file, fsync, rename. A crash mid-write
+  used to leave a truncated file.
+- **A state file that does not parse is moved aside** as `<name>.corrupt-<ts>`
+  and logged, and Grove continues with defaults. Before, it was read as empty
+  and then saved over — every Grove-installed PHP build forgotten, every
+  database port back to default, silently.
+- **Shutdown stops php-fpm pools and databases explicitly** and gives in-flight
+  requests a moment, instead of leaving children to runtime teardown and
+  aborting listeners mid-request.
+- **`grove stop` only signals a pid that is alive and is a Grove process.** A
+  stale pidfile from before a reboot is removed, not sent SIGTERM.
+- The IPC accept loop backs off on a transient error instead of exiting the
+  daemon, and a too-long `GROVE_HOME` now fails with the path and the limit
+  rather than a bare "path must be shorter than SUN_LEN".
+
 - **`grove status` and `grove doctor` report what actually bound.** Each of
   dns/http/https/mail is recorded at bind time and shown with the OS error
   and, where `lsof`/`ss` will say, the process holding the port:

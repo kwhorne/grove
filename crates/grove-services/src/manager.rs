@@ -723,6 +723,11 @@ impl ServiceManager {
             }
         };
         tracing::info!(service = key, port, "started service");
+        // Recorded so a daemon that comes back after SIGKILL can find and stop
+        // this process instead of spawning a second one on the same port.
+        if let Some(spec) = catalog::spec(key) {
+            let _ = securefs::write_public(&self.pid_file(spec), child.id().to_string());
+        }
         self.procs.lock().unwrap().insert(key.to_string(), child);
         self.set_autostart(key, true);
         Ok(())
@@ -736,8 +741,71 @@ impl ServiceManager {
             let _ = child.wait();
             tracing::info!(service = key, "stopped service");
         }
+        if let Some(spec) = catalog::spec(key) {
+            let _ = std::fs::remove_file(self.pid_file(spec));
+        }
         self.set_autostart(key, false);
         Ok(())
+    }
+
+    /// Stop every running process without touching the auto-start flags, so
+    /// they come back on the next boot. For daemon shutdown: before this the
+    /// databases were left to the runtime's `Drop`s, which a SIGKILL skips.
+    pub fn stop_all_processes(&self) {
+        let mut procs = self.procs.lock().unwrap();
+        for (key, child) in procs.iter_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+            if let Some(spec) = catalog::spec(key) {
+                let _ = std::fs::remove_file(self.pid_file(spec));
+            }
+            tracing::info!(service = %key, "stopped service for shutdown");
+        }
+        procs.clear();
+    }
+
+    /// Terminate database processes left over from a previous daemon that did
+    /// not shut down. Each start records `services/<key>/service.pid`; a pid
+    /// there that is alive and runs the expected binary is stopped. Run before
+    /// [`autostart_installed`], which would otherwise spawn a second postgres
+    /// that dies on the port or the data directory lock — and `is_running`
+    /// would then say "not running" while the orphan kept serving.
+    pub fn reap_orphans(&self) -> usize {
+        let mut reaped = 0;
+        for spec in catalog::CATALOG {
+            let file = self.pid_file(spec);
+            if let Some(pid) = grove_core::process::read_pid_file(&file) {
+                let expected = process_name_for(spec.kind);
+                if pid != std::process::id()
+                    && grove_core::process::is_alive_and_named(pid, expected)
+                {
+                    tracing::warn!(
+                        service = spec.key,
+                        pid,
+                        "terminating orphaned service from a previous run"
+                    );
+                    if grove_core::process::terminate(pid, std::time::Duration::from_secs(5)) {
+                        reaped += 1;
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(&file);
+        }
+        reaped
+    }
+
+    fn pid_file(&self, spec: &ServiceSpec) -> PathBuf {
+        self.service_root(spec).join("service.pid")
+    }
+}
+
+/// The executable name each service kind runs as — what a pid read from disk
+/// has to match before it is signalled.
+fn process_name_for(kind: ServiceKind) -> &'static str {
+    match kind {
+        ServiceKind::Postgres => "postgres",
+        ServiceKind::Mysql => "mysqld",
+        ServiceKind::Redis => "redis-server",
     }
 }
 
@@ -763,16 +831,17 @@ fn state_file(paths: &GrovePaths) -> PathBuf {
 }
 
 fn load_state(paths: &GrovePaths) -> ServicesState {
-    match std::fs::read_to_string(state_file(paths)) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => ServicesState::default(),
-    }
+    // A corrupt file is set aside and logged, not read as "nothing installed,
+    // nothing auto-starts, every port back to default".
+    securefs::read_json_or_quarantine(&state_file(paths))
 }
 
 fn save_state(paths: &GrovePaths, state: &ServicesState) {
     let _ = paths.ensure();
     if let Ok(body) = serde_json::to_string_pretty(state) {
-        let _ = securefs::write_public(&state_file(paths), body);
+        if let Err(e) = securefs::write_public_atomic(&state_file(paths), body) {
+            tracing::error!(error = %e, "could not save services state");
+        }
     }
 }
 

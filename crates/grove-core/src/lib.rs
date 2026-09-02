@@ -12,6 +12,7 @@ pub mod error;
 pub mod httpgen;
 pub mod paths;
 pub mod privdrop;
+pub mod process;
 pub mod project;
 pub mod redact;
 pub mod registry;

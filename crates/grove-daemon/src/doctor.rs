@@ -95,6 +95,33 @@ pub fn local_checks(paths: &GrovePaths, config: Option<&Config>) -> Vec<Diagnost
         out.push(resolver_check(&config.general.tld, config.general.dns_port));
     }
 
+    // A state file that did not parse was moved aside rather than overwritten;
+    // the log said so once. This keeps saying so until someone looks.
+    let mut quarantined = Vec::new();
+    for dir in [
+        paths.runtimes_dir(),
+        paths.services_dir(),
+        paths.base().join("snapshots"),
+    ] {
+        quarantined.extend(grove_core::securefs::quarantined_files(&dir));
+    }
+    if !quarantined.is_empty() {
+        let names: Vec<String> = quarantined
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        out.push(entry(
+            "state-files",
+            DiagnosticStatus::Warn,
+            format!(
+                "{} state file(s) could not be parsed and were set aside: {} — inspect, \
+                 restore what you need, then delete them",
+                names.len(),
+                names.join(", ")
+            ),
+        ));
+    }
+
     out
 }
 

@@ -240,6 +240,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             version: None,
         },
         Command::Proxy { name, url } => Request::Proxy { name, url },
+        Command::Reload => Request::Reload,
         Command::Doctor => Request::Doctor,
         Command::Use { version } => Request::SetDefaultPhp { version },
         Command::Mail { action } => match action {
@@ -1599,11 +1600,17 @@ mod lifecycle {
             return Ok(());
         }
         paths.ensure()?;
+        // The daemon refuses to start on a config it cannot parse — correctly —
+        // but from here that looked like "did not come up in time", and under
+        // launchd's KeepAlive it was a silent restart loop. Parse it first and
+        // show the error with its line number.
+        Config::load(paths).context("config.toml does not parse; fix it before starting")?;
         let exe = std::env::current_exe().context("resolving grove binary path")?;
+        let log_path = paths.base().join("daemon.log");
         let out = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(paths.base().join("daemon.log"))?;
+            .open(&log_path)?;
         let err = out.try_clone()?;
 
         let mut cmd = std::process::Command::new(exe);
@@ -1625,9 +1632,22 @@ mod lifecycle {
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+        // Bring the reason here instead of pointing at a file.
+        let tail = std::fs::read_to_string(&log_path)
+            .map(|s| {
+                s.lines()
+                    .rev()
+                    .take(8)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            })
+            .unwrap_or_default();
         anyhow::bail!(
-            "daemon did not come up in time; see {}",
-            paths.base().join("daemon.log").display()
+            "daemon did not come up in time. Last lines of {}:\n  {tail}",
+            log_path.display()
         );
     }
 
@@ -1685,17 +1705,25 @@ mod lifecycle {
         Ok(())
     }
 
-    /// Send SIGTERM to the PID in the pidfile. Returns false if no pidfile.
+    /// Send SIGTERM to the daemon named by the pidfile — but only if that pid
+    /// is alive *and* is a grove process. Returns false if there was nothing to
+    /// signal. A stale pidfile from a machine that has since rebooted names
+    /// whatever the kernel handed that number to next; signalling it blindly
+    /// was how `grove stop` could report "daemon stopped" after terminating
+    /// someone's unrelated process.
     fn signal_pidfile(paths: &GrovePaths) -> bool {
-        let Ok(raw) = std::fs::read_to_string(paths.pid_file()) else {
+        use grove_core::process;
+        let file = paths.pid_file();
+        let Some(pid) = process::read_pid_file(&file) else {
             return false;
         };
-        let Ok(pid) = raw.trim().parse::<i32>() else {
+        if !process::is_alive_and_named(pid, "grove") {
+            let _ = std::fs::remove_file(&file);
             return false;
-        };
+        }
         #[cfg(unix)]
         unsafe {
-            libc_kill(pid, 15); // SIGTERM
+            libc_kill(pid as i32, 15); // SIGTERM
         }
         true
     }
@@ -2175,7 +2203,9 @@ mod lifecycle {
         let raw = std::fs::read_to_string(valet_cfg)?;
         let parsed: serde_json::Value = serde_json::from_str(&raw)?;
 
-        let mut config = Config::load(paths).unwrap_or_default();
+        // A config that does not parse must not be replaced with defaults here:
+        // that would import Valet's sites into a Grove that just lost its own.
+        let mut config = Config::load(paths).context("loading config.toml")?;
         let mut parked = 0;
         let mut linked = 0;
 

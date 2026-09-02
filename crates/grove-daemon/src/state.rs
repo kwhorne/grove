@@ -2,6 +2,7 @@
 //! registry. All config mutations funnel through here so they are persisted and
 //! the registry rebuilt atomically.
 
+use anyhow::Context;
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, Notify};
@@ -101,6 +102,9 @@ pub struct DaemonState {
     pub docker_sites: Mutex<Vec<DockerContainer>>,
     /// Notified when a graceful shutdown is requested (via IPC or signal).
     pub shutdown: Arc<Notify>,
+    /// Hash of `config.toml` as last loaded or written by this daemon, so a
+    /// hand edit on disk is noticed before the in-memory copy is saved over it.
+    config_digest: std::sync::Mutex<Option<u64>>,
 }
 
 impl DaemonState {
@@ -112,6 +116,7 @@ impl DaemonState {
         services: Arc<ServiceManager>,
         fpm: Arc<FpmManager>,
     ) -> Self {
+        let config_digest = std::sync::Mutex::new(config_file_digest(&paths));
         Self {
             paths,
             listeners: Arc::new(Listeners::default()),
@@ -125,6 +130,7 @@ impl DaemonState {
             dev: Arc::new(DevManager::new()),
             docker_sites: Mutex::new(Vec::new()),
             shutdown: Arc::new(Notify::new()),
+            config_digest,
         }
     }
 
@@ -145,21 +151,54 @@ impl DaemonState {
     }
 
     /// Persist the current config and rebuild + swap the live registry.
+    ///
+    /// Refuses if `config.toml` on disk is not the file this daemon last read
+    /// or wrote. Config was read once at boot and every mutating command saved
+    /// the in-memory copy back, so an edit made by hand — a new `[[sites]]`, a
+    /// changed `tld` — was silently overwritten by the next `grove link`.
+    /// Now that edit survives, and the caller is told to `grove reload` first.
     pub async fn persist_and_reload(&self) -> anyhow::Result<usize> {
         let config = self.config.lock().await;
+        let on_disk = config_file_digest(&self.paths);
+        let known = *self.config_digest.lock().unwrap();
+        if on_disk.is_some() && on_disk != known {
+            anyhow::bail!(
+                "{} was changed on disk since the daemon last read it. Run `grove reload` \
+                 to pick up the edit, then retry — nothing was overwritten.",
+                self.paths.config_file().display()
+            );
+        }
         config.save(&self.paths)?;
+        *self.config_digest.lock().unwrap() = config_file_digest(&self.paths);
         let registry = self.build_registry(&config).await;
         let count = registry.len();
         self.shared.replace(registry).await;
         Ok(count)
     }
 
-    /// Rebuild the registry from current config without writing to disk.
+    /// Re-read `config.toml` from disk, then rebuild + swap the live registry.
+    ///
+    /// This is what "reload" means to a user who just edited the file. It used
+    /// to rebuild from the in-memory copy only, so a hand edit was invisible
+    /// until a restart. A file that no longer parses is reported and the
+    /// running config kept.
     pub async fn reload(&self) -> anyhow::Result<usize> {
-        let config = self.config.lock().await;
+        let fresh = Config::load(&self.paths).context("re-reading config.toml")?;
+        let mut config = self.config.lock().await;
+        *config = fresh;
+        *self.config_digest.lock().unwrap() = config_file_digest(&self.paths);
         let registry = self.build_registry(&config).await;
         let count = registry.len();
         self.shared.replace(registry).await;
         Ok(count)
     }
+}
+
+/// A cheap fingerprint of the config file's bytes; `None` when unreadable.
+fn config_file_digest(paths: &GrovePaths) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let bytes = std::fs::read(paths.config_file()).ok()?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    Some(h.finish())
 }
