@@ -179,26 +179,53 @@ pub fn install(
 }
 
 /// Uninstall (and unload) the service.
-pub fn uninstall() -> Result<()> {
+/// Remove the OS service. Returns whether a unit was there to remove.
+///
+/// Every step here used to be `let _ =` and the function always returned
+/// `Ok(())`, so `grove uninstall` without sudo printed "removed" having
+/// removed nothing — `launchctl bootout system` and deleting from
+/// `/Library/LaunchDaemons` both need root. Now it refuses without elevation
+/// where that is required, tolerates only the failures that mean "already
+/// gone", and propagates the rest.
+pub fn uninstall() -> Result<bool> {
     #[cfg(target_os = "macos")]
     {
-        if let Some(path) = unit_path() {
-            let _ = run("launchctl", &["bootout", "system", &path.to_string_lossy()]);
-            let _ = std::fs::remove_file(&path);
+        if !crate::is_elevated() {
+            return Err(OsError::Unsupported(
+                "removing the system service needs root — run `sudo grove uninstall`".into(),
+            ));
         }
-        Ok(())
+        let Some(path) = unit_path() else {
+            return Ok(false);
+        };
+        if !path.exists() {
+            return Ok(false);
+        }
+        // `bootout` fails when the job is not loaded, which is fine: the unit
+        // file is what we are here to remove. Anything else is reported.
+        if let Err(e) = run("launchctl", &["bootout", "system", &path.to_string_lossy()]) {
+            tracing::warn!(error = %e, "launchctl bootout (service may not have been loaded)");
+        }
+        std::fs::remove_file(&path)?;
+        Ok(true)
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = run(
-            "systemctl",
-            &["--user", "disable", "--now", "grove.service"],
-        );
-        if let Some(path) = unit_path() {
-            let _ = std::fs::remove_file(&path);
+        let Some(path) = unit_path() else {
+            return Ok(false);
+        };
+        let existed = path.exists();
+        if existed {
+            if let Err(e) = run(
+                "systemctl",
+                &["--user", "disable", "--now", "grove.service"],
+            ) {
+                tracing::warn!(error = %e, "systemctl disable (service may not have been enabled)");
+            }
+            std::fs::remove_file(&path)?;
+            let _ = run("systemctl", &["--user", "daemon-reload"]);
         }
-        let _ = run("systemctl", &["--user", "daemon-reload"]);
-        Ok(())
+        Ok(existed)
     }
     #[cfg(target_os = "windows")]
     {
