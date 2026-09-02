@@ -161,6 +161,18 @@ pub fn install(
             ));
         }
         let path = unit_path().expect("linux unit path is static");
+        // Earlier versions installed a `--user` unit. It never worked (it
+        // could not bind the ports) but it may still be enabled, and a root
+        // process cannot cleanly drive another user's systemd instance — so
+        // say exactly what to run rather than half-doing it.
+        if let Some(old) = legacy_user_unit(run_user) {
+            tracing::warn!(
+                unit = %old.display(),
+                "an old per-user unit from a previous Grove is still present; disable it with: \
+                 systemctl --user disable --now grove.service && rm {}",
+                old.display()
+            );
+        }
         let unit = linux_unit(exe, grove_home, run_user, run_uid, tld, dns_port);
         std::fs::write(&path, unit)?;
         run("systemctl", &["daemon-reload"])?;
@@ -174,6 +186,25 @@ pub fn install(
             "Windows service install not yet implemented".into(),
         ))
     }
+}
+
+/// The per-user unit older versions wrote, if it is still there. Looks in the
+/// run user's home (the one `sudo` was invoked from), not root's.
+#[cfg(target_os = "linux")]
+fn legacy_user_unit(run_user: Option<&str>) -> Option<PathBuf> {
+    let home = match run_user {
+        Some(user) => {
+            let out = Command::new("getent")
+                .args(["passwd", user])
+                .output()
+                .ok()?;
+            let line = String::from_utf8_lossy(&out.stdout);
+            PathBuf::from(line.trim().split(':').nth(5)?)
+        }
+        None => PathBuf::from(std::env::var_os("HOME")?),
+    };
+    let unit = home.join(".config/systemd/user/grove.service");
+    unit.exists().then_some(unit)
 }
 
 /// The systemd unit for Grove's daemon.
