@@ -7,11 +7,14 @@
 pub mod commands;
 pub mod dev;
 pub mod docker;
+pub mod doctor;
 pub mod ipc;
 pub mod license;
 pub mod logs;
 pub mod state;
 pub mod tunnels;
+
+use crate::state::ListenerHealth;
 
 pub use state::DaemonState;
 
@@ -48,7 +51,7 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     // Build the site registry and shared proxy state.
     let registry = grove_core::SiteRegistry::build(&config);
     tracing::info!(sites = registry.len(), tld = %general.tld, "registry built");
-    let shared = SharedState::new(registry);
+    let shared = SharedState::new(registry).with_https_port(general.https_port);
 
     // Local CA + SNI resolver for HTTPS.
     let ca = Arc::new(CertificateAuthority::load_or_create(&paths)?);
@@ -106,55 +109,97 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         });
     }
 
-    // Spawn network listeners. A failure to bind a privileged port is logged but
-    // does not abort the others, so e.g. DNS can still work without root.
+    // Spawn network listeners. A failure to bind a privileged port does not
+    // abort the others, so e.g. DNS can still work without root — but it is
+    // *recorded*, not just logged. IPC comes up regardless of these binds, and
+    // before this a daemon that had lost port 80 to Apache still answered
+    // `grove status` with every light green.
     let mut tasks = Vec::new();
 
     {
         let tld = general.tld.clone();
         let dns_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, general.dns_port));
+        let listeners = daemon.listeners.clone();
         tasks.push(tokio::spawn(async move {
             match grove_dns::serve(&tld, dns_addr).await {
                 Ok(mut server) => {
+                    listeners.set_dns(ListenerHealth::Up);
                     if let Err(e) = server.block_until_done().await {
                         tracing::error!(error = %e, "DNS server stopped");
+                        listeners.set_dns(ListenerHealth::Failed(e.to_string()));
                     }
                 }
-                Err(e) => tracing::error!(error = %e, %dns_addr, "failed to start DNS"),
+                Err(e) => {
+                    tracing::error!(error = %e, %dns_addr, "failed to start DNS");
+                    listeners.set_dns(ListenerHealth::Failed(e.to_string()));
+                }
             }
         }));
     }
 
     {
         let http_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, general.http_port));
-        let shared = shared.clone();
-        let fpm = fpm.clone();
-        tasks.push(tokio::spawn(async move {
-            if let Err(e) = grove_proxy::serve_http(http_addr, shared, fpm).await {
-                tracing::error!(error = %e, "HTTP server stopped");
+        match grove_proxy::bind(http_addr).await {
+            Ok(listener) => {
+                daemon.listeners.set_http(ListenerHealth::Up);
+                let shared = shared.clone();
+                let fpm = fpm.clone();
+                tasks.push(tokio::spawn(async move {
+                    if let Err(e) = grove_proxy::serve_http_on(listener, shared, fpm).await {
+                        tracing::error!(error = %e, "HTTP server stopped");
+                    }
+                }));
             }
-        }));
+            Err(e) => {
+                tracing::error!(error = %e, "failed to bind HTTP");
+                daemon
+                    .listeners
+                    .set_http(ListenerHealth::Failed(bind_reason(&e)));
+            }
+        }
     }
 
     {
         let https_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, general.https_port));
-        let shared = shared.clone();
-        let fpm = fpm.clone();
-        tasks.push(tokio::spawn(async move {
-            if let Err(e) = grove_proxy::serve_https(https_addr, shared, fpm, sni).await {
-                tracing::error!(error = %e, "HTTPS server stopped");
+        match grove_proxy::bind(https_addr).await {
+            Ok(listener) => {
+                daemon.listeners.set_https(ListenerHealth::Up);
+                let shared = shared.clone();
+                let fpm = fpm.clone();
+                tasks.push(tokio::spawn(async move {
+                    if let Err(e) = grove_proxy::serve_https_on(listener, shared, fpm, sni).await {
+                        tracing::error!(error = %e, "HTTPS server stopped");
+                    }
+                }));
             }
-        }));
+            Err(e) => {
+                tracing::error!(error = %e, "failed to bind HTTPS");
+                daemon
+                    .listeners
+                    .set_https(ListenerHealth::Failed(bind_reason(&e)));
+            }
+        }
     }
 
     if general_services.mail_enabled {
         let mail_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, general_services.mail_port));
-        let mail = mail.clone();
-        tasks.push(tokio::spawn(async move {
-            if let Err(e) = grove_services::serve_smtp(mail_addr, mail).await {
-                tracing::error!(error = %e, %mail_addr, "mail-catcher stopped");
+        match grove_services::bind_smtp(mail_addr).await {
+            Ok(listener) => {
+                daemon.listeners.set_mail(ListenerHealth::Up);
+                let mail = mail.clone();
+                tasks.push(tokio::spawn(async move {
+                    if let Err(e) = grove_services::serve_smtp_on(listener, mail).await {
+                        tracing::error!(error = %e, %mail_addr, "mail-catcher stopped");
+                    }
+                }));
             }
-        }));
+            Err(e) => {
+                tracing::error!(error = %e, %mail_addr, "failed to bind mail-catcher");
+                daemon
+                    .listeners
+                    .set_mail(ListenerHealth::Failed(e.to_string()));
+            }
+        }
     }
 
     // IPC listener (foreground task). Returns when shutdown is requested.
@@ -169,6 +214,14 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     let _ = std::fs::remove_file(paths.pid_file());
     tracing::info!("groved stopped");
     Ok(())
+}
+
+/// The OS's reason for a failed bind, without the address the caller already
+/// knows: "Address already in use (os error 48)".
+fn bind_reason(e: &grove_proxy::server::ServerError) -> String {
+    match e {
+        grove_proxy::server::ServerError::Bind { source, .. } => source.to_string(),
+    }
 }
 
 fn write_pidfile(paths: &GrovePaths) -> anyhow::Result<()> {

@@ -31,6 +31,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         Command::Ca { action } => local::ca(&paths, action, args.json),
+        Command::Doctor => local::doctor(&paths, args.json).await,
         Command::Php { action } => local::php(&paths, action, args.json),
         Command::Path { action } => {
             let action = action.unwrap_or(PathAction::Show);
@@ -2143,7 +2144,14 @@ mod lifecycle {
             for (ok, msg) in &steps {
                 println!("  {} {msg}", if *ok { "✓" } else { "!" });
             }
-            println!("\nNext: `grove start`, then `grove park ~/Code` and open a site.");
+            // `grove start` cannot bind 80/443/53 without root, and a failed
+            // bind used to be silent — so pointing people there after a sudo
+            // init produced a "started" daemon that served nothing. The
+            // service is the path that works, and init already parked ~/Code.
+            println!(
+                "\nNext: `sudo grove install` to run Grove as a service on 80/443/53, \
+                 then open https://<project>.test"
+            );
         }
         Ok(())
     }
@@ -2240,6 +2248,41 @@ mod local {
     use grove_tls::CertificateAuthority;
     use std::path::{Path, PathBuf};
 
+    /// `grove doctor`, with or without a daemon.
+    ///
+    /// The checks that matter most are the ones that fail when the daemon is
+    /// down — a config that no longer parses, a resolver a VPN client rewrote —
+    /// and doctor used to be an IPC call, so a down daemon answered "not
+    /// running" instead of diagnosing anything. Now: daemon up, ask it (its
+    /// answer includes everything below plus what only it knows — listener
+    /// binds, PHP extensions); daemon down, run the local checks here and say
+    /// so. Exits non-zero on any failure either way, so it can gate a script.
+    pub async fn doctor(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
+        use grove_ipc::protocol::{DiagnosticStatus, Response};
+
+        let socket = paths.ipc_socket();
+        let response = if client::is_running(&socket).await {
+            client::send(&socket, &Request::Doctor)
+                .await
+                .context("talking to daemon")?
+        } else {
+            let mut entries = grove_daemon::doctor::local_checks(paths, None);
+            entries.push(grove_daemon::doctor::daemon_down_entry(&socket));
+            Response::ok(ResponseData::Doctor(entries))
+        };
+        output::print_response(&response, json);
+
+        let failed = matches!(
+            &response.data,
+            Some(ResponseData::Doctor(entries))
+                if entries.iter().any(|e| e.status == DiagnosticStatus::Fail)
+        );
+        if !response.ok || failed {
+            std::process::exit(1);
+        }
+        Ok(())
+    }
+
     pub fn ca(paths: &GrovePaths, action: CaAction, json: bool) -> anyhow::Result<()> {
         let platform = grove_os::current();
         match action {
@@ -2262,6 +2305,19 @@ mod local {
                 );
             }
             CaAction::Rotate => {
+                // Every step below is destructive and the last one needs root.
+                // Check first. Without this an unprivileged run untrusts nothing
+                // (warn only), deletes the old CA from disk, mints a new one,
+                // then fails to trust it: old CA still in the keychain, an
+                // untrusted one on disk, HTTPS broken for every site. This is
+                // the command the 1.5.0 upgrade notes tell people to run, so it
+                // has to refuse before it touches anything.
+                if !grove_os::is_elevated() {
+                    anyhow::bail!(
+                        "rotating the root CA replaces it in the system trust store, which \
+                         needs elevation — nothing was changed. Run `sudo grove ca rotate`."
+                    );
+                }
                 // Untrust the outgoing certificate before removing it: once the
                 // file is gone the platform has nothing to match on, and the old
                 // CA would stay trusted forever — which is the opposite of the
@@ -2283,7 +2339,8 @@ mod local {
                     .unwrap_or_default();
                 output::print_message(
                     &format!(
-                        "Grove root CA replaced and trusted ({} store{scope}).                          Restart Grove so sites pick up new certificates.",
+                        "Grove root CA replaced and trusted ({} store{scope}). \
+                         Restart Grove so sites pick up new certificates.",
                         platform.name()
                     ),
                     json,

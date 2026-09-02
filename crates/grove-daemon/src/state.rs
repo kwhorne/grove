@@ -15,8 +15,73 @@ use crate::dev::DevManager;
 use crate::docker::DockerContainer;
 use crate::tunnels::TunnelManager;
 
+/// What became of one network listener when the daemon started.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ListenerHealth {
+    /// Not attempted yet.
+    #[default]
+    Pending,
+    /// Bound and accepting.
+    Up,
+    /// The bind failed; this is the OS error.
+    Failed(String),
+}
+
+/// Bind results for the three listeners, kept so `grove status` and
+/// `grove doctor` report what actually happened rather than assuming.
+///
+/// Before this, a bind failure was one line in `daemon.log`. IPC came up
+/// regardless, `grove start` said "started", `status` printed `● dns` from a
+/// hardcoded `true`, and the GUI showed a green pill — over a daemon that
+/// served nothing because Apache held port 80.
+#[derive(Debug, Default)]
+pub struct Listeners {
+    inner: std::sync::Mutex<[ListenerHealth; 4]>,
+}
+
+impl Listeners {
+    const DNS: usize = 0;
+    const HTTP: usize = 1;
+    const HTTPS: usize = 2;
+    const MAIL: usize = 3;
+
+    fn set(&self, which: usize, health: ListenerHealth) {
+        self.inner.lock().unwrap()[which] = health;
+    }
+    fn get(&self, which: usize) -> ListenerHealth {
+        self.inner.lock().unwrap()[which].clone()
+    }
+
+    pub fn set_dns(&self, h: ListenerHealth) {
+        self.set(Self::DNS, h)
+    }
+    pub fn set_http(&self, h: ListenerHealth) {
+        self.set(Self::HTTP, h)
+    }
+    pub fn set_https(&self, h: ListenerHealth) {
+        self.set(Self::HTTPS, h)
+    }
+    pub fn dns(&self) -> ListenerHealth {
+        self.get(Self::DNS)
+    }
+    pub fn http(&self) -> ListenerHealth {
+        self.get(Self::HTTP)
+    }
+    pub fn https(&self) -> ListenerHealth {
+        self.get(Self::HTTPS)
+    }
+    pub fn set_mail(&self, h: ListenerHealth) {
+        self.set(Self::MAIL, h)
+    }
+    pub fn mail(&self) -> ListenerHealth {
+        self.get(Self::MAIL)
+    }
+}
+
 pub struct DaemonState {
     pub paths: GrovePaths,
+    /// Bind results for the DNS/HTTP/HTTPS listeners.
+    pub listeners: Arc<Listeners>,
     pub config: Mutex<Config>,
     pub shared: SharedState,
     /// Captured outgoing mail (mail-catcher).
@@ -49,6 +114,7 @@ impl DaemonState {
     ) -> Self {
         Self {
             paths,
+            listeners: Arc::new(Listeners::default()),
             config: Mutex::new(config),
             shared,
             mail,

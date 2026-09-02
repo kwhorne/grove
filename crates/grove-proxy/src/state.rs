@@ -23,6 +23,10 @@ pub struct SharedState {
     /// Captured inbound webhooks (requests to `/__grove/hooks/...`), reusing the
     /// same store so they get inspect + replay + copy-as-test for free.
     pub hooks: Arc<RequestLog>,
+    /// The HTTPS listener's port, for the `Location` of an http→https redirect.
+    /// 443 in a normal install; a high port in the sudo-less smoke-test setup,
+    /// where a redirect to `https://site.test/` would point at nothing.
+    pub https_port: u16,
 }
 
 impl SharedState {
@@ -33,7 +37,14 @@ impl SharedState {
             known_hosts,
             log: Arc::new(RequestLog::new(500)),
             hooks: Arc::new(RequestLog::new(200)),
+            https_port: 443,
         }
+    }
+
+    /// Where secured sites are redirected to when reached over plain HTTP.
+    pub fn with_https_port(mut self, port: u16) -> Self {
+        self.https_port = port;
+        self
     }
 
     /// The shared request log, so the daemon can answer timeline queries.

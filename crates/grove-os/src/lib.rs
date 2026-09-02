@@ -61,6 +61,19 @@ pub fn current() -> Platform {
 }
 
 /// Whether the current process is running with elevated privileges.
+/// Where the OS keeps Grove's per-TLD resolver entry, if the platform has one.
+///
+/// macOS reads every file in `/etc/resolver/` as a scoped resolver; Grove
+/// writes `/etc/resolver/<tld>`. Other platforms have no single file to point
+/// at, so `grove doctor` falls back to a live lookup there.
+pub fn resolver_file(tld: &str) -> Option<std::path::PathBuf> {
+    if cfg!(target_os = "macos") {
+        Some(std::path::PathBuf::from(format!("/etc/resolver/{tld}")))
+    } else {
+        None
+    }
+}
+
 pub fn is_elevated() -> bool {
     #[cfg(unix)]
     {

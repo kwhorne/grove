@@ -5,6 +5,68 @@ All notable changes to Elyra Grove are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Follow-ups from a robustness review of 1.5.0. One real bug, one upgrade
+hazard in 1.5.0's own instructions, and the daemon learning to say when it is
+not actually serving.
+
+### Upgrade notes
+
+- **`grove doctor` now exits non-zero when anything fails**, and reports a
+  missing resolver or a port held by another server as a failure. A script
+  that gated on doctor's exit code will start failing where it should have.
+- **Secured sites now redirect `http://` to `https://`.** Anything that relied
+  on reaching a `grove secure`d site over plaintext — a curl in a script, a
+  webhook target — gets a `301`/`308` and should use the HTTPS URL.
+
+### Added
+
+- **`grove status` and `grove doctor` report what actually bound.** Each of
+  dns/http/https/mail is recorded at bind time and shown with the OS error
+  and, where `lsof`/`ss` will say, the process holding the port:
+  `○ http  Address already in use — held by httpd (pid 412)`. Previously DNS
+  was hardcoded as running and a failed bind was one line in `daemon.log`.
+- **`grove doctor` works without the daemon.** The config, CA and resolver
+  checks run locally when the socket does not answer, followed by an explicit
+  `daemon` failure, instead of the old "not running" and nothing else.
+- **A `resolver` check** that asks the OS to resolve a name under the TLD and
+  expects loopback back — the question a user actually has, and the one a VPN
+  client rewriting DNS order breaks without touching `/etc/resolver`.
+- **HTTP/2** on both listeners. ALPN offered only `http/1.1`, so browsers fell
+  back to six connections per origin and loaded Vite modules in batches.
+- **`http://` → `https://` redirect for secured sites.** `site.secure` was set
+  by `grove secure` and never read on the request path; a typed hostname
+  served plaintext, PHP saw `HTTPS=""`, and Laravel built `http://` asset URLs
+  — mixed content against the HTTPS Vite server. `301` for GET/HEAD, `308`
+  otherwise, with the configured HTTPS port in the `Location`.
+
+### Fixed
+
+- **A php-fpm master that died stayed dead.** The respawn worked, then the
+  dropped old pool removed the socket file the new master had just bound — the
+  same path. With a live child in the map nothing respawned again, and every
+  request for that PHP version answered `502` until the daemon restarted. Two
+  reviews had called the respawn path correct; both checked that a dead child
+  is detected, not what happened to the one being replaced.
+- **`grove ca rotate` without `sudo` broke HTTPS.** It untrusted nothing
+  (warn only), deleted the old CA, minted a new one, then failed to trust it:
+  old CA still in the keychain, untrusted one on disk. It now refuses before
+  touching anything. This is the command 1.5.0's upgrade notes tell everyone
+  to run, so anyone who forgot `sudo` hit it.
+- **Five user-visible messages** whose line continuations had been flattened
+  into runs of spaces (`store).                          Restart Grove`).
+- **`docs/INSTALL.md` showed `grove init` and `grove doctor` output that was
+  never what they printed** — including `✓ resolver` and `✓ dns` doctor lines
+  that did not exist. Both examples now come from real runs, and init's
+  closing hint says `sudo grove install` rather than `grove start`, which
+  cannot bind the privileged ports.
+
+### Security
+
+- Bumped `h2` (RUSTSEC-2026-0258, unbounded empty DATA frames) before enabling
+  HTTP/2, and `plist`/`quick-xml` (RUSTSEC-2026-0194/-0195, GUI only).
+
 ## [1.5.0] — 2026-08-25
 
 This release closes every finding from a security review of the daemon, the
@@ -869,6 +931,7 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
+[Unreleased]: https://github.com/kwhorne/grove/compare/v1.5.0...HEAD
 [1.5.0]: https://github.com/kwhorne/grove/releases/tag/v1.5.0
 [1.4.2]: https://github.com/kwhorne/grove/releases/tag/v1.4.2
 [1.4.1]: https://github.com/kwhorne/grove/releases/tag/v1.4.1

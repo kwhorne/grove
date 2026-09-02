@@ -4,9 +4,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper_util::rt::{TokioIo, TokioTimer};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use hyper_util::server::conn::auto;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
@@ -44,16 +44,29 @@ async fn accept(listener: &TcpListener) -> (TcpStream, SocketAddr) {
     }
 }
 
-/// The HTTP/1 server settings shared by both listeners.
-fn http1_builder() -> http1::Builder {
-    let mut builder = http1::Builder::new();
-    // The timer is not optional. hyper does not fall back to a default one, and
-    // it does not fail when the timeout is configured — it panics on the first
-    // connection that reaches the timeout code, which is every connection:
-    // "timeout `header_read_timeout` set, but no timer set". Setting one without
-    // the other takes down every site on the machine.
-    builder.timer(TokioTimer::new());
-    builder.header_read_timeout(HEADER_READ_TIMEOUT);
+/// One connection builder for both listeners: HTTP/1.1 and HTTP/2, chosen per
+/// connection — by ALPN on the TLS listener, by preface sniffing on the plain
+/// one.
+///
+/// HTTP/2 was off for a long time: ALPN offered only `http/1.1`, so every
+/// browser fell back to six connections per origin, and a Laravel page with
+/// forty Vite module requests or a WordPress admin screen loaded them in
+/// batches.
+///
+/// The timers are not optional, for either protocol. hyper does not fall back
+/// to a default one, and it does not fail when a timeout is configured — it
+/// panics on the first connection that reaches the timeout code, which is every
+/// connection: "timeout `header_read_timeout` set, but no timer set". Because
+/// panics unwind, that took down every site while the daemon stayed up and
+/// reported itself healthy. The tests below put a request through each protocol
+/// on a connection built exactly this way.
+fn connection_builder() -> auto::Builder<TokioExecutor> {
+    let mut builder = auto::Builder::new(TokioExecutor::new());
+    builder
+        .http1()
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ_TIMEOUT);
+    builder.http2().timer(TokioTimer::new());
     builder
 }
 
@@ -77,10 +90,31 @@ pub async fn serve_http(
     state: SharedState,
     fpm: Arc<dyn FpmLocator>,
 ) -> Result<(), ServerError> {
-    let listener = TcpListener::bind(addr)
+    let listener = bind(addr).await?;
+    serve_http_on(listener, state, fpm).await
+}
+
+/// Bind `addr`, so a caller can learn whether the port was actually taken
+/// before the accept loop begins. `serve_http`/`serve_https` bind and serve in
+/// one step; the daemon binds first, records the result for `grove status`, and
+/// then hands the listener to `serve_http_on`/`serve_https_on`. Without that
+/// split a failed bind was one log line, and the daemon went on reporting a
+/// listener it did not have.
+pub async fn bind(addr: SocketAddr) -> Result<TcpListener, ServerError> {
+    TcpListener::bind(addr)
         .await
-        .map_err(|source| ServerError::Bind { addr, source })?;
-    tracing::info!(%addr, "HTTP listener bound");
+        .map_err(|source| ServerError::Bind { addr, source })
+}
+
+/// Serve plain HTTP on an already-bound listener.
+pub async fn serve_http_on(
+    listener: TcpListener,
+    state: SharedState,
+    fpm: Arc<dyn FpmLocator>,
+) -> Result<(), ServerError> {
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(%addr, "HTTP listener bound");
+    }
 
     loop {
         let (stream, peer) = accept(&listener).await;
@@ -94,9 +128,8 @@ pub async fn serve_http(
             let service = service_fn(move |req| {
                 handler::handle(req, state.clone(), fpm.clone(), false, peer)
             });
-            if let Err(e) = http1_builder()
-                .serve_connection(io, service)
-                .with_upgrades()
+            if let Err(e) = connection_builder()
+                .serve_connection_with_upgrades(io, service)
                 .await
             {
                 tracing::debug!(error = %e, "http connection closed");
@@ -112,17 +145,27 @@ pub async fn serve_https(
     fpm: Arc<dyn FpmLocator>,
     sni: Arc<SniResolver>,
 ) -> Result<(), ServerError> {
-    let listener = TcpListener::bind(addr)
-        .await
-        .map_err(|source| ServerError::Bind { addr, source })?;
+    let listener = bind(addr).await?;
+    serve_https_on(listener, state, fpm, sni).await
+}
 
+/// Serve HTTPS on an already-bound listener; see [`bind`].
+pub async fn serve_https_on(
+    listener: TcpListener,
+    state: SharedState,
+    fpm: Arc<dyn FpmLocator>,
+    sni: Arc<SniResolver>,
+) -> Result<(), ServerError> {
     let mut server_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_cert_resolver(sni);
-    server_config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    // h2 first; http/1.1 stays for clients that cannot negotiate it.
+    server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
 
-    tracing::info!(%addr, "HTTPS listener bound");
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(%addr, "HTTPS listener bound");
+    }
 
     loop {
         let (stream, peer) = accept(&listener).await;
@@ -146,9 +189,8 @@ pub async fn serve_https(
             let io = TokioIo::new(tls_stream);
             let service =
                 service_fn(move |req| handler::handle(req, state.clone(), fpm.clone(), true, peer));
-            if let Err(e) = http1_builder()
-                .serve_connection(io, service)
-                .with_upgrades()
+            if let Err(e) = connection_builder()
+                .serve_connection_with_upgrades(io, service)
                 .await
             {
                 tracing::debug!(error = %e, "https connection closed");
@@ -188,8 +230,8 @@ mod tests {
                         b"served",
                     ))))
                 });
-            let _ = http1_builder()
-                .serve_connection(TokioIo::new(server), service)
+            let _ = connection_builder()
+                .serve_connection_with_upgrades(TokioIo::new(server), service)
                 .await;
         });
 
@@ -210,5 +252,53 @@ mod tests {
         assert_eq!(resp.status(), hyper::StatusCode::OK);
         let body = resp.into_body().collect().await.expect("body").to_bytes();
         assert_eq!(&body[..], b"served");
+    }
+
+    /// The same builder, spoken as HTTP/2. The plain listener has no ALPN, so
+    /// this exercises preface sniffing; the TLS listener reaches the same
+    /// builder once ALPN has picked `h2`. A missing http2 timer would surface
+    /// here the way the missing http1 one did above.
+    #[tokio::test]
+    async fn the_same_builder_serves_http2() {
+        let (client, server) = tokio::io::duplex(8192);
+
+        tokio::spawn(async move {
+            let service =
+                hyper::service::service_fn(|req: Request<hyper::body::Incoming>| async move {
+                    assert_eq!(req.version(), hyper::Version::HTTP_2);
+                    // What h2 hands a handler: no Host header, authority on the
+                    // URI. `handler::handle` must read the latter or every site
+                    // 404s the moment a browser negotiates h2.
+                    assert!(req.headers().get(hyper::header::HOST).is_none());
+                    assert_eq!(
+                        req.uri().authority().map(|a| a.as_str()),
+                        Some("probe.test")
+                    );
+                    Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(
+                        b"served over h2",
+                    ))))
+                });
+            let _ = connection_builder()
+                .serve_connection_with_upgrades(TokioIo::new(server), service)
+                .await;
+        });
+
+        let (mut sender, conn) =
+            hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(client))
+                .await
+                .expect("h2 handshake");
+        tokio::spawn(async move {
+            let _ = conn.await;
+        });
+
+        let req = Request::builder()
+            .uri("https://probe.test/")
+            .body(Empty::<Bytes>::new())
+            .expect("request builds");
+        let resp = sender.send_request(req).await.expect("a response arrives");
+        assert_eq!(resp.version(), hyper::Version::HTTP_2);
+        assert_eq!(resp.status(), hyper::StatusCode::OK);
+        let body = resp.into_body().collect().await.expect("body").to_bytes();
+        assert_eq!(&body[..], b"served over h2");
     }
 }

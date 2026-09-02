@@ -580,6 +580,11 @@ pub struct ServiceState {
     pub running: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    /// Why it is not running, when it should be — "address in use, held by
+    /// httpd". Absent when there is nothing to explain. Optional and defaulted
+    /// so a client from before this field reads the response unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

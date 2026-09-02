@@ -83,7 +83,10 @@ impl CertificateAuthority {
             return Err(TlsError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                    "incomplete root CA: {present} exists but {missing} is missing.                      Refusing to mint a new CA over a half-present one — the trust store                      still holds the old certificate. Remove both and re-run                      `sudo grove ca trust` to start over."
+                    "incomplete root CA: {present} exists but {missing} is missing. \
+                     Refusing to mint a new CA over a half-present one — the trust store \
+                     still holds the old certificate. Remove both and re-run \
+                     `sudo grove ca trust` to start over."
                 ),
             )));
         }

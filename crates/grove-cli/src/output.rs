@@ -27,7 +27,10 @@ pub fn print_response(resp: &Response, json: bool) {
             println!("  Sites        {}", s.site_count);
             for svc in &s.services {
                 let dot = if svc.running { "●" } else { "○" };
-                println!("  {dot} {}", svc.name);
+                match &svc.detail {
+                    Some(detail) => println!("  {dot} {:<12} {detail}", svc.name),
+                    None => println!("  {dot} {}", svc.name),
+                }
             }
         }
         Some(ResponseData::Sites(sites)) => {
