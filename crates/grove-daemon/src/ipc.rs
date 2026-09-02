@@ -253,6 +253,19 @@ async fn handle_conn(
     let request: Request = match transport::read_message(&mut reader).await {
         Ok(r) => r,
         Err(transport::TransportError::Closed) => return Ok(()),
+        // A request this daemon cannot parse is almost always a newer CLI
+        // talking to an older daemon. It used to drop the connection, which the
+        // CLI reported as "connection closed before a full message was
+        // received" — true, and useless. Say what is going on.
+        Err(transport::TransportError::Json(e)) => {
+            let response = Response::err(format!(
+                "the daemon (version {}) did not understand this request: {e}. \
+                 If Grove was upgraded, run `grove restart` so the daemon matches the CLI.",
+                env!("CARGO_PKG_VERSION")
+            ));
+            let _ = transport::write_message(&mut write_half, &response).await;
+            return Ok(());
+        }
         Err(e) => return Err(e.into()),
     };
 

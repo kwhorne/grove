@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Stop => lifecycle::stop(&paths, args.json).await,
         Command::Restart => lifecycle::restart(&paths, args.json).await,
         Command::Install => lifecycle::install(&paths, args.json),
-        Command::Uninstall => lifecycle::uninstall(&paths, args.json),
+        Command::Uninstall { purge } => lifecycle::uninstall(&paths, purge, args.json).await,
         Command::Import => lifecycle::import_valet(&paths, args.json),
         Command::Init { php, no_php } => lifecycle::init(&paths, php, no_php, args.json),
         Command::Up {
@@ -156,6 +156,7 @@ async fn main() -> anyhow::Result<()> {
                      (or install the service)."
                 );
             }
+            warn_on_version_mismatch(&socket).await;
             let response = client::send(&socket, &request)
                 .await
                 .context("talking to daemon")?;
@@ -164,6 +165,23 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
             Ok(())
+        }
+    }
+}
+
+/// An upgraded binary talking to the daemon it left behind is the common way
+/// for CLI and daemon to disagree, and the old symptom was a dropped
+/// connection with no cause. One local round-trip per command buys a warning
+/// that names both versions and the fix; a daemon too old to answer `Ping`
+/// with a version is left alone (the dispatch error covers it).
+async fn warn_on_version_mismatch(socket: &std::path::Path) {
+    let cli = env!("CARGO_PKG_VERSION");
+    if let Some(daemon) = client::daemon_version(socket).await {
+        if daemon != cli {
+            eprintln!(
+                "! the Grove daemon is version {daemon} and this CLI is {cli} — run `grove restart` \
+                 so they match"
+            );
         }
     }
 }
@@ -321,7 +339,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Stop
         | Command::Restart
         | Command::Install
-        | Command::Uninstall
+        | Command::Uninstall { .. }
         | Command::Import
         | Command::Init { .. }
         | Command::Up { .. }
@@ -2050,15 +2068,129 @@ mod lifecycle {
         Ok(())
     }
 
-    pub fn uninstall(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
+    /// Remove Grove from the system, reporting each step and refusing to
+    /// pretend.
+    ///
+    /// The old version ran four `let _ =` steps and printed "service, resolver
+    /// and CA trust removed" unconditionally — without sudo that was four
+    /// no-ops and a success message. It also stopped nothing first and said
+    /// nothing about the gigabytes left in GROVE_HOME. Now: elevation is
+    /// checked up front, the daemon is stopped, each step reports, `--purge`
+    /// removes the data too, and the exit code is non-zero if anything failed.
+    pub async fn uninstall(paths: &GrovePaths, purge: bool, json: bool) -> anyhow::Result<()> {
         use grove_os::PlatformIntegration;
-        grove_os::service::uninstall().context("removing service")?;
+
+        if !grove_os::is_elevated() {
+            anyhow::bail!(
+                "uninstalling removes the system service, the resolver and the CA trust, \
+                 which needs elevation — nothing was changed. Run `sudo grove uninstall`."
+            );
+        }
+
+        let mut steps: Vec<(bool, String)> = Vec::new();
+        let socket = paths.ipc_socket();
+        if client::is_running(&socket).await {
+            let _ = client::send(&socket, &Request::Shutdown).await;
+            for _ in 0..30 {
+                if !client::is_running(&socket).await {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            steps.push((
+                !client::is_running(&socket).await,
+                "daemon stopped (php-fpm pools and databases with it)".into(),
+            ));
+        }
+
+        match grove_os::service::uninstall() {
+            Ok(true) => steps.push((true, "service unit removed".into())),
+            Ok(false) => steps.push((true, "no service unit was installed".into())),
+            Err(e) => steps.push((false, format!("service: {e}"))),
+        }
+
         let platform = grove_os::current();
         let config = Config::load(paths).unwrap_or_default();
-        let _ = platform.uninstall_resolver(&config.general.tld);
-        let _ = platform.untrust_ca(&paths.ca_cert());
-        output::print_message("service, resolver and CA trust removed", json);
+        match platform.uninstall_resolver(&config.general.tld) {
+            Ok(()) => steps.push((
+                true,
+                format!("resolver for .{} removed", config.general.tld),
+            )),
+            Err(e) => steps.push((false, format!("resolver: {e}"))),
+        }
+        if paths.ca_cert().exists() {
+            match platform.untrust_ca(&paths.ca_cert()) {
+                Ok(()) => steps.push((true, "root CA removed from the trust store".into())),
+                Err(e) => steps.push((false, format!("CA trust: {e}"))),
+            }
+        } else {
+            steps.push((true, "no root CA to untrust".into()));
+        }
+
+        let shims = local::shims_dir();
+        if purge {
+            match std::fs::remove_dir_all(paths.base()) {
+                Ok(()) => steps.push((true, format!("removed {}", paths.base().display()))),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => steps.push((false, format!("removing {}: {e}", paths.base().display()))),
+            }
+            match std::fs::remove_dir_all(&shims) {
+                Ok(()) => steps.push((true, format!("removed {}", shims.display()))),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => steps.push((false, format!("removing {}: {e}", shims.display()))),
+            }
+        }
+
+        if json {
+            let arr: Vec<_> = steps
+                .iter()
+                .map(|(ok, msg)| serde_json::json!({ "ok": ok, "step": msg }))
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
+        } else {
+            println!("Grove uninstall:");
+            for (ok, msg) in &steps {
+                println!("  {} {msg}", if *ok { "✓" } else { "✗" });
+            }
+            if !purge {
+                println!(
+                    "\nLeft in place (re-run with --purge to remove):\n  {}  config, PHP builds, databases, certificates\n  {}  PATH shims",
+                    paths.base().display(),
+                    shims.display()
+                );
+                println!(
+                    "Your shell profile may still export {} on PATH; remove that line by hand.",
+                    shims.display()
+                );
+            } else {
+                println!(
+                    "\nYour shell profile may still export {} on PATH; remove that line by hand.",
+                    shims.display()
+                );
+            }
+        }
+        if steps.iter().any(|(ok, _)| !ok) {
+            std::process::exit(1);
+        }
         Ok(())
+    }
+
+    /// How one init step went. `Warn` is advice ("needs elevation"), not a
+    /// failure, and does not affect the exit code.
+    enum Step {
+        Ok,
+        Warn,
+        Fail,
+    }
+
+    /// Under `sudo`, files init writes for the *user* must end up owned by the
+    /// user. `sudo grove init` wrote config.toml as root, and the next plain
+    /// `grove init` — or `grove import` — failed on it with a permission error.
+    /// The daemon runs as root and can write anything; the CLI cannot.
+    fn own_as_invoking_user(path: &std::path::Path) {
+        if let Some((uid, gid)) = numeric_ids_from_sudo() {
+            grove_core::privdrop::own_path(path, Some(grove_core::privdrop::RunAs { uid, gid }));
+        }
     }
 
     /// First-run setup. Idempotent: safe to run repeatedly. Does everything that
@@ -2068,7 +2200,7 @@ mod lifecycle {
         use grove_runtime::PhpRegistry;
         use grove_tls::CertificateAuthority;
 
-        let mut steps: Vec<(bool, String)> = Vec::new();
+        let mut steps: Vec<(Step, String)> = Vec::new();
         paths.ensure()?;
 
         // 1. Config (create default if absent, never clobber).
@@ -2081,14 +2213,21 @@ mod lifecycle {
             if expanded.is_dir() {
                 config.add_parked(code);
                 steps.push((
-                    true,
+                    Step::Ok,
                     "parked ~/Code (existing projects auto-imported)".into(),
                 ));
             }
             config.save(paths)?;
-            steps.push((true, format!("created config at {}", cfg_path.display())));
+            own_as_invoking_user(&cfg_path);
+            steps.push((
+                Step::Ok,
+                format!("created config at {}", cfg_path.display()),
+            ));
         } else {
-            steps.push((true, format!("config present at {}", cfg_path.display())));
+            steps.push((
+                Step::Ok,
+                format!("config present at {}", cfg_path.display()),
+            ));
         }
 
         // 2. Root CA. Generating it needs no elevation, but the private key
@@ -2097,9 +2236,12 @@ mod lifecycle {
         // after that point cannot read it. Skip rather than fail: everything
         // else `init` does is still worth doing, and the CA already exists.
         match CertificateAuthority::load_or_create(paths) {
-            Ok(_) => steps.push((true, format!("root CA at {}", paths.ca_cert().display()))),
+            Ok(_) => steps.push((
+                Step::Ok,
+                format!("root CA at {}", paths.ca_cert().display()),
+            )),
             Err(e) if paths.ca_cert().exists() => steps.push((
-                true,
+                Step::Ok,
                 format!(
                     "root CA present at {} (not readable here: {e})",
                     paths.ca_cert().display()
@@ -2127,15 +2269,16 @@ mod lifecycle {
                 }) {
                     Ok(build) => {
                         config.general.default_php = build.version.clone();
-                        steps.push((true, format!("installed php@{}", build.version)));
+                        steps.push((Step::Ok, format!("installed php@{}", build.version)));
                     }
-                    Err(e) => steps.push((false, format!("PHP install failed: {e}"))),
+                    Err(e) => steps.push((Step::Fail, format!("PHP install failed: {e}"))),
                 }
             } else {
                 config.general.default_php = php.clone();
-                steps.push((true, format!("php@{php} already available")));
+                steps.push((Step::Ok, format!("php@{php} already available")));
             }
             config.save(paths)?;
+            own_as_invoking_user(&cfg_path);
         }
 
         // 4. Privileged steps: resolver + CA trust (only if we can).
@@ -2143,18 +2286,18 @@ mod lifecycle {
         if grove_os::is_elevated() {
             match platform.install_resolver(&config.general.tld, config.general.dns_port) {
                 Ok(()) => steps.push((
-                    true,
+                    Step::Ok,
                     format!("resolver installed for .{}", config.general.tld),
                 )),
-                Err(e) => steps.push((false, format!("resolver: {e}"))),
+                Err(e) => steps.push((Step::Fail, format!("resolver: {e}"))),
             }
             match platform.trust_ca(&paths.ca_cert()) {
-                Ok(()) => steps.push((true, "root CA trusted in system store".into())),
-                Err(e) => steps.push((false, format!("CA trust: {e}"))),
+                Ok(()) => steps.push((Step::Ok, "root CA trusted in system store".into())),
+                Err(e) => steps.push((Step::Fail, format!("CA trust: {e}"))),
             }
         } else {
             steps.push((
-                false,
+                Step::Warn,
                 "resolver + CA trust need elevation — run `sudo grove init` or \
                  `sudo grove ca trust`"
                     .into(),
@@ -2164,13 +2307,24 @@ mod lifecycle {
         if json {
             let arr: Vec<_> = steps
                 .iter()
-                .map(|(ok, msg)| serde_json::json!({ "ok": ok, "step": msg }))
+                .map(|(step, msg)| {
+                    serde_json::json!({
+                        "ok": !matches!(step, Step::Fail),
+                        "status": match step { Step::Ok => "ok", Step::Warn => "warn", Step::Fail => "fail" },
+                        "step": msg,
+                    })
+                })
                 .collect();
             println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
         } else {
             println!("Grove setup:");
-            for (ok, msg) in &steps {
-                println!("  {} {msg}", if *ok { "✓" } else { "!" });
+            for (step, msg) in &steps {
+                let mark = match step {
+                    Step::Ok => "✓",
+                    Step::Warn => "!",
+                    Step::Fail => "✗",
+                };
+                println!("  {mark} {msg}");
             }
             // `grove start` cannot bind 80/443/53 without root, and a failed
             // bind used to be silent — so pointing people there after a sudo
@@ -2180,6 +2334,12 @@ mod lifecycle {
                 "\nNext: `sudo grove install` to run Grove as a service on 80/443/53, \
                  then open https://<project>.test"
             );
+        }
+        // A failed PHP download or CA generation used to exit 0, so a script
+        // wrapping init saw success. Advice (the elevation notice) is not a
+        // failure; a step that did not do what it says is.
+        if steps.iter().any(|(step, _)| matches!(step, Step::Fail)) {
+            std::process::exit(1);
         }
         Ok(())
     }
@@ -2513,7 +2673,7 @@ mod local {
     /// Manage the PATH shims that expose Grove's bundled toolchain.
     /// The shims live under the user's home (not `$GROVE_HOME`, which is
     /// root-owned under the LaunchDaemon and so not writable by the shims' user).
-    fn shims_dir() -> PathBuf {
+    pub(super) fn shims_dir() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
         PathBuf::from(home).join(".grove/bin")
     }
@@ -2560,6 +2720,7 @@ mod local {
                             "installed": installed,
                             "shims_dir": shims.display().to_string(),
                             "on_path": path_contains(&shims),
+                            "shadowed_by": shadowing_php(&shims),
                             "tools": SHIM_TOOLS,
                             "cli_installed": shims.join("grove").exists(),
                         })
@@ -2610,6 +2771,25 @@ mod local {
             .unwrap_or(false)
     }
 
+    /// The `php` that PATH order actually resolves to, if it is not Grove's.
+    ///
+    /// `path_contains` only checks membership; with `~/.grove/bin` appended
+    /// after `/opt/homebrew/bin`, "Grove's toolchain is on your PATH" was true
+    /// and Homebrew's php still won every time.
+    fn shadowing_php(shims: &Path) -> Option<PathBuf> {
+        let path = std::env::var_os("PATH")?;
+        for dir in std::env::split_paths(&path) {
+            if dir == shims {
+                return None;
+            }
+            let candidate = dir.join("php");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
     fn print_path_instructions(shims: &Path, just_installed: bool, json: bool) {
         if json {
             return;
@@ -2622,6 +2802,20 @@ mod local {
             );
         }
         if path_contains(shims) {
+            if let Some(other) = shadowing_php(shims) {
+                println!("Grove's toolchain is on your PATH ({dir}) — but too late in it.");
+                println!(
+                    "`php` currently resolves to {} first. Move {dir} before it, e.g.:\n",
+                    other.display()
+                );
+                let shell = std::env::var("SHELL").unwrap_or_default();
+                if shell.ends_with("fish") {
+                    println!("    fish_add_path --move {dir}\n");
+                } else {
+                    println!("    export PATH=\"{dir}:$PATH\"   # at the *end* of your profile, so it wins\n");
+                }
+                return;
+            }
             println!("Grove's toolchain is on your PATH ({dir}).");
             println!("php, composer, cpx, node, npm, npx and laravel now resolve to the version each project pins,");
             println!("and `grove` itself is on your PATH.");

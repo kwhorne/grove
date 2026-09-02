@@ -40,7 +40,12 @@ pub enum Command {
     /// Install Grove as an OS service (starts at login, restarts on crash).
     Install,
     /// Uninstall the Grove OS service and remove resolver + CA trust.
-    Uninstall,
+    /// Leaves your data (GROVE_HOME: config, PHP builds, databases) unless --purge.
+    Uninstall {
+        /// Also delete GROVE_HOME and the PATH shims. Databases included.
+        #[arg(long)]
+        purge: bool,
+    },
     /// Import sites/parked dirs from an existing Laravel Valet config.
     Import,
     /// First-run setup: config, root CA, a PHP build, resolver + trust (where possible).

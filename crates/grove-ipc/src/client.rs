@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::protocol::{Request, Response};
+use crate::protocol::{Request, Response, ResponseData};
 use crate::transport::{self, TransportError};
 
 /// Send a single request to the daemon and await its response.
@@ -39,4 +39,27 @@ pub async fn is_running(socket: &Path) -> bool {
 #[cfg(not(unix))]
 pub async fn is_running(_socket: &Path) -> bool {
     false
+}
+
+/// The running daemon's version, via `Ping`. `None` if it does not answer or
+/// answers something else — an old daemon that predates this check, say.
+///
+/// `Ping` was documented as the version handshake from the start, and no
+/// client ever sent it. A CLI newer than its daemon got "connection closed
+/// before a full message was received" for any command the daemon did not
+/// know, with nothing pointing at the cause.
+#[cfg(unix)]
+pub async fn daemon_version(socket: &Path) -> Option<String> {
+    match send(socket, &Request::Ping).await {
+        Ok(Response {
+            data: Some(ResponseData::Pong { version }),
+            ..
+        }) => Some(version),
+        _ => None,
+    }
+}
+
+#[cfg(not(unix))]
+pub async fn daemon_version(_socket: &Path) -> Option<String> {
+    None
 }
