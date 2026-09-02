@@ -459,8 +459,14 @@ mod tests {
         let socket = dir.join("test.sock");
         let _ = std::fs::remove_file(&socket);
 
+        // A policy that trusts nobody but root. As root there is no
+        // unauthorized peer to be — root is always permitted, by design — so
+        // under a root test run (a container) this proves nothing and skips.
+        if grove_core::privdrop::running_as_root() {
+            eprintln!("skipped: runs as root, and root is always authorized");
+            return;
+        }
         let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-        // A policy that trusts nobody but root; this test process is not root.
         let deny_all = policy(Some((0, 0)), 0);
 
         let server = tokio::spawn(async move {
