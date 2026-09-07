@@ -357,10 +357,11 @@ pub enum LicenseAction {
 pub enum DbAction {
     /// Take a snapshot of a bundled database.
     Snapshot {
-        /// Engine: mysql (default) or postgres.
+        /// Engine: mysql (default), postgres or elyrasql.
         #[arg(long, default_value = "mysql")]
         engine: String,
-        /// Database name. Omit for all MySQL databases; required for postgres.
+        /// Database name. Omit for all MySQL databases; required for postgres;
+        /// ignored for elyrasql, whose snapshot is its whole database file.
         #[arg(long)]
         db: Option<String>,
         /// Optional note to remember why you took it.
@@ -426,7 +427,7 @@ pub enum PathAction {
 pub enum ServiceAction {
     /// List bundled services and their state.
     List,
-    /// Download + initialise a bundled service (e.g. postgres).
+    /// Download + initialise a bundled service (postgres, mysql, elyrasql, redis).
     Install { key: String },
     /// Start a bundled service.
     Start { key: String },

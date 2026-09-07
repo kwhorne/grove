@@ -23,7 +23,8 @@ pub struct ProjectFile {
     /// Serve over HTTPS (default true).
     #[serde(default = "default_secure")]
     pub secure: bool,
-    /// Bundled services to ensure installed + running (`mysql`, `postgres`, `redis`).
+    /// Bundled services to ensure installed + running (`mysql`, `postgres`,
+    /// `elyrasql`, `redis`).
     #[serde(default)]
     pub services: Vec<String>,
     /// Start dev processes (Vite + queue worker) as part of `grove up`.

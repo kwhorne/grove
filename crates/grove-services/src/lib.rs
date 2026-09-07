@@ -16,7 +16,7 @@ pub mod store;
 pub use catalog::{ServiceKind, ServiceSpec, CATALOG};
 pub use convert::{convert as convert_database, DbConnSpec};
 pub use mail::{bind_smtp, serve_smtp, serve_smtp_on};
-pub use manager::{ServiceManager, ServiceStatus};
+pub use manager::{ServiceManager, ServiceStatus, ELYRASQL_DATABASE};
 pub use qlog::{parse_mysql_general, QueryEvent};
 pub use snapshot::{Snapshot, SnapshotStore};
 pub use store::{CapturedEmail, EmailSummary, MailStore};
