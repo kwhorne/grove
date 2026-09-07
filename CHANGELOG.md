@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **After the app updated itself, the daemon kept running the old version —
+  silently.** The updater relaunched the app but never restarted the daemon (a
+  separate root process under launchd/systemd), and the app showed the old
+  daemon's catalog with no hint why: 1.7.0's ElyraSQL was missing from Services
+  until a manual restart. The app now restarts the daemon as part of installing
+  an update, and shows a banner with a **Restart daemon** button whenever the
+  daemon's version differs from its own — the check the CLI already made on
+  every command.
+- **`grove restart` under the system service could leave an unprivileged
+  daemon behind.** It stopped the daemon and spawned a new one from the shell,
+  racing launchd's `KeepAlive`; whichever won, the other could not bind, and
+  since 1.6.0 the supervisor's instance then refused to start over the
+  shell's. With a service unit installed, `restart` now asks the daemon to
+  have its supervisor re-exec it (the app's Restart button's path) and waits
+  for it to go down and come back; `start` refuses to spawn beside an installed
+  service and names the command that starts it.
+- **Linux: `grove restart` left the daemon down.** The unit said
+  `Restart=on-failure`, and a deliberate restart is a clean exit. Now
+  `Restart=always`.
+
 ## [1.7.0] — 2026-09-07
 
 One addition: a fourth bundled database. Everything else from 1.6.0 stands.
