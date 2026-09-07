@@ -209,6 +209,12 @@ fn legacy_user_unit(run_user: Option<&str>) -> Option<PathBuf> {
 
 /// The systemd unit for Grove's daemon.
 ///
+/// `Restart=always`, not `on-failure`: `grove restart` and the app's Restart
+/// button ask the daemon to shut down cleanly and rely on the supervisor to
+/// bring it back — on macOS via `launchctl kickstart`, here via the restart
+/// policy. A clean exit is not a failure, so `on-failure` left the daemon down
+/// after every deliberate restart.
+///
 /// Root, so it can bind 53/80/443 — every child is dropped to the run user,
 /// recorded here numerically for the daemon's IPC authorization and privilege
 /// drop. `ExecStartPre=+` (the `+` runs it as root even if `User=` were set)
@@ -234,7 +240,7 @@ pub fn linux_unit(
     };
     format!(
         "[Unit]\nDescription=Elyra Grove daemon\nAfter=network-online.target systemd-resolved.service\nWants=network-online.target\n\n\
-         [Service]\nExecStartPre=+{pre}\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\n{run_env}Restart=on-failure\nRestartSec=2\n\n\
+         [Service]\nExecStartPre=+{pre}\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\n{run_env}Restart=always\nRestartSec=2\n\n\
          [Install]\nWantedBy=multi-user.target\n",
         pre = crate::linux::resolver_exec_start_pre(tld, dns_port),
         exe = exe.display(),
@@ -380,5 +386,9 @@ mod linux_unit_tests {
         assert!(unit.contains("Environment=GROVE_RUN_USER_ID=1000\n"));
         assert!(unit.contains("Environment=GROVE_RUN_GROUP_ID=1000\n"));
         assert!(unit.contains("After=network-online.target systemd-resolved.service"));
+        assert!(
+            unit.contains("Restart=always\n"),
+            "a deliberate restart exits cleanly; on-failure would leave the daemon down: {unit}"
+        );
     }
 }

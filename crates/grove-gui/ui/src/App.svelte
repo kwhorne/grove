@@ -2,6 +2,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
+  import { getVersion } from "@tauri-apps/api/app";
   import { api } from "./lib/api";
   import type {
     DaemonStatus,
@@ -40,6 +41,31 @@
   let settingsOpen = $state(false);
   let newSiteOpen = $state(false);
 
+  // The app's own version, to compare with the daemon's. An app that updated
+  // itself relaunches new while the daemon — a separate root process under
+  // launchd/systemd — keeps running the old binary until something restarts
+  // it. The CLI warns about that on every command; the app used to say
+  // nothing, and showed the old daemon's catalog with no hint why.
+  let appVersion = $state("");
+  getVersion()
+    .then((v) => (appVersion = v))
+    .catch(() => {});
+  let daemonMismatch = $derived(
+    !!status && !!appVersion && status.version !== appVersion,
+  );
+  let restartingDaemon = $state(false);
+  async function restartDaemonForVersion() {
+    restartingDaemon = true;
+    try {
+      await api.restartDaemon();
+      notify("daemon restarted");
+    } catch (e) {
+      notify(String(e));
+    }
+    restartingDaemon = false;
+    await refresh();
+  }
+
   // ---- auto-update ----
   let update = $state<Update | null>(null);
   let updateStatus = $state<"" | "downloading" | "ready" | "error">("");
@@ -76,6 +102,14 @@
         } else if (ev.event === "Finished") updateProgress = 100;
       });
       updateStatus = "ready";
+      // The daemon is the old binary until it re-execs; the app is about to
+      // relaunch as the new one. Restart the daemon first so they match on the
+      // way back in — best effort, the version banner catches anything missed.
+      try {
+        await api.restartDaemon();
+      } catch (e) {
+        console.warn("daemon restart after update failed", e);
+      }
       await relaunch();
     } catch (e) {
       updateStatus = "error";
@@ -225,6 +259,19 @@
     <button class="btn" onclick={toggleDaemon}>{running ? "Stop" : "Start"}</button>
     <button class="btn icon" title="Settings (⌘,)" onclick={() => (settingsOpen = true)}>⚙</button>
   </header>
+
+  {#if daemonMismatch && status}
+    <div class="update-bar">
+      <span>
+        ⟳ The daemon is running <strong>v{status.version}</strong>, this app is
+        <strong>v{appVersion}</strong> — features and services may not match until it restarts.
+      </span>
+      <div class="spacer"></div>
+      <button class="btn primary" onclick={restartDaemonForVersion} disabled={restartingDaemon}>
+        {restartingDaemon ? "Restarting…" : "Restart daemon"}
+      </button>
+    </div>
+  {/if}
 
   {#if update && !updateDismissed}
     <div class="update-bar">

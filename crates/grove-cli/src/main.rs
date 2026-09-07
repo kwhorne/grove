@@ -1655,11 +1655,41 @@ mod lifecycle {
     use std::time::Duration;
 
     /// Spawn `grove daemon` detached, waiting until the IPC socket is live.
+    /// Whether an OS service unit for the daemon is installed. When it is, the
+    /// supervisor (launchd / systemd) owns the daemon's lifecycle: it runs it
+    /// as root, restarts it, and re-execs the on-disk binary. Spawning one from
+    /// an unprivileged shell beside it is never what the user wants — it cannot
+    /// bind 53/80/443, and the supervisor's own instance then refuses to start
+    /// over it.
+    fn managed_by_supervisor() -> bool {
+        grove_os::service::unit_path()
+            .map(|p| p.exists())
+            .unwrap_or(false)
+    }
+
+    /// The command that starts the installed service by hand.
+    fn supervisor_start_hint() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "sudo launchctl kickstart -k system/com.elyra.grove"
+        } else {
+            "sudo systemctl restart grove"
+        }
+    }
+
     pub async fn start(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
         let socket = paths.ipc_socket();
         if client::is_running(&socket).await {
             output::print_message("daemon already running", json);
             return Ok(());
+        }
+        if managed_by_supervisor() && !grove_os::is_elevated() {
+            anyhow::bail!(
+                "Grove is installed as a system service, so the daemon is started by the OS as \
+                 root — not from this shell, where it could not bind 53/80/443. It is not \
+                 running right now; start it with `{}`, and see `grove doctor` for why it \
+                 stopped.",
+                supervisor_start_hint()
+            );
         }
         paths.ensure()?;
         // The daemon refuses to start on a config it cannot parse — correctly —
@@ -1735,6 +1765,39 @@ mod lifecycle {
     }
 
     pub async fn restart(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
+        let socket = paths.ipc_socket();
+        if managed_by_supervisor() && client::is_running(&socket).await {
+            // Ask the daemon to have its supervisor re-exec it — the same path
+            // the app's Restart button takes. Stopping it and spawning our own
+            // raced launchd's KeepAlive: whichever won, the other could not
+            // bind, and after a restart the survivor was sometimes an
+            // unprivileged daemon serving nothing on the privileged ports.
+            let _ = client::send(&socket, &Request::RestartDaemon).await;
+            // Down, then back: only "back" is proof it re-exec'ed rather than
+            // never having gone away.
+            let mut went_down = false;
+            for _ in 0..100 {
+                let up = client::is_running(&socket).await;
+                if !up {
+                    went_down = true;
+                } else if went_down {
+                    output::print_message("daemon restarted", json);
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            if client::is_running(&socket).await {
+                output::print_message(
+                    "daemon is running; the supervisor did not report a restart — check `grove status` for its version",
+                    json,
+                );
+                return Ok(());
+            }
+            anyhow::bail!(
+                "the daemon went down and did not come back — start it with `{}` and see `grove doctor`",
+                supervisor_start_hint()
+            );
+        }
         stop(paths, false).await?;
         start(paths, json).await
     }

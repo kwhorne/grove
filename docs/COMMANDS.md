@@ -15,7 +15,7 @@ grove <command> [args] [--json]
 | `grove daemon` | Run the daemon in the foreground (used by the service manager). |
 | `grove start` | Start the daemon in the background. |
 | `grove stop` | Stop the daemon gracefully. |
-| `grove restart` | Restart the daemon. |
+| `grove restart` | Restart the daemon. With the system service installed, this asks the daemon to have launchd/systemd re-exec it (picking up an updated binary) and waits for it to come back; without one, it stops and starts it directly. |
 | `grove reload` | Re-read `config.toml` and rebuild the site list without a restart. Use after editing the file by hand; a `grove link`/`secure` that would overwrite an unread edit refuses and points here. Settings survive; comments and formatting do not, since Grove regenerates the file from the parsed config. Sites and driver settings take effect immediately; a changed port or `tld` needs `grove restart`, since listeners bind at boot. |
 | `grove gui` | Start the daemon if needed and launch the desktop GUI. |
 | `grove install` / `uninstall` | Install/remove Grove as an OS service (macOS LaunchDaemon; Linux system unit). Both need `sudo`. `uninstall` stops the daemon, removes the service, resolver and CA trust, reports each step, and lists what it left in `GROVE_HOME`; add `--purge` to remove that and the PATH shims too. |
