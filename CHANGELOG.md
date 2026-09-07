@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-09-07
+
+One addition: a fourth bundled database. Everything else from 1.6.0 stands.
+
 ### Added
 
 - **ElyraSQL as a bundled database.** `grove service install elyrasql` downloads
@@ -1060,7 +1064,8 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
-[Unreleased]: https://github.com/kwhorne/grove/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/kwhorne/grove/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/kwhorne/grove/releases/tag/v1.7.0
 [1.6.0]: https://github.com/kwhorne/grove/releases/tag/v1.6.0
 [1.5.0]: https://github.com/kwhorne/grove/releases/tag/v1.5.0
 [1.4.2]: https://github.com/kwhorne/grove/releases/tag/v1.4.2
