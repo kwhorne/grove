@@ -343,7 +343,8 @@ background service.
 
 ## 9. Bundled databases & services
 
-Grove installs and supervises its own PostgreSQL, MySQL and Redis — no Homebrew.
+Grove installs and supervises its own PostgreSQL, MySQL, ElyraSQL and Redis —
+no Homebrew.
 
 ```bash
 grove service list
@@ -353,6 +354,7 @@ grove service list
 SERVICE      CATEGORY       INSTALLED  RUNNING   PORT
 PostgreSQL   Database       no         no        5432
 MySQL        Database       no         no        3306
+ElyraSQL     Database       no         no        3307
 Redis        Cache & Queue  no         no        6379
 ```
 
@@ -399,8 +401,45 @@ grove db list
 grove db restore <id>     # data restored exactly as it was
 ```
 
-Snapshots are plain SQL dumps under `$GROVE_HOME/snapshots/`. Works for MySQL
-(omit `--db` for all databases) and PostgreSQL (`--engine postgres`).
+Snapshots live under `$GROVE_HOME/snapshots/`. MySQL (omit `--db` for all
+databases) and PostgreSQL (`--engine postgres`) snapshots are plain SQL dumps;
+an ElyraSQL snapshot (`--engine elyrasql`) is a hot, consistent copy of its
+single database file, taken while it serves.
+
+### ElyraSQL
+
+[ElyraSQL](https://github.com/kwhorne/ElyraSQL) is a MySQL-compatible SQL
+server in one static binary, with the whole database in one file. Three things
+to know when you pick it over MySQL:
+
+- **Your app uses the MySQL driver.** It speaks MySQL's wire protocol, so
+  `DB_CONNECTION=mysql` with `DB_PORT=3307`; Laravel migrations and Eloquent run
+  unchanged, and any MySQL client (`mysql`, DBeaver, TablePlus) connects.
+- **One database, named `elyra`.** Set `DB_DATABASE=elyra`. Laravel's
+  `CREATE DATABASE IF NOT EXISTS` is a no-op there, so `php artisan migrate`
+  works; an unconditional `CREATE DATABASE` is refused. `grove env` prints the
+  right block when ElyraSQL is the installed database.
+- **No accounts on loopback.** Like Grove's MySQL (`--initialize-insecure`) it
+  runs without authentication on `127.0.0.1`; use `root` with an empty password.
+
+```bash
+grove service install elyrasql && grove service start elyrasql
+grove env
+```
+
+```text
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3307
+DB_DATABASE=elyra
+DB_USERNAME=root
+DB_PASSWORD=
+```
+
+Grove tells a site on ElyraSQL apart from one on MySQL by the port it connects
+to, so `grove db snapshot`, the agent-safe migration sandbox and `grove bundle`
+all go to the right server. Published for macOS (Apple silicon) and Linux
+(x86_64, aarch64); there is no Intel macOS build upstream.
 
 ---
 
