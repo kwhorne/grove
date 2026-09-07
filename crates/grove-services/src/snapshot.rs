@@ -1,8 +1,10 @@
-//! Point-in-time database snapshots for Grove's bundled MySQL / PostgreSQL.
+//! Point-in-time database snapshots for Grove's bundled databases.
 //!
-//! Snapshots are plain SQL dumps stored under `$GROVE_HOME/snapshots/` with a
-//! small JSON index, so you can snapshot before a risky migration and roll back
-//! in one command. Grove owns the DB service, so this needs zero configuration.
+//! Snapshots live under `$GROVE_HOME/snapshots/` with a small JSON index, so you
+//! can snapshot before a risky migration and roll back in one command. Grove
+//! owns the DB service, so this needs zero configuration. MySQL and PostgreSQL
+//! snapshots are plain SQL dumps; an ElyraSQL snapshot is a complete copy of its
+//! single database file (`.edb`), taken hot via `BACKUP TO`.
 
 use std::path::PathBuf;
 
@@ -63,16 +65,22 @@ impl SnapshotStore {
     ) -> Result<Snapshot> {
         std::fs::create_dir_all(&self.dir)?;
         let id = unique_id();
-        let label = database.unwrap_or("(all)");
+        // ElyraSQL has one database and the snapshot is the whole file.
+        let label = if engine == "elyrasql" {
+            crate::manager::ELYRASQL_DATABASE
+        } else {
+            database.unwrap_or("(all)")
+        };
         let slug: String = label
             .chars()
             .map(|c| if c.is_alphanumeric() { c } else { '_' })
             .collect();
-        let file = format!("{engine}-{slug}-{id}.sql");
+        let file = snapshot_file_name(engine, &slug, &id);
         let path = self.dir.join(&file);
 
         match engine {
             "mysql" => services.snapshot_mysql(database, &path)?,
+            "elyrasql" => services.snapshot_elyrasql(&path)?,
             "postgres" => {
                 let db = database.ok_or_else(|| {
                     ServiceError::Init("PostgreSQL snapshots need a database name (--db)".into())
@@ -108,6 +116,7 @@ impl SnapshotStore {
         match snap.engine.as_str() {
             "mysql" => services.restore_mysql(&path)?,
             "postgres" => services.restore_postgres(&path)?,
+            "elyrasql" => services.restore_elyrasql(&path)?,
             other => return Err(ServiceError::Unknown(other.into())),
         }
         Ok(snap)
@@ -124,6 +133,13 @@ impl SnapshotStore {
         self.save(&list)?;
         Ok(snap)
     }
+}
+
+/// The file a snapshot is stored in. The extension says what it is: a SQL dump
+/// for the servers that dump, a database file for the one that copies.
+fn snapshot_file_name(engine: &str, slug: &str, id: &str) -> String {
+    let ext = if engine == "elyrasql" { "edb" } else { "sql" };
+    format!("{engine}-{slug}-{id}.{ext}")
 }
 
 fn unique_id() -> String {
@@ -178,5 +194,19 @@ mod tests {
         assert!(!store.dir.join(file).exists());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn snapshot_files_carry_the_extension_of_what_they_hold() {
+        assert_eq!(snapshot_file_name("mysql", "app", "1"), "mysql-app-1.sql");
+        assert_eq!(
+            snapshot_file_name("postgres", "app", "1"),
+            "postgres-app-1.sql"
+        );
+        assert_eq!(
+            snapshot_file_name("elyrasql", "elyra", "1"),
+            "elyrasql-elyra-1.edb",
+            "an ElyraSQL snapshot is the database file itself, not a dump"
+        );
     }
 }

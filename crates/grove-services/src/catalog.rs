@@ -13,6 +13,10 @@ pub enum ServiceKind {
     Redis,
     /// Portable prebuilt binaries (mysqld --initialize-insecure).
     Mysql,
+    /// A single static binary that speaks the MySQL wire protocol and keeps the
+    /// whole database in one `.edb` file (`elyrasql serve`). Nothing to
+    /// initialise: the file is created on first start.
+    ElyraSql,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +52,15 @@ pub const CATALOG: &[ServiceSpec] = &[
         kind: ServiceKind::Mysql,
         default_port: 3306,
         version: "8.4.3",
+    },
+    ServiceSpec {
+        key: "elyrasql",
+        name: "ElyraSQL",
+        category: "Database",
+        kind: ServiceKind::ElyraSql,
+        // Upstream's own default, and clear of MySQL's 3306 so both can run.
+        default_port: 3307,
+        version: "1.11.2",
     },
     ServiceSpec {
         key: "redis",
@@ -95,6 +108,14 @@ pub fn download_url(spec: &ServiceSpec) -> Option<String> {
                 v = spec.version,
             ))
         }
+        // A GitHub release asset with a `.sha256` beside it, like PostgreSQL.
+        ServiceKind::ElyraSql => {
+            let slug = elyrasql_slug(std::env::consts::OS, std::env::consts::ARCH)?;
+            Some(format!(
+                "https://github.com/kwhorne/ElyraSQL/releases/download/v{v}/elyrasql-{v}-{slug}.tar.gz",
+                v = spec.version,
+            ))
+        }
     }
 }
 
@@ -107,6 +128,23 @@ pub fn archive_root(spec: &ServiceSpec) -> Option<String> {
         }
         ServiceKind::Redis => Some(format!("redis-{}", spec.version)),
         ServiceKind::Mysql => Some(format!("mysql-{}-{}", spec.version, mysql_platform()?)),
+        ServiceKind::ElyraSql => Some(format!(
+            "elyrasql-{}-{}",
+            spec.version,
+            elyrasql_slug(std::env::consts::OS, std::env::consts::ARCH)?
+        )),
+    }
+}
+
+/// ElyraSQL's `<platform>-<arch>` asset slug. Upstream publishes Linux for both
+/// architectures and macOS for Apple silicon only — there is no Intel macOS
+/// build, so that combination is unsupported rather than guessed at.
+fn elyrasql_slug(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("macos", "aarch64") => Some("macos-aarch64"),
+        ("linux", "x86_64") => Some("linux-x86_64"),
+        ("linux", "aarch64") => Some("linux-aarch64"),
+        _ => None,
     }
 }
 
@@ -127,5 +165,60 @@ fn postgres_triple() -> Option<&'static str> {
         ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
         ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The asset name is `elyrasql-<version>-<platform>-<arch>.tar.gz` and it
+    /// unpacks to a directory of the same name with the binary at its root.
+    /// Both halves of that have to agree with the manager, which looks for
+    /// `<root>/elyrasql`.
+    #[test]
+    fn elyrasql_downloads_a_release_asset_and_unpacks_to_its_own_name() {
+        let spec = spec("elyrasql").expect("elyrasql is in the catalog");
+        // Only meaningful where a build is published; the slug test below
+        // covers the matrix without depending on the host.
+        if let Some(url) = download_url(spec) {
+            let v = spec.version;
+            assert!(
+                url.starts_with(&format!(
+                    "https://github.com/kwhorne/ElyraSQL/releases/download/v{v}/elyrasql-{v}-"
+                )),
+                "got {url}"
+            );
+            assert!(url.ends_with(".tar.gz"), "got {url}");
+            let file = url.rsplit('/').next().unwrap();
+            let root = archive_root(spec).expect("an archive root");
+            assert_eq!(
+                format!("{root}.tar.gz"),
+                file,
+                "the tarball unpacks to its own name"
+            );
+        }
+    }
+
+    #[test]
+    fn elyrasql_is_published_for_three_targets_and_not_intel_macos() {
+        assert_eq!(elyrasql_slug("macos", "aarch64"), Some("macos-aarch64"));
+        assert_eq!(elyrasql_slug("linux", "x86_64"), Some("linux-x86_64"));
+        assert_eq!(elyrasql_slug("linux", "aarch64"), Some("linux-aarch64"));
+        assert_eq!(
+            elyrasql_slug("macos", "x86_64"),
+            None,
+            "no Intel macOS build upstream"
+        );
+        assert_eq!(elyrasql_slug("windows", "x86_64"), None);
+    }
+
+    /// Two MySQL-protocol servers in one catalog must not want the same port.
+    #[test]
+    fn elyrasql_and_mysql_default_to_different_ports() {
+        let a = spec("mysql").unwrap().default_port;
+        let b = spec("elyrasql").unwrap().default_port;
+        assert_ne!(a, b);
+        assert_eq!(b, 3307, "upstream's own default");
     }
 }

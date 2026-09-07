@@ -18,7 +18,9 @@ Launch the Grove app and choose **Database** in the sidebar.
 For every site Grove serves, it looks for a database configuration in the
 project's `.env` (`DB_CONNECTION`, `DB_HOST`, `DB_DATABASE`, …). Each project with
 a database shows up as a connection at the top of the panel — no host, port, or
-password to type. Supported engines: **MySQL**, **PostgreSQL**, and **SQLite**.
+password to type. Supported engines: **MySQL** (which is also how an
+**ElyraSQL** site appears, since it speaks MySQL's protocol — `DB_CONNECTION=mysql`
+on port 3307), **PostgreSQL**, and **SQLite**.
 
 ## Browsing and querying (free)
 

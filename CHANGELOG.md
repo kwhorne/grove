@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **ElyraSQL as a bundled database.** `grove service install elyrasql` downloads
+  [ElyraSQL](https://github.com/kwhorne/ElyraSQL) — a MySQL-compatible SQL
+  server in one static binary with the whole database in one file — verifies its
+  published SHA-256, and runs it on `127.0.0.1:3307` beside MySQL. Your app uses
+  the MySQL driver (`DB_CONNECTION=mysql`, `DB_DATABASE=elyra`); `grove env`
+  prints the block. `grove db snapshot --engine elyrasql` takes a hot, consistent
+  copy of the database file via `BACKUP TO`, and `grove db restore` puts it back.
+  Grove tells an ElyraSQL site from a MySQL one by the port it connects to, so
+  the agent-safe migration sandbox and `grove bundle` snapshot the right server.
+  The **convert** tool takes it as a source or target. macOS (Apple silicon) and
+  Linux; upstream publishes no Intel macOS build. Requires ElyraSQL 1.11.2:
+  adding it surfaced that sqlx's MySQL driver — which every Rust client and
+  Grove's convert tool sit on — could not connect to 1.11.1 at all, because
+  its per-connection `SET sql_mode=(SELECT CONCAT(@@sql_mode, …)), time_zone=…`
+  was refused; 1.11.2 accepts it.
+
 ## [1.6.0] — 2026-09-02
 
 Everything from a robustness review of 1.5.0, in five rounds: one real bug in

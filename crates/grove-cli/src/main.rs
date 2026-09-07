@@ -928,6 +928,29 @@ mod mcp {
         }
     }
 
+    /// The bundled service a site's database actually lives in.
+    ///
+    /// A site on ElyraSQL has `DB_CONNECTION=mysql` — it speaks MySQL's protocol,
+    /// so that is the correct driver — and e-db therefore reports engine
+    /// `mysql`. Taken at face value, a snapshot for that site would dump Grove's
+    /// *MySQL* on 3306: the wrong database, or no database at all. The port is
+    /// what tells them apart: if ElyraSQL is installed and listens where the
+    /// site connects, the snapshot goes there.
+    pub(super) async fn resolve_engine(socket: &Path, engine: &str, port: u16) -> String {
+        if engine != "mysql" {
+            return engine.to_string();
+        }
+        if let Ok(ResponseData::Services(services)) = call(socket, Request::ServiceList).await {
+            if services
+                .iter()
+                .any(|s| s.key == "elyrasql" && s.installed && s.port == port)
+            {
+                return "elyrasql".to_string();
+            }
+        }
+        engine.to_string()
+    }
+
     /// Take an engine-appropriate snapshot before a write.
     async fn open_sandbox(
         paths: &GrovePaths,
@@ -937,10 +960,11 @@ mod mcp {
     ) -> anyhow::Result<Sandbox> {
         match cfg.engine.as_str() {
             "mysql" | "postgres" => {
+                let engine = resolve_engine(socket, &cfg.engine, cfg.port).await;
                 let msg = match call(
                     socket,
                     Request::DbSnapshot {
-                        engine: cfg.engine.clone(),
+                        engine,
                         database: Some(cfg.database.clone()),
                         note: Some(note.to_string()),
                     },
@@ -1037,7 +1061,7 @@ mod mcp {
         // 1. Inspect the site's database: engine, name, and pre-migration shape.
         let p = path.clone();
         let (cfg, before) = tokio::task::spawn_blocking(move || inspect_db_sync(&p)).await??;
-        let engine = cfg.engine.clone();
+        let engine = resolve_engine(socket, &cfg.engine, cfg.port).await;
         let database = db_label(&cfg);
 
         // 2. Snapshot before touching anything.
@@ -1140,7 +1164,7 @@ mod mcp {
 
         let p = path.clone();
         let (cfg, before) = tokio::task::spawn_blocking(move || inspect_db_sync(&p)).await??;
-        let engine = cfg.engine.clone();
+        let engine = resolve_engine(socket, &cfg.engine, cfg.port).await;
         let database = db_label(&cfg);
 
         let note = format!("agent-safe: before SQL on {site}");
@@ -1335,7 +1359,18 @@ mod bundle {
     struct DbInfo {
         engine: String,
         database: String,
+        /// Where the app connects; what separates ElyraSQL from MySQL.
+        port: u16,
         sqlite_path: Option<PathBuf>,
+    }
+
+    /// The file a bundle stores its database in, per engine.
+    fn bundle_db_file(engine: &str) -> &'static str {
+        if engine == "elyrasql" {
+            "database.edb"
+        } else {
+            "database.sql"
+        }
     }
 
     fn unquote(s: &str) -> String {
@@ -1344,13 +1379,15 @@ mod bundle {
 
     fn read_env_db(dir: &Path) -> Option<DbInfo> {
         let env = std::fs::read_to_string(dir.join(".env")).ok()?;
-        let (mut conn, mut database) = (String::new(), String::new());
+        let (mut conn, mut database, mut port) = (String::new(), String::new(), None);
         for line in env.lines() {
             let line = line.trim();
             if let Some(v) = line.strip_prefix("DB_CONNECTION=") {
                 conn = unquote(v);
             } else if let Some(v) = line.strip_prefix("DB_DATABASE=") {
                 database = unquote(v);
+            } else if let Some(v) = line.strip_prefix("DB_PORT=") {
+                port = unquote(v).parse::<u16>().ok();
             }
         }
         let engine = match conn.as_str() {
@@ -1375,9 +1412,14 @@ mod bundle {
         } else {
             None
         };
+        let port = port.unwrap_or(match engine.as_str() {
+            "postgres" => 5432,
+            _ => 3306,
+        });
         Some(DbInfo {
             engine,
             database,
+            port,
             sqlite_path,
         })
     }
@@ -1432,10 +1474,11 @@ mod bundle {
                     if !client::is_running(&socket).await {
                         anyhow::bail!("Grove daemon is not running (needed to dump the database). Start it with `grove start`.");
                     }
+                    let eng = mcp::resolve_engine(&socket, eng, info.port).await;
                     if !json {
                         println!("Dumping {eng} database {db_database}…");
                     }
-                    let sqlpath = stage.join("database.sql");
+                    let sqlpath = stage.join(bundle_db_file(&eng));
                     let resp = client::send(
                         &socket,
                         &Request::DbDumpFile {
@@ -1543,8 +1586,8 @@ mod bundle {
                     std::fs::copy(&src, &sp)?;
                 }
             }
-            "mysql" | "postgres" => {
-                let sql = target.join("database.sql");
+            "mysql" | "postgres" | "elyrasql" => {
+                let sql = target.join(bundle_db_file(&db_engine));
                 if sql.exists() {
                     if !json {
                         println!("Loading {db_engine} database…");
@@ -1570,6 +1613,7 @@ mod bundle {
 
         let _ = std::fs::remove_file(target.join("bundle.toml"));
         let _ = std::fs::remove_file(target.join("database.sql"));
+        let _ = std::fs::remove_file(target.join("database.edb"));
         let _ = std::fs::remove_file(target.join("database.sqlite"));
 
         output::print_message(

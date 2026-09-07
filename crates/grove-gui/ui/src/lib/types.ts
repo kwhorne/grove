@@ -155,7 +155,7 @@ export interface XdebugStatus {
 }
 
 export interface DbConnSpec {
-  kind: string; // "mysql" | "postgres" | "sqlite"
+  kind: string; // "mysql" | "elyrasql" | "postgres" | "sqlite"
   host: string;
   port: number;
   user: string;

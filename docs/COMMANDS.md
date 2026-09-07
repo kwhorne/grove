@@ -232,7 +232,7 @@ signature over `SHASUMS256.txt` — and Grove does not check that yet.
 | Command | Description |
 | --- | --- |
 | `grove service list` | List bundled services and their state. |
-| `grove service install <key>` | Download + initialise a service (`postgres`, `mysql`, `redis`). |
+| `grove service install <key>` | Download + initialise a service (`postgres`, `mysql`, `elyrasql`, `redis`). |
 | `grove service start\|stop\|restart <key>` | Control a service. |
 | `grove service port <key> <port>` | Override a service's listen port. |
 | `grove env [site]` | Print a `.env` snippet for the bundled services. |
@@ -404,7 +404,7 @@ risky migration and roll back in one command. Stored as SQL under
 
 | Command | Description |
 | --- | --- |
-| `grove db snapshot [--engine mysql\|postgres] [--db NAME] [--note TEXT]` | Snapshot a database (MySQL: omit `--db` for all). |
+| `grove db snapshot [--engine mysql\|postgres\|elyrasql] [--db NAME] [--note TEXT]` | Snapshot a database (MySQL: omit `--db` for all; ElyraSQL: a hot copy of its one database file, `--db` ignored). |
 | `grove db list` | List stored snapshots. |
 | `grove db restore <id>` | Restore a snapshot by id. |
 | `grove db rm <id>` | Delete a snapshot. |

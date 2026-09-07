@@ -154,6 +154,8 @@ impl ServiceManager {
             ServiceKind::Postgres | ServiceKind::Mysql => root.join("bin"),
             // Redis builds in place; binaries land in `src/`.
             ServiceKind::Redis => root.join("src"),
+            // One binary, at the top of the archive.
+            ServiceKind::ElyraSql => root,
         })
     }
 
@@ -168,6 +170,7 @@ impl ServiceManager {
             ServiceKind::Postgres => "postgres",
             ServiceKind::Redis => "redis-server",
             ServiceKind::Mysql => "mysqld",
+            ServiceKind::ElyraSql => "elyrasql",
         };
         Some(bin.join(exe))
     }
@@ -233,6 +236,13 @@ impl ServiceManager {
                 format!("mysql://root@127.0.0.1:{port}"),
             ),
             ServiceKind::Redis => (None, None, format!("redis://127.0.0.1:{port}")),
+            // Open auth on loopback: any username is accepted, so "root" keeps
+            // Laravel's defaults working. TCP only. One logical database, `elyra`.
+            ServiceKind::ElyraSql => (
+                Some("root".into()),
+                None,
+                format!("mysql://root@127.0.0.1:{port}/{ELYRASQL_DATABASE}"),
+            ),
         }
     }
 
@@ -262,7 +272,8 @@ impl ServiceManager {
         match spec.kind {
             ServiceKind::Postgres => self.init_postgres(spec, &progress)?,
             ServiceKind::Mysql => self.init_mysql(spec, &progress)?,
-            ServiceKind::Redis => {}
+            // Nothing to initialise: `serve` creates the `.edb` on first start.
+            ServiceKind::Redis | ServiceKind::ElyraSql => {}
         }
         progress(&format!("{} ready", spec.name));
         self.set_autostart(spec.key, true);
@@ -551,6 +562,124 @@ impl ServiceManager {
         Ok(())
     }
 
+    /// The single database file ElyraSQL serves.
+    fn elyrasql_file(&self, spec: &ServiceSpec) -> PathBuf {
+        self.data_dir(spec).join("grove.edb")
+    }
+
+    /// Snapshot ElyraSQL to `out` as a complete `.edb` file, while it serves.
+    ///
+    /// Not a SQL dump: ElyraSQL's own `BACKUP TO` copies the whole database from
+    /// an MVCC snapshot without blocking writers, and the result is itself a
+    /// normal database file. Two constraints shape the dance below. The server
+    /// writes the file, and it runs as the dropped user — so the target has to
+    /// be somewhere *it* can write, which is its own data directory, not
+    /// `snapshots/`. And it refuses to overwrite, so the path must be fresh.
+    /// Grove then moves the finished file into place with the modes it wants.
+    pub fn snapshot_elyrasql(&self, out: &std::path::Path) -> Result<()> {
+        let spec = catalog::spec("elyrasql").expect("elyrasql is in the catalog");
+        let (_bin, port) = self.db_ready("elyrasql")?;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let staging = self.data_dir(spec).join(format!(".snapshot-{nanos}.edb"));
+        let _ = std::fs::remove_file(&staging);
+
+        // `BACKUP TO` takes a string literal; the path is ours, but quote it anyway.
+        let literal = staging.to_string_lossy().replace('\'', "''");
+        // Explicit options rather than a URL. On connect, sqlx's MySQL driver
+        // runs `SET sql_mode=(SELECT CONCAT(@@sql_mode, '…')), time_zone='+00:00'`.
+        // ElyraSQL 1.11.1 rejected both halves (error 1235); 1.11.2 accepts
+        // them. They stay off here regardless: copying a file needs neither, and
+        // a 1.11.1 installed before the bump keeps working. `SET NAMES` stays.
+        let options = sqlx::mysql::MySqlConnectOptions::new()
+            .host("127.0.0.1")
+            .port(port)
+            .username("root")
+            .database(ELYRASQL_DATABASE)
+            .pipes_as_concat(false)
+            .no_engine_substitution(false)
+            .timezone(None);
+        let result = block_on(async move {
+            use sqlx::Connection;
+            let mut conn = sqlx::MySqlConnection::connect_with(&options).await?;
+            // The path is Grove's own (data dir + timestamp) and quote-escaped
+            // above; the assertion says so to sqlx, which rightly refuses to
+            // take a formatted string on trust.
+            sqlx::query(sqlx::AssertSqlSafe(format!("BACKUP TO '{literal}'")))
+                .execute(&mut conn)
+                .await?;
+            conn.close().await
+        });
+        if let Err(e) = result {
+            let _ = std::fs::remove_file(&staging);
+            return Err(ServiceError::Init(format!(
+                "ElyraSQL BACKUP TO failed: {e}"
+            )));
+        }
+
+        // Into snapshots/ as an owner-only regular file, never through a symlink.
+        let mut src = std::fs::File::open(&staging)?;
+        let mut dst = securefs::create_private(out)?;
+        let copied = std::io::copy(&mut src, &mut dst);
+        let _ = std::fs::remove_file(&staging);
+        match copied {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                let _ = std::fs::remove_file(out);
+                Err(e.into())
+            }
+        }
+    }
+
+    /// Restore a `.edb` snapshot into ElyraSQL.
+    ///
+    /// There is no hot restore — the engine holds an exclusive lock on the open
+    /// file — so this stops the server, lets `elyrasql restore` validate the
+    /// backup and copy it over the live file, and starts the server again.
+    pub fn restore_elyrasql(&self, edb: &std::path::Path) -> Result<()> {
+        let spec = catalog::spec("elyrasql").expect("elyrasql is in the catalog");
+        if !self.is_installed(spec) {
+            return Err(ServiceError::NotInstalled(
+                "elyrasql (add it under Services first)".into(),
+            ));
+        }
+        let bin = self
+            .bin_dir(spec)
+            .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
+        let was_running = self.is_running("elyrasql");
+        if was_running {
+            // Stop without clearing autostart: `stop()` treats a stop as the
+            // user's decision to keep it down, and this one is not.
+            if let Some(mut child) = self.procs.lock().unwrap().remove("elyrasql") {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            let _ = std::fs::remove_file(self.pid_file(spec));
+        }
+        let target = self.elyrasql_file(spec);
+        let mut cmd = std::process::Command::new(bin.join("elyrasql"));
+        cmd.arg("restore")
+            .arg("--input")
+            .arg(edb)
+            .arg("--data")
+            .arg(&target)
+            .arg("--force");
+        // The live file must stay the server's, and the server runs dropped.
+        privdrop::apply(&mut cmd, privdrop::target());
+        let out = cmd.output()?;
+        let restored = out.status.success();
+        let start_result = self.start("elyrasql");
+        if !restored {
+            return Err(ServiceError::Init(format!(
+                "restore into ElyraSQL failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )));
+        }
+        start_result
+    }
+
     /// Initialise a MySQL data directory with a passwordless root (local dev).
     fn init_mysql(&self, spec: &ServiceSpec, progress: &impl Fn(&str)) -> Result<()> {
         let data = self.data_dir(spec);
@@ -703,6 +832,25 @@ impl ServiceManager {
                 privdrop::apply(&mut cmd, run_as);
                 cmd.spawn()?
             }
+            ServiceKind::ElyraSql => {
+                let data = self.data_dir(spec);
+                std::fs::create_dir_all(&data)?;
+                privdrop::own_tree(&data, run_as);
+                let mut cmd = std::process::Command::new(bin.join("elyrasql"));
+                // No accounts: ElyraSQL's "open auth" makes every client Admin,
+                // which it permits on a loopback bind and refuses elsewhere. That
+                // is the same posture as Grove's MySQL (`--initialize-insecure`)
+                // and Postgres (trust auth) — local development, on 127.0.0.1.
+                cmd.arg("serve")
+                    .arg("--data")
+                    .arg(self.elyrasql_file(spec))
+                    .arg("--listen")
+                    .arg(format!("127.0.0.1:{port}"))
+                    .stdout(logf.try_clone()?)
+                    .stderr(logf);
+                privdrop::apply(&mut cmd, run_as);
+                cmd.spawn()?
+            }
             ServiceKind::Mysql => {
                 let base = self
                     .base_dir(spec)
@@ -801,11 +949,27 @@ impl ServiceManager {
 
 /// The executable name each service kind runs as — what a pid read from disk
 /// has to match before it is signalled.
+/// ElyraSQL's one logical database. `CREATE DATABASE` is a no-op there only
+/// with `IF NOT EXISTS`, so `.env` snippets and connection URIs name this.
+pub const ELYRASQL_DATABASE: &str = "elyra";
+
+/// Run a future to completion from a blocking context. The manager's methods
+/// are synchronous and called from `spawn_blocking`, where a fresh
+/// current-thread runtime is the safe way to drive an async client.
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a current-thread runtime")
+        .block_on(fut)
+}
+
 fn process_name_for(kind: ServiceKind) -> &'static str {
     match kind {
         ServiceKind::Postgres => "postgres",
         ServiceKind::Mysql => "mysqld",
         ServiceKind::Redis => "redis-server",
+        ServiceKind::ElyraSql => "elyrasql",
     }
 }
 
@@ -922,8 +1086,8 @@ fn verify_download(
 ) -> Result<()> {
     let filename = url.rsplit('/').next().unwrap_or_default().to_string();
     let expected = match spec.kind {
-        // A `.sha256` beside each asset.
-        ServiceKind::Postgres => {
+        // A `.sha256` beside each asset (sha256sum format).
+        ServiceKind::Postgres | ServiceKind::ElyraSql => {
             progress("verifying checksum…");
             let doc = http_get_string(&format!("{url}.sha256"))?;
             grove_core::checksum::expected_for(&doc, &filename)

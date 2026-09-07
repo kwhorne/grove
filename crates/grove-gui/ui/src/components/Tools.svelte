@@ -37,7 +37,7 @@
     return {
       kind,
       host: "127.0.0.1",
-      port: kind === "postgres" ? 5432 : 3306,
+      port: kind === "postgres" ? 5432 : kind === "elyrasql" ? 3307 : 3306,
       user: kind === "postgres" ? "grove" : "root",
       password: "",
       database: "",
@@ -219,6 +219,7 @@
           <span>Type</span>
           <select class="inp" bind:value={src.kind} onchange={() => retune(src)}>
             <option value="mysql">MySQL</option>
+            <option value="elyrasql">ElyraSQL</option>
             <option value="postgres">PostgreSQL</option>
             <option value="sqlite">SQLite</option>
           </select>
@@ -248,6 +249,7 @@
           <select class="inp" bind:value={dst.kind} onchange={() => retune(dst)}>
             <option value="sqlite">SQLite</option>
             <option value="mysql">MySQL</option>
+            <option value="elyrasql">ElyraSQL</option>
             <option value="postgres">PostgreSQL</option>
           </select>
         </label>
