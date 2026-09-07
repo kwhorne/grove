@@ -438,8 +438,11 @@ DB_PASSWORD=
 
 Grove tells a site on ElyraSQL apart from one on MySQL by the port it connects
 to, so `grove db snapshot`, the agent-safe migration sandbox and `grove bundle`
-all go to the right server. Published for macOS (Apple silicon) and Linux
-(x86_64, aarch64); there is no Intel macOS build upstream.
+all go to the right server. The desktop app's **Tools → Convert** takes it as a
+source or target — the quickest way to move an existing MySQL or SQLite
+database onto it. Published for macOS (Apple silicon) and Linux (x86_64,
+aarch64); there is no Intel macOS build upstream. Needs ElyraSQL 1.11.2 or
+later, which is what Grove installs.
 
 ---
 

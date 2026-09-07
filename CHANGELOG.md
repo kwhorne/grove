@@ -18,11 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy of the database file via `BACKUP TO`, and `grove db restore` puts it back.
   Grove tells an ElyraSQL site from a MySQL one by the port it connects to, so
   the agent-safe migration sandbox and `grove bundle` snapshot the right server.
-  macOS (Apple silicon) and Linux; upstream publishes no Intel macOS build.
-  Not yet reachable from the **convert** tool: sqlx's MySQL driver opens every
-  connection with `SET sql_mode=(SELECT CONCAT(@@sql_mode, …)), time_zone=…`,
-  which ElyraSQL 1.11.1 rejects, and the Any-driver pool the tool uses has no
-  switch for it. Snapshots connect with those statements turned off.
+  The **convert** tool takes it as a source or target. macOS (Apple silicon) and
+  Linux; upstream publishes no Intel macOS build. Requires ElyraSQL 1.11.2:
+  adding it surfaced that sqlx's MySQL driver — which every Rust client and
+  Grove's convert tool sit on — could not connect to 1.11.1 at all, because
+  its per-connection `SET sql_mode=(SELECT CONCAT(@@sql_mode, …)), time_zone=…`
+  was refused; 1.11.2 accepts it.
 
 ## [1.6.0] — 2026-09-02
 

@@ -62,7 +62,8 @@ enum Kind {
 impl DbConnSpec {
     fn kind(&self) -> Result<Kind> {
         match self.kind.as_str() {
-            "mysql" => Ok(Kind::Mysql),
+            // ElyraSQL speaks MySQL's protocol and dialect; only the port differs.
+            "mysql" | "elyrasql" => Ok(Kind::Mysql),
             "postgres" | "postgresql" | "pgsql" => Ok(Kind::Postgres),
             "sqlite" => Ok(Kind::Sqlite),
             other => Err(ServiceError::Init(format!(

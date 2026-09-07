@@ -60,7 +60,7 @@ pub const CATALOG: &[ServiceSpec] = &[
         kind: ServiceKind::ElyraSql,
         // Upstream's own default, and clear of MySQL's 3306 so both can run.
         default_port: 3307,
-        version: "1.11.1",
+        version: "1.11.2",
     },
     ServiceSpec {
         key: "redis",
@@ -182,8 +182,11 @@ mod tests {
         // Only meaningful where a build is published; the slug test below
         // covers the matrix without depending on the host.
         if let Some(url) = download_url(spec) {
+            let v = spec.version;
             assert!(
-                url.starts_with("https://github.com/kwhorne/ElyraSQL/releases/download/v1.11.1/elyrasql-1.11.1-"),
+                url.starts_with(&format!(
+                    "https://github.com/kwhorne/ElyraSQL/releases/download/v{v}/elyrasql-{v}-"
+                )),
                 "got {url}"
             );
             assert!(url.ends_with(".tar.gz"), "got {url}");

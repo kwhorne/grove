@@ -589,12 +589,10 @@ impl ServiceManager {
         // `BACKUP TO` takes a string literal; the path is ours, but quote it anyway.
         let literal = staging.to_string_lossy().replace('\'', "''");
         // Explicit options rather than a URL. On connect, sqlx's MySQL driver
-        // runs `SET sql_mode=(SELECT CONCAT(@@sql_mode, '…')), time_zone='+00:00'`
-        // — a scalar subquery in SET, and a session variable — and ElyraSQL
-        // 1.11.1 rejects both (error 1235). Neither is needed to copy a file, so
-        // both are turned off here; `SET NAMES`, which ElyraSQL does support,
-        // stays. A URL cannot carry these switches, which is also why the
-        // convert tool (built on sqlx's Any driver) cannot reach ElyraSQL yet.
+        // runs `SET sql_mode=(SELECT CONCAT(@@sql_mode, '…')), time_zone='+00:00'`.
+        // ElyraSQL 1.11.1 rejected both halves (error 1235); 1.11.2 accepts
+        // them. They stay off here regardless: copying a file needs neither, and
+        // a 1.11.1 installed before the bump keeps working. `SET NAMES` stays.
         let options = sqlx::mysql::MySqlConnectOptions::new()
             .host("127.0.0.1")
             .port(port)
