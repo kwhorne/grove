@@ -71,7 +71,7 @@ grove --version
 ```
 
 ```text
-grove 1.7.0
+grove 1.7.1
 ```
 
 > Every example below uses `grove …`. If you skip the symlink, replace `grove`
@@ -140,7 +140,7 @@ grove status
 ```
 
 ```text
-Grove 1.7.0
+Grove 1.7.1
   TLD          .test
   HTTP         :80
   HTTPS        :443

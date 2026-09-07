@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.1] — 2026-09-07
+
+Fixes for what happens *after* an update: the daemon kept running the old
+version, and the tools for restarting it could make things worse.
+
+### Upgrade notes
+
+- **Restart the daemon once after this update.** 1.7.0's updater relaunches the
+  app but not the daemon, so right after installing 1.7.1 the app will show
+  *The daemon is running v1.7.0* with a **Restart daemon** button — click it, or
+  run `grove restart`. From 1.7.1 on, updates restart the daemon themselves.
+
 ### Fixed
 
 - **After the app updated itself, the daemon kept running the old version —
@@ -1086,7 +1098,8 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
-[Unreleased]: https://github.com/kwhorne/grove/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/kwhorne/grove/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/kwhorne/grove/releases/tag/v1.7.1
 [1.7.0]: https://github.com/kwhorne/grove/releases/tag/v1.7.0
 [1.6.0]: https://github.com/kwhorne/grove/releases/tag/v1.6.0
 [1.5.0]: https://github.com/kwhorne/grove/releases/tag/v1.5.0
