@@ -364,21 +364,35 @@ impl FpmLocator for FpmManager {
 mod tests {
     use super::*;
     use crate::registry::PhpBuild;
-    use std::path::Path;
 
     /// A stand-in for php-fpm. It is handed `--nodaemonize --fpm-config <conf>`
     /// like the real thing; it reads the `listen` path out of the config,
     /// creates it so the manager sees the pool come up, then waits to be killed.
-    fn fake_fpm(dir: &Path) -> PathBuf {
+    ///
+    /// Written exactly once per test process, and before any test spawns it.
+    /// The tests here run in parallel threads, and on Linux a `fork` in thread
+    /// B while thread A still has *its* script open for writing hands the
+    /// child a copy of that fd; if the child is still between fork and exec
+    /// when A execs, A gets `ETXTBSY` ("Text file busy"). CI hit exactly that.
+    /// One script, finished before the first spawn, closes the window.
+    fn fake_fpm() -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
-        let script = dir.join("fake-fpm.sh");
-        std::fs::write(
-            &script,
-            "#!/bin/sh\nsock=$(sed -n 's/^listen = //p' \"$3\")\n: > \"$sock\"\nexec sleep 300\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
-        script
+        use std::sync::OnceLock;
+        static SCRIPT: OnceLock<PathBuf> = OnceLock::new();
+        SCRIPT
+            .get_or_init(|| {
+                let dir = std::env::temp_dir().join(format!("grove-fpm-bin-{}", std::process::id()));
+                std::fs::create_dir_all(&dir).unwrap();
+                let script = dir.join("fake-fpm.sh");
+                std::fs::write(
+                    &script,
+                    "#!/bin/sh\nsock=$(sed -n 's/^listen = //p' \"$3\")\n: > \"$sock\"\nexec sleep 300\n",
+                )
+                .unwrap();
+                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+                script
+            })
+            .clone()
     }
 
     fn manager(name: &str) -> (FpmManager, PathBuf) {
@@ -390,7 +404,7 @@ mod tests {
         let mut registry = PhpRegistry::load(&paths);
         registry.register(PhpBuild {
             version: "8.9".into(),
-            fpm_binary: fake_fpm(&base),
+            fpm_binary: fake_fpm(),
             cli_binary: None,
             variant: None,
             user_registered: false,
