@@ -44,6 +44,10 @@ impl PlatformIntegration for Windows {
         Ok(())
     }
 
+    fn trusted_grove_cas(&self) -> Result<Vec<crate::TrustedCert>> {
+        Ok(Vec::new())
+    }
+
     fn name(&self) -> &'static str {
         "windows"
     }
