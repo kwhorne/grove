@@ -120,7 +120,7 @@ sudo grove install
 
 ```text
 Password:
-✓ service installed: /Library/LaunchDaemons/com.elyra.grove.plist (runs at boot, binds the ports, resolver ensured)
+✓ service installed: /Library/LaunchDaemons/com.elyra.grove.plist (runs at boot as you, launchd binds the ports, resolver ensured)
 ```
 
 That's it — Grove is now running. You never need `sudo grove start` again.
@@ -578,10 +578,13 @@ grove doctor
 
 What `sudo grove install` sets up, and the assumptions behind it:
 
-- **A system unit**, run as root so it can bind 53/80/443. Every child —
-  php-fpm, PostgreSQL, MySQL, Redis — is dropped to your user, whose ids the
-  unit records. Earlier versions wrote a `systemctl --user` unit, which cannot
-  bind privileged ports at all.
+- **A system unit that runs the daemon as you** (`User=`), not as root.
+  systemd binds the privileged ports and hands the descriptors over, so there
+  is nothing left to need privilege for; children inherit your identity rather
+  than being dropped to it. Earlier versions wrote a `systemctl --user` unit,
+  which cannot bind privileged ports at all, and then a root unit that could.
+  If `grove install` cannot work out who to serve, the daemon stays root and
+  drops its children as before.
 - **A companion `grove.socket` unit.** systemd binds 80, 443 and 53 (both UDP
   and TCP) and hands the listening descriptors to the daemon, which serves on
   them without binding anything itself. It is `Wants=`, not `Requires=`: if the

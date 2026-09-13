@@ -7,7 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **`sudo grove install` once, to move the daemon off root.** Nothing happens
+  until you run it: an existing install keeps its old unit and its root daemon,
+  and everything works as before. Running it rewrites the unit so launchd or
+  systemd binds the ports and starts the daemon as you, and hands you the Grove
+  home in the same step — on a machine in daily use that is thousands of files,
+  including `config.toml`, every PHP build and the CA key, so it is one
+  `chown -R` rather than a surprise later. If you skip that step and the daemon
+  ends up as you with a tree root owns, it says so at startup and `grove doctor`
+  repeats it on the `grove-home` line.
+- **The CA private key becomes yours** (`0600`, owned by the run user) instead
+  of root's. The daemon signs leaf certificates and the daemon is no longer
+  root, so a key it cannot read is HTTPS that does not work. What that costs is
+  in `docs/ARCHITECTURE.md` under *Trust boundaries*, in short: code running as
+  you can now read it, bounded by the CA's name constraint to the configured
+  TLD and by those names resolving to loopback — while the root-privileged IPC
+  surface that same code could already reach disappears entirely.
+- **Rolling back is safe.** A root daemon reads a user-owned Grove home without
+  trouble, so installing an older Grove and running its `sudo grove install`
+  puts everything back.
+
 ### Added
+
+- **The daemon runs as you.** The unit carries `UserName` on launchd and
+  `User=` on systemd, so from its first instruction the process that serves
+  your sites is the login user. It works because the service manager already
+  binds the privileged ports and hands the descriptors over; there is nothing
+  left that needs privilege. What still needs root is one-off and visible:
+  writing the unit, `/etc/resolver`, the system trust store.
+
+  Consequences worth naming. `grove restart` no longer asks launchd to
+  kickstart a system job, which it could not do unprivileged; it exits and
+  `KeepAlive` brings it back, and because launchd keeps holding the listening
+  sockets the ports are never released, so the restart race that could leave an
+  unprivileged daemon serving nothing is gone. The privilege-dropping machinery
+  every spawn went through turns itself off when it finds it is not root, so
+  php-fpm, PostgreSQL, MySQL and Redis inherit your identity instead of being
+  dropped to it. A machine where `grove install` cannot work out who to serve
+  still runs the daemon as root, exactly as before.
 
 - **The service manager binds the privileged ports, and hands them over.**
   Binding 53, 80 and 443 needs root; serving on them does not. `grove install`

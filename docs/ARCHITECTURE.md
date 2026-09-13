@@ -166,10 +166,16 @@ be able to end the process:
 
 ## Trust boundaries
 
-Grove's shape follows from one fact: a small part of it runs as **root** — it has
-to, to bind 53/80/443, install the system resolver and add a CA to the trust
-store — while everything it supervises runs as **you**. That line is where the
-interesting failure modes live, so it is drawn explicitly.
+Grove's shape used to follow from one fact: a part of it ran as **root**,
+because binding 53/80/443 needs root, and everything it supervised ran as
+**you**. That line is where the interesting failure modes lived, so it was
+drawn explicitly.
+
+The line has moved. The service manager binds the ports and hands the
+descriptors over, so the daemon runs as you from its first instruction. What
+still needs root is one-off and visible: writing the unit, `/etc/resolver`, and
+adding the CA to the system trust store — all of them steps in
+`sudo grove install` or `sudo grove ca trust`, none of them a running process.
 
 ### The privileged ports need not be bound by Grove
 
@@ -197,22 +203,36 @@ also means the two halves can be adopted independently, and that running
 `sudo grove install` is the visible, deliberate step that switches a machine
 over.
 
-### Root supervises, but nothing it starts stays root
+### Nothing the daemon starts was ever root, and now neither is the daemon
 
-The daemon spawns PHP-FPM pools, PostgreSQL, MySQL, Redis, `grove dev` servers,
-and the scaffolding tools (Composer, the Laravel installer). Every one of them is
-dropped to the invoking user before `exec`: `setgroups` (so root's
-supplementary groups do not survive), then `setgid`, then `setuid` — in that
-order, because the reverse leaves no privilege to drop the others. The identity
-comes from `GROVE_RUN_USER_ID`/`GROVE_RUN_GROUP_ID` (written into the service
-unit at install time), falling back to `GROVE_RUN_USER`/`SUDO_USER` resolved
-through `id`. After dropping, the child verifies its own `geteuid`/`getegid`: a
-*partial* drop fails the spawn rather than quietly running a database as root.
+The unit carries `UserName` (launchd) or `User=` (systemd), so the daemon is
+the login user. Children — PHP-FPM pools, PostgreSQL, MySQL, Redis, `grove dev`
+servers, Composer, the Laravel installer — simply inherit that, and the
+privilege-dropping machinery they used to go through turns itself off: it asks
+`geteuid` first and does nothing when the answer is not zero.
 
-The same applies to Grove probing its own runtimes — `php -m`, `php -i` and
-friends exec a binary out of `$GROVE_HOME`, so they go through the same drop.
-(The mail-catcher needs none of this: it is an in-process Rust SMTP listener, not
-a child process.)
+That machinery stays for now, because a machine where `grove install` could not
+work out who to serve still runs the daemon as root, exactly as before. There
+the old path is live: `setgroups` (so root's supplementary groups do not
+survive), then `setgid`, then `setuid` — in that order, because the reverse
+leaves no privilege to drop the others — and the child verifies its own
+`geteuid`/`getegid` afterwards, so a *partial* drop fails the spawn rather than
+quietly running a database as root.
+
+### The CA private key belongs to the user now
+
+It used to be `root:root 0600`, which kept it away from code running as you.
+The daemon signs leaf certificates, and the daemon is you, so the key is yours:
+`0600`, owned by the run user.
+
+That is a trade and worth stating plainly. Code running as you can read the key
+and mint a certificate this machine will believe. Two things bound it: the CA
+carries a `NameConstraints` extension limiting it to the configured TLD, which
+every TLS client enforces and the `grove-tls` tests pin; and those names resolve
+to loopback, so the key is worth nothing elsewhere. Against that, the same code
+could previously reach a **root** daemon through the IPC socket, whose requests
+include installing runtimes and services. Removing root removes that surface
+outright, which is the larger half.
 
 ### The IPC socket is the authorization boundary
 

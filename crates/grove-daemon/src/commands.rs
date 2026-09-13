@@ -1201,21 +1201,33 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
         }
 
         Request::RestartDaemon => {
-            // When installed as a root LaunchDaemon, kickstart re-execs the
-            // on-disk binary (picking up an app update) with no password prompt,
-            // since we're already root. Delay slightly so this response flushes
-            // to the client first. Fall back to a plain shutdown otherwise.
+            // Two ways to come back, and which one applies is decided by
+            // whether this process is root.
+            //
+            // As root: `launchctl kickstart -k` re-execs the on-disk binary,
+            // picking up an app update, with no password prompt.
+            //
+            // As the user — the ordinary case once the service manager hands
+            // the ports over — driving a *system* launchd job needs privilege
+            // we no longer have, and asking for it would fail once per restart
+            // for nothing. Exiting is enough: `KeepAlive` starts the job again,
+            // and because launchd holds the listening sockets the ports are
+            // never released, so nothing else can take :80 in the gap. The
+            // restart that used to be a race is now just a re-exec.
+            //
+            // Either way, delay slightly so this response reaches the client
+            // before the process goes.
             #[cfg(target_os = "macos")]
             {
                 std::thread::spawn(|| {
                     std::thread::sleep(std::time::Duration::from_millis(400));
-                    let ok = std::process::Command::new("launchctl")
-                        .args(["kickstart", "-k", "system/com.elyra.grove"])
-                        .status()
-                        .map(|s| s.success())
-                        .unwrap_or(false);
+                    let ok = grove_os::is_elevated()
+                        && std::process::Command::new("launchctl")
+                            .args(["kickstart", "-k", "system/com.elyra.grove"])
+                            .status()
+                            .map(|s| s.success())
+                            .unwrap_or(false);
                     if !ok {
-                        // Not a system LaunchDaemon (e.g. dev) — just exit.
                         std::process::exit(0);
                     }
                 });

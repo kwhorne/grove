@@ -85,6 +85,23 @@ fn launchd_plist(
             )
         })
         .unwrap_or_default();
+    // The job itself runs as that user. launchd binds the privileged ports
+    // first, as root, and hands the descriptors over (see `Sockets` below), so
+    // there is nothing left for the daemon to need privilege for. `GroupName`
+    // is deliberately absent: launchd then uses the user's own primary group,
+    // which is the right answer and one fewer thing to get wrong.
+    //
+    // Without a run user the job stays root, as it always has. That is the
+    // machine where `grove install` could not tell who to serve, and a daemon
+    // that refused to start there would be worse than one that keeps working.
+    let run_as_xml = run_user
+        .map(|u| {
+            format!(
+                "    <key>UserName</key><string>{}</string>\n",
+                xml_escape(u)
+            )
+        })
+        .unwrap_or_default();
     // Numeric ids so the daemon can authorize its IPC socket without
     // resolving a username. Rendered from `u32`, so no XML escaping is
     // needed here even though the surrounding template does not escape.
@@ -111,7 +128,7 @@ fn launchd_plist(
     <dict>
         <key>GROVE_HOME</key><string>{home}</string>
 {run_user_xml}{run_id_xml}    </dict>
-    <key>RunAtLoad</key><true/>
+{run_as_xml}    <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
 {sockets}    <key>StandardOutPath</key><string>{home}/daemon.out.log</string>
     <key>StandardErrorPath</key><string>{home}/daemon.err.log</string>
@@ -123,6 +140,7 @@ fn launchd_plist(
         home = xml_escape(&grove_home.display().to_string()),
         run_user_xml = run_user_xml,
         run_id_xml = run_id_xml,
+        run_as_xml = run_as_xml,
         sockets = launchd_sockets(ports),
     )
 }
@@ -343,9 +361,13 @@ pub fn linux_unit(
         }
         (None, None) => String::new(),
     };
+    // `ExecStartPre=+` keeps its leading `+`, which is systemd's way of saying
+    // "this one line runs as root regardless of `User=`" — the resolver link
+    // needs it, the daemon does not.
+    let run_as = run_user.map(|u| format!("User={u}\n")).unwrap_or_default();
     format!(
         "[Unit]\nDescription=Elyra Grove daemon\nAfter=network-online.target systemd-resolved.service grove.socket\nWants=network-online.target grove.socket\n\n\
-         [Service]\nExecStartPre=+{pre}\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\n{run_env}Restart=always\nRestartSec=2\n\n\
+         [Service]\nExecStartPre=+{pre}\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\n{run_env}{run_as}Restart=always\nRestartSec=2\n\n\
          [Install]\nWantedBy=multi-user.target\n",
         pre = crate::linux::resolver_exec_start_pre(tld, dns_port),
         exe = exe.display(),
@@ -525,6 +547,79 @@ mod tests {
         assert_eq!(plist.matches("<key>Sockets</key>").count(), 1, "{plist}");
     }
 
+    /// The whole point of the change: the job runs as the user, and launchd
+    /// hands it the privileged ports. One without the other is either a daemon
+    /// that cannot bind or a daemon that is still root, so assert them
+    /// together.
+    #[test]
+    fn the_job_runs_as_the_user_and_is_handed_the_ports() {
+        let plist = launchd_plist(
+            std::path::Path::new("/Applications/Grove.app/Contents/MacOS/grove"),
+            std::path::Path::new("/Users/someone/Library/Application Support/Grove"),
+            Some("someone"),
+            Some((501, 20)),
+            ListenPorts {
+                http: 80,
+                https: 443,
+                dns: 53,
+            },
+        );
+        assert!(
+            plist.contains("<key>UserName</key><string>someone</string>"),
+            "{plist}"
+        );
+        assert!(plist.contains("<key>Sockets</key>"), "{plist}");
+        // launchd uses the user's own primary group when GroupName is absent,
+        // which is the right answer and one fewer thing to get wrong.
+        assert!(!plist.contains("<key>GroupName</key>"), "{plist}");
+    }
+
+    /// No run user means `grove install` could not tell who to serve. The job
+    /// stays root there, exactly as it always has: a daemon that refused to
+    /// start would be worse than one that keeps working the old way.
+    #[test]
+    fn without_a_run_user_the_job_stays_root() {
+        let plist = launchd_plist(
+            std::path::Path::new("/usr/local/bin/grove"),
+            std::path::Path::new("/var/root/Grove"),
+            None,
+            None,
+            ListenPorts {
+                http: 80,
+                https: 443,
+                dns: 53,
+            },
+        );
+        assert!(!plist.contains("<key>UserName</key>"), "{plist}");
+        // The sockets are still declared: being handed the ports is useful to
+        // a root daemon too, because they survive a restart.
+        assert!(plist.contains("<key>Sockets</key>"), "{plist}");
+    }
+
+    /// A user name is interpolated into the document like any other value, so
+    /// it goes through the escaper — a `UserName` that closed its element
+    /// early could add keys to a plist launchd loads as root.
+    #[test]
+    fn a_hostile_user_name_cannot_add_keys() {
+        let plist = launchd_plist(
+            std::path::Path::new("/usr/local/bin/grove"),
+            std::path::Path::new("/tmp/Grove"),
+            Some("x</string><key>UserName</key><string>root"),
+            None,
+            ListenPorts {
+                http: 80,
+                https: 443,
+                dns: 53,
+            },
+        );
+        assert_eq!(
+            plist.matches("<key>UserName</key>").count(),
+            1,
+            "one UserName, the one we wrote: {plist}"
+        );
+        assert!(!plist.contains("<string>root</string>"), "{plist}");
+    }
+
     /// Non-default ports have to reach the unit, or `grove install` on a
     /// machine serving HTTP on 8080 would tell launchd to bind 80.
     #[test]
@@ -619,6 +714,33 @@ mod linux_unit_tests {
         );
     }
 
+    /// systemd's counterpart, and the one line that must keep its `+`:
+    /// `ExecStartPre=+` runs as root regardless of `User=`, which the resolver
+    /// link needs and the daemon does not.
+    #[test]
+    fn the_service_runs_as_the_user_but_the_resolver_step_stays_root() {
+        let unit = linux_unit(
+            std::path::Path::new("/usr/local/bin/grove"),
+            std::path::Path::new("/home/kh/.local/share/Grove"),
+            Some("kh"),
+            Some((1000, 1000)),
+            "test",
+            53,
+        );
+        assert!(unit.contains("\nUser=kh\n"), "{unit}");
+        assert!(unit.contains("ExecStartPre=+"), "{unit}");
+
+        let rootful = linux_unit(
+            std::path::Path::new("/usr/local/bin/grove"),
+            std::path::Path::new("/root/Grove"),
+            None,
+            None,
+            "test",
+            53,
+        );
+        assert!(!rootful.contains("User="), "{rootful}");
+    }
+
     /// Non-default ports have to reach the socket unit too, or an install on a
     /// machine serving HTTP on 8080 would tell systemd to bind 80.
     #[test]
@@ -634,8 +756,11 @@ mod linux_unit_tests {
         assert!(!unit.contains(":80\n"), "{unit}");
     }
 
+    /// The rest of the unit, unchanged by the move to a non-root daemon: a
+    /// system unit, the recorded run ids, the resolver link recreated on every
+    /// start, and `Restart=always` so a deliberate restart comes back.
     #[test]
-    fn the_unit_binds_as_root_records_the_run_user_and_recreates_the_resolver_link() {
+    fn the_unit_records_the_run_user_and_recreates_the_resolver_link() {
         let unit = linux_unit(
             std::path::Path::new("/usr/local/bin/grove"),
             std::path::Path::new("/home/u/.local/share/grove"),
@@ -649,8 +774,8 @@ mod linux_unit_tests {
             "a system unit, not a user one: {unit}"
         );
         assert!(
-            !unit.contains("User="),
-            "root, so it can bind 53/80/443; children are dropped"
+            unit.contains("\nUser=u\n"),
+            "the daemon runs as the user; systemd binds the privileged ports: {unit}"
         );
         assert!(unit.contains("ExecStartPre=+/bin/sh -c 'ip link add grove0 type dummy 2>/dev/null || true; ip link set grove0 up; resolvectl dns grove0 127.0.0.1:53; resolvectl domain grove0 ~test'"), "{unit}");
         assert!(unit.contains("ExecStart=/usr/local/bin/grove daemon"));
