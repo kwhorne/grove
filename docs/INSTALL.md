@@ -189,8 +189,15 @@ the exact removal command:
 
 ```text
 ✗ trust-store    an old, unconstrained Grove CA is still trusted — it can sign any hostname this machine will believe. Remove it: sudo security delete-certificate -Z 3F2A… /Library/Keychains/System.keychain
-``` When another server already holds a port,
-the listener line names it:
+```
+
+*Trusted*, not merely present: `grove ca rotate` strips the old CA's trust
+settings but leaves the certificate itself sitting in the keychain, where a
+search still finds it and nothing on the machine will chain to it. Doctor asks
+the system's trust evaluator, so a leftover like that stays quiet and only a CA
+the machine would actually believe raises the failure.
+
+When another server already holds a port, the listener line names it:
 
 ```text
 ✗ http           could not bind :80: Address already in use (os error 48) — held by httpd (pid 412)

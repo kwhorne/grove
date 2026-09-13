@@ -3,6 +3,7 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::{OsError, PlatformIntegration, Result};
 
@@ -96,14 +97,50 @@ impl PlatformIntegration for MacOs {
                 detail: String::from_utf8_lossy(&out.stderr).trim().to_string(),
             });
         }
-        Ok(parse_find_certificate(&String::from_utf8_lossy(
-            &out.stdout,
-        )))
+        let mut found = parse_find_certificate(&String::from_utf8_lossy(&out.stdout));
+        // Present is not the same as trusted, and only trusted is a problem.
+        found.retain(|c| trusted_as_root(&c.pem));
+        Ok(found)
     }
 
     fn name(&self) -> &'static str {
         "macos"
     }
+}
+
+/// Does the machine actually believe this certificate as a root?
+///
+/// `find-certificate` answers a different question — what is *stored* in the
+/// keychain. `grove ca rotate` removes the old CA's trust settings
+/// (`remove-trusted-cert`) but leaves the certificate itself behind, so the
+/// search still lists it while nothing on the machine will chain to it. Only
+/// the trust evaluator can tell an anchor apart from that leftover, and the
+/// difference decides whether doctor reports a security problem or a stray
+/// file. `-L` keeps it off the network, `-l` says the certificate under test
+/// is itself a CA, `-q` keeps `security` quiet.
+///
+/// When the check cannot be run at all, the certificate counts as trusted: a
+/// false alarm the user can dismiss beats silence about a CA that can sign
+/// any hostname.
+fn trusted_as_root(pem: &str) -> bool {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "grove-trust-check-{}-{}.pem",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    if std::fs::write(&path, pem).is_err() {
+        return true;
+    }
+    let verdict = Command::new("security")
+        .args(["verify-cert", "-c"])
+        .arg(&path)
+        .args(["-L", "-l", "-q"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(true);
+    let _ = std::fs::remove_file(&path);
+    verdict
 }
 
 /// Split `security find-certificate -a -Z -p` output into entries.
@@ -150,5 +187,35 @@ SHA-1 hash: BBBB2222\n-----BEGIN CERTIFICATE-----\nMIIC\n-----END CERTIFICATE---
             .ends_with("-Z AAAA1111 /Library/Keychains/System.keychain"));
         assert!(got[1].remove_hint.contains("BBBB2222"));
         assert_eq!(parse_find_certificate(""), Vec::<crate::TrustedCert>::new());
+    }
+
+    /// A self-signed certificate this machine has never seen must come back
+    /// untrusted. Without this, `trusted_grove_cas` could go back to reporting
+    /// whatever is *stored* in the keychain — which after `grove ca rotate`
+    /// includes the old CA, trust settings removed, harmless — and doctor
+    /// would raise a security failure over a stray file.
+    #[test]
+    fn a_certificate_nobody_trusts_is_not_a_root() {
+        const STRANGER: &str = "\
+-----BEGIN CERTIFICATE-----
+MIIC0DCCAbgCCQD9pHpVq7tyhDANBgkqhkiG9w0BAQsFADAqMRcwFQYDVQQDDA5O
+b3QgQSBHcm92ZSBDQTEPMA0GA1UECgwGTm9ib2R5MB4XDTI2MDkxMzE4NDQ1M1oX
+DTQ2MDkwODE4NDQ1M1owKjEXMBUGA1UEAwwOTm90IEEgR3JvdmUgQ0ExDzANBgNV
+BAoMBk5vYm9keTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALmZ/kqy
+6P8n3OCjhJlNSiKgymXaFPy1E6/BMf2TNADb3jc45P9rhRrrzZdj5oQeUzI4W106
+W9QkJjA85BGBqP08VNbtvf6KEaKL0GOY2EJsRpNGLz7oG28t8Y2tTgE5NUNX/+1e
+bnuOs4O8q72II7zX0HTZ9lcEvqTRlolzAtg/VxBuw+Qzg7aSobmCEjxGO8nugD+6
+oDnK7YFGRxF7qCRzzSPn8SGObRepbsgO6KpLlT5yXDg51eH2x3wZSQXrnaDmATMn
+DK038oHg7zqXHR6qhHbheoj0WQKz7FSC89cR6Zma3D2nFX74F7B7+vRyYF2zswvz
+kS/cJf4TatE7q38CAwEAATANBgkqhkiG9w0BAQsFAAOCAQEAJScBKEIX9DFytJus
+Ne/P1sA5cbBcCZu/ea7i/qaC3idML0H8FBoAq0ZOTO8J75XsGPdZy8+cY69nPvGM
+yl+3PWhnaCB5ZZ0i7V28hbJag10TAkMv685a6PuYj2ee++UO8/ol+lrtGNawJC+l
+8FUaw0mdzSDnW6+J4lQqRd4AdxvYTqVGC3+D/cb43bpzPKxOJiUwcH9hnsO59i4d
+5qMBYPLpoN5vkmF+wMCFcFEWlao/tiH4axsXP2wQL3IF/a4LauRVIqZrjhK5V9Iu
+QHBGjXmc8m6KA0HyNheMMfCO0wGgwYguWnLj664X2H1X93eJilOJ676jIErCUZMd
+698Y9Q==
+-----END CERTIFICATE-----
+";
+        assert!(!trusted_as_root(STRANGER));
     }
 }
