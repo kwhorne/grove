@@ -25,6 +25,7 @@ pub struct ListenPorts {
 }
 
 /// The `Sockets` entry the daemon looks for; see `grove_core::activation`.
+#[cfg(target_os = "macos")]
 const SOCKET_NAME: &str = "Listeners";
 
 /// The `Sockets` dictionary for the launchd plist.
@@ -35,6 +36,7 @@ const SOCKET_NAME: &str = "Listeners";
 /// answering the whole network is not what `grove install` promised. Both
 /// halves of DNS are listed because a response too large for a datagram is
 /// retried over TCP.
+#[cfg(target_os = "macos")]
 fn launchd_sockets(ports: ListenPorts) -> String {
     let ListenPorts { http, https, dns } = ports;
     let any = |port: u16| {
@@ -67,6 +69,7 @@ fn launchd_sockets(ports: ListenPorts) -> String {
 /// Separated from writing it so the document can be linted and asserted on in
 /// a test; a plist that does not parse is a daemon that never starts, and the
 /// only feedback is a machine that has stopped serving.
+#[cfg(target_os = "macos")]
 fn launchd_plist(
     exe: &std::path::Path,
     grove_home: &std::path::Path,
