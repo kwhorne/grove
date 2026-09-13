@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`grove doctor` re-checks the 1.5.0 invariants on every run.** Four new
+  lines: `ipc-socket` (the daemon's socket must not be world-accessible),
+  `grove-home` (the tree root reads binaries out of must not be world-writable;
+  warns when root owns it), `site-certs` (how many leaves, soonest expiry,
+  expired ones noted as reissued on next request), and `trust-store` — is the
+  CA on disk what the system trusts, and is it the *only* Grove CA trusted. The
+  last catches what `grove ca rotate` without `sudo` used to leave behind: an
+  old, unconstrained CA in the keychain, able to sign any hostname. It names the
+  stale entry's own removal command (`security delete-certificate -Z <sha1>` on
+  macOS, the anchor path on Linux). Runtime-hash verification is not among
+  them yet: there is no recorded digest to compare against until runtimes are
+  content-addressed.
 - **Security invariants as tests.** 1.5.0's central claim — a leaked Grove CA
   key cannot mint a certificate for anything outside the configured TLD that a
   machine trusting the CA will accept — lived in two doc comments. It is now a

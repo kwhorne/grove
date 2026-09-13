@@ -161,6 +161,10 @@ grove doctor
 ✓ root-ca        present at /Users/you/Library/Application Support/Grove/certs/grove-ca.pem
 ✓ root-ca-scope  constrained to .test
 ✓ resolver       *.test resolves to 127.0.0.1
+✓ ipc-socket     mode 0660, owner uid 501
+✓ grove-home     owned by uid 501, mode 0755
+✓ site-certs     3 issued, soonest expires in 321 days (myapp_test); renewed within 30
+✓ trust-store    this CA (sha256 fb7d743ac304614d…) is trusted, and no stale Grove CA is
 ✓ dns            listening on :53
 ✓ http           listening on :80
 ✓ https          listening on :443
@@ -171,7 +175,21 @@ grove doctor
 
 `doctor` exits non-zero if anything shows `✗`, so it can gate a script. It
 works with the daemon stopped too: the config, CA and resolver checks run
-locally and the daemon line says so. When another server already holds a port,
+locally and the daemon line says so.
+
+Four of the lines re-check, on every run, what 1.5.0 fixed once: `ipc-socket`
+(the socket every privileged operation goes through must not be
+world-accessible), `grove-home` (the tree root reads binaries out of must not be
+world-writable), `site-certs` (soonest expiry; expired leaves are reissued on
+the next request), and `trust-store` — is *this* CA what the machine trusts,
+and is it the only Grove CA it trusts. That last one catches what `grove ca
+rotate` used to leave behind: an old, unconstrained CA still in the keychain,
+able to sign any hostname the machine will believe. When it finds one it prints
+the exact removal command:
+
+```text
+✗ trust-store    an old, unconstrained Grove CA is still trusted — it can sign any hostname this machine will believe. Remove it: sudo security delete-certificate -Z 3F2A… /Library/Keychains/System.keychain
+``` When another server already holds a port,
 the listener line names it:
 
 ```text

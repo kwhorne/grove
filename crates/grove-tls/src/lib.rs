@@ -267,17 +267,62 @@ const RENEW_BEFORE_DAYS: i64 = 30;
 /// re-issuing costs a keypair, while trusting something unreadable is how a
 /// site ends up serving an expired certificate.
 fn expires_within(cert_pem: &str, days: i64) -> bool {
-    use x509_parser::prelude::*;
+    // A certificate that does not parse is treated as expiring: reissuing it
+    // is the safe response to an unreadable file.
+    match not_after(cert_pem) {
+        Some(t) => t - OffsetDateTime::now_utc() < Duration::days(days),
+        None => true,
+    }
+}
 
-    let Ok((_, pem)) = parse_x509_pem(cert_pem.as_bytes()) else {
-        return true;
-    };
-    let Ok(cert) = pem.parse_x509() else {
-        return true;
-    };
-    let not_after = cert.validity().not_after.timestamp();
-    let cutoff = OffsetDateTime::now_utc() + Duration::days(days);
-    not_after <= cutoff.unix_timestamp()
+/// The `notAfter` instant of a PEM certificate. `None` if it does not parse.
+pub fn not_after(cert_pem: &str) -> Option<OffsetDateTime> {
+    use x509_parser::prelude::*;
+    let (_, pem) = parse_x509_pem(cert_pem.as_bytes()).ok()?;
+    let cert = pem.parse_x509().ok()?;
+    Some(cert.validity().not_after.to_datetime())
+}
+
+/// Whole days until `notAfter`; negative once expired. `None` if it does not
+/// parse. Callers outside this crate get a number, not a `time` type.
+pub fn days_until_expiry(cert_pem: &str) -> Option<i64> {
+    Some((not_after(cert_pem)? - OffsetDateTime::now_utc()).whole_days())
+}
+
+/// The dNSName subtrees a certificate's `NameConstraints` extension permits.
+/// `None` when the extension is absent — an *unconstrained* CA — or the PEM
+/// does not parse. This is how `grove doctor` tells a rotated-away,
+/// still-trusted CA from the current one without any Grove metadata.
+pub fn permitted_dns_subtrees(cert_pem: &str) -> Option<Vec<String>> {
+    use x509_parser::prelude::*;
+    let (_, pem) = parse_x509_pem(cert_pem.as_bytes()).ok()?;
+    let cert = pem.parse_x509().ok()?;
+    let nc = cert
+        .extensions()
+        .iter()
+        .find_map(|e| match e.parsed_extension() {
+            ParsedExtension::NameConstraints(nc) => Some(nc),
+            _ => None,
+        })?;
+    Some(
+        nc.permitted_subtrees
+            .as_ref()?
+            .iter()
+            .filter_map(|st| match &st.base {
+                GeneralName::DNSName(d) => Some(d.to_string()),
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+/// SHA-256 of the certificate's DER, lowercase hex — the fingerprint trust
+/// stores and browsers display, so two copies of "Grove Local CA" can be told
+/// apart.
+pub fn fingerprint_sha256(cert_pem: &str) -> Option<String> {
+    use x509_parser::prelude::*;
+    let (_, pem) = parse_x509_pem(cert_pem.as_bytes()).ok()?;
+    Some(grove_core::checksum::sha256_hex(&pem.contents))
 }
 
 /// The TLD a CA on disk was constrained to, if Grove recorded one.
@@ -844,5 +889,39 @@ mod tests {
             believes(&machine, &leaf, "myapp.localtest").is_err(),
             "'localtest' ends in 'test' but is a different TLD"
         );
+    }
+
+    #[test]
+    fn certificate_helpers_read_what_the_ca_wrote() {
+        let ca = CertificateAuthority::generate_for_tld("test").unwrap();
+        assert_eq!(
+            permitted_dns_subtrees(&ca.cert_pem()).as_deref(),
+            Some(&["test".to_string()][..])
+        );
+        let (unconstrained, _) = unconstrained_ca();
+        assert_eq!(
+            permitted_dns_subtrees(&unconstrained),
+            None,
+            "no extension → None"
+        );
+
+        let fp = fingerprint_sha256(&ca.cert_pem()).expect("fingerprint");
+        assert_eq!(fp.len(), 64);
+        assert_ne!(
+            fp,
+            fingerprint_sha256(&unconstrained).unwrap(),
+            "different certs, different prints"
+        );
+        assert_eq!(fp, fingerprint_sha256(&ca.cert_pem()).unwrap(), "stable");
+
+        let (leaf, _) = ca.issue_leaf(&["myapp.test".to_string()]).unwrap();
+        let days = (not_after(&leaf).expect("not_after") - OffsetDateTime::now_utc()).whole_days();
+        assert!(
+            (395..=397).contains(&days),
+            "a fresh leaf lasts ~397 days, got {days}"
+        );
+
+        assert_eq!(not_after("not a certificate"), None);
+        assert_eq!(fingerprint_sha256(""), None);
     }
 }

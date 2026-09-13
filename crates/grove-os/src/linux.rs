@@ -341,6 +341,27 @@ impl PlatformIntegration for Linux {
         Ok(())
     }
 
+    fn trusted_grove_cas(&self) -> Result<Vec<crate::TrustedCert>> {
+        // The system store only; the NSS databases are per browser profile and
+        // are what `trust_ca` writes, not what doctor can read back cheaply.
+        let Some(store) = detect_trust_store() else {
+            return Ok(Vec::new());
+        };
+        let path = store.anchor_path();
+        match std::fs::read_to_string(&path) {
+            Ok(pem) => Ok(vec![crate::TrustedCert {
+                pem,
+                remove_hint: format!(
+                    "sudo rm {} && sudo {}",
+                    path.display(),
+                    store.refresh_command().join(" ")
+                ),
+            }]),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn name(&self) -> &'static str {
         "linux"
     }

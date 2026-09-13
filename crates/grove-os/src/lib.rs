@@ -22,6 +22,17 @@ pub enum OsError {
 pub type Result<T> = std::result::Result<T, OsError>;
 
 /// Operations every platform backend must provide.
+/// One "Grove Local CA" entry found in the system trust store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedCert {
+    /// The certificate, PEM.
+    pub pem: String,
+    /// The command that removes exactly this entry — the store's own handle
+    /// (a SHA-1 on macOS, a file path on Linux), so `grove doctor` can name
+    /// the fix rather than describe a keychain dance.
+    pub remove_hint: String,
+}
+
 pub trait PlatformIntegration {
     /// Install a system resolver entry so `*.<tld>` is sent to Grove's DNS.
     /// `dns_port` is where Grove's resolver listens (usually 53).
@@ -35,6 +46,11 @@ pub trait PlatformIntegration {
 
     /// Remove the Grove root CA from the system trust store.
     fn untrust_ca(&self, ca_cert: &Path) -> Result<()>;
+
+    /// Every certificate named "Grove Local CA" the system trust store holds.
+    /// A store may hold several — `grove ca rotate` without `sudo` used to
+    /// leave the old one behind — and only one of them is the CA on disk.
+    fn trusted_grove_cas(&self) -> Result<Vec<TrustedCert>>;
 
     /// Human-readable name of the active backend.
     fn name(&self) -> &'static str;

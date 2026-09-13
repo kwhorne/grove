@@ -118,7 +118,7 @@ fn run_as_from_env() -> Option<(u32, u32)> {
 }
 
 #[cfg(unix)]
-fn current_uid() -> u32 {
+pub(crate) fn current_uid() -> u32 {
     // Safe: `geteuid` takes no arguments, touches no memory, and cannot fail.
     unsafe { libc_geteuid() }
 }

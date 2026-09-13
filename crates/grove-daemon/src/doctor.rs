@@ -95,6 +95,19 @@ pub fn local_checks(paths: &GrovePaths, config: Option<&Config>) -> Vec<Diagnost
         out.push(resolver_check(&config.general.tld, config.general.dns_port));
     }
 
+    // The things 1.5.0 fixed, checked on every run rather than assumed fixed:
+    // the socket that authorizes every privileged operation, the tree root
+    // reads binaries out of, the leaves sites are served with, and whether the
+    // machine's trust store holds *this* CA and nothing Grove left behind.
+    if let Some(e) = ipc_socket_check(&paths.ipc_socket()) {
+        out.push(e);
+    }
+    out.push(grove_home_check(paths.base()));
+    out.push(leaf_certs_check(paths));
+    if ca.exists() {
+        out.push(trust_store_check(&ca));
+    }
+
     // A state file that did not parse was moved aside rather than overwritten;
     // the log said so once. This keeps saying so until someone looks.
     let mut quarantined = Vec::new();
@@ -253,6 +266,270 @@ fn resolve_with_timeout(host: &str) -> Resolved {
     }
 }
 
+/// The IPC socket is the authorization boundary: everything the root daemon can
+/// do is reachable through it. It is created `0660` and owned by the run user;
+/// anything world-accessible undoes the peer check. Absent socket → no entry
+/// (the `daemon` line covers that).
+#[cfg(unix)]
+fn ipc_socket_check(socket: &Path) -> Option<DiagnosticEntry> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(socket).ok()?;
+    let mode = meta.mode() & 0o777;
+    let owner = meta.uid();
+    Some(if mode & 0o007 != 0 {
+        entry(
+            "ipc-socket",
+            DiagnosticStatus::Fail,
+            format!(
+                "{} is mode {mode:04o}: any local user can command the daemon. \
+                 Restart it (`grove restart`); it recreates the socket 0660.",
+                socket.display()
+            ),
+        )
+    } else {
+        entry(
+            "ipc-socket",
+            DiagnosticStatus::Pass,
+            format!("mode {mode:04o}, owner uid {owner}"),
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn ipc_socket_check(_socket: &Path) -> Option<DiagnosticEntry> {
+    None
+}
+
+/// `$GROVE_HOME` is where root reads `php-builds.json` — a file that names the
+/// binary it will execute — so who can write there matters more than for any
+/// other directory Grove touches.
+#[cfg(unix)]
+fn grove_home_check(base: &Path) -> DiagnosticEntry {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(meta) = std::fs::metadata(base) else {
+        return entry(
+            "grove-home",
+            DiagnosticStatus::Fail,
+            format!("{} does not exist — `grove init`", base.display()),
+        );
+    };
+    let mode = meta.mode() & 0o777;
+    let owner = meta.uid();
+    if mode & 0o002 != 0 {
+        return entry(
+            "grove-home",
+            DiagnosticStatus::Fail,
+            format!(
+                "{} is world-writable (mode {mode:04o}): anyone on this machine can plant a \
+                 php-fpm binary the root daemon will run. `chmod o-w {}`",
+                base.display(),
+                base.display()
+            ),
+        );
+    }
+    let me = crate::ipc::current_uid();
+    if owner == 0 && me != 0 {
+        return entry(
+            "grove-home",
+            DiagnosticStatus::Warn,
+            format!(
+                "{} is owned by root (created by `sudo grove init`?); files inside may not be \
+                 writable for you. `sudo chown -R {me} {}`",
+                base.display(),
+                base.display()
+            ),
+        );
+    }
+    entry(
+        "grove-home",
+        DiagnosticStatus::Pass,
+        format!("owned by uid {owner}, mode {mode:04o}"),
+    )
+}
+
+#[cfg(not(unix))]
+fn grove_home_check(base: &Path) -> DiagnosticEntry {
+    entry(
+        "grove-home",
+        DiagnosticStatus::Pass,
+        base.display().to_string(),
+    )
+}
+
+/// Every leaf under `certs/`, by days until it expires. Expired is not a
+/// failure — the daemon reissues on the next request — but it is worth a
+/// word, and the soonest expiry is worth knowing.
+fn leaf_certs_check(paths: &GrovePaths) -> DiagnosticEntry {
+    let ca = paths.ca_cert();
+    let mut leaves: Vec<(String, i64)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(paths.certs_dir()) {
+        for e in entries.flatten() {
+            let p = e.path();
+            if p == ca || p.extension().and_then(|x| x.to_str()) != Some("pem") {
+                continue;
+            }
+            let Ok(pem) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            if let Some(days) = grove_tls::days_until_expiry(&pem) {
+                let name = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                leaves.push((name, days));
+            }
+        }
+    }
+    summarize_leaves(&leaves)
+}
+
+fn summarize_leaves(leaves: &[(String, i64)]) -> DiagnosticEntry {
+    if leaves.is_empty() {
+        return entry(
+            "site-certs",
+            DiagnosticStatus::Pass,
+            "no site certificates issued yet (issued on first HTTPS request)",
+        );
+    }
+    let expired: Vec<&str> = leaves
+        .iter()
+        .filter(|(_, d)| *d < 0)
+        .map(|(n, _)| n.as_str())
+        .collect();
+    let (soonest_name, soonest_days) = leaves
+        .iter()
+        .min_by_key(|(_, d)| *d)
+        .map(|(n, d)| (n.as_str(), *d))
+        .expect("non-empty");
+    if !expired.is_empty() {
+        return entry(
+            "site-certs",
+            DiagnosticStatus::Warn,
+            format!(
+                "{} of {} expired ({}) — reissued automatically on the next HTTPS request",
+                expired.len(),
+                leaves.len(),
+                expired.join(", ")
+            ),
+        );
+    }
+    entry(
+        "site-certs",
+        DiagnosticStatus::Pass,
+        format!(
+            "{} issued, soonest expires in {soonest_days} days ({soonest_name}); renewed within 30",
+            leaves.len()
+        ),
+    )
+}
+
+/// Is *this* CA what the machine trusts — and is it the only Grove CA it
+/// trusts? `grove ca rotate` without `sudo` (fixed in 1.6.0) left the old,
+/// unconstrained CA in the keychain beside the new one. A stale unconstrained
+/// CA can sign any hostname the machine will believe, and nothing else in
+/// Grove would ever notice it again.
+fn trust_store_check(ca_path: &Path) -> DiagnosticEntry {
+    use grove_os::PlatformIntegration;
+    let Ok(on_disk_pem) = std::fs::read_to_string(ca_path) else {
+        return entry(
+            "trust-store",
+            DiagnosticStatus::Warn,
+            format!("could not read {}", ca_path.display()),
+        );
+    };
+    let Some(on_disk_fp) = grove_tls::fingerprint_sha256(&on_disk_pem) else {
+        return entry(
+            "trust-store",
+            DiagnosticStatus::Fail,
+            format!("{} does not parse as a certificate", ca_path.display()),
+        );
+    };
+    let trusted = match grove_os::current().trusted_grove_cas() {
+        Ok(t) => t,
+        Err(e) => {
+            return entry(
+                "trust-store",
+                DiagnosticStatus::Warn,
+                format!("could not read the system trust store: {e}"),
+            )
+        }
+    };
+    let seen: Vec<TrustedSummary> = trusted
+        .iter()
+        .filter_map(|t| {
+            Some(TrustedSummary {
+                fingerprint: grove_tls::fingerprint_sha256(&t.pem)?,
+                constrained: grove_tls::permitted_dns_subtrees(&t.pem).is_some(),
+                remove_hint: t.remove_hint.clone(),
+            })
+        })
+        .collect();
+    evaluate_trust_store(&on_disk_fp, &seen)
+}
+
+struct TrustedSummary {
+    fingerprint: String,
+    constrained: bool,
+    remove_hint: String,
+}
+
+fn evaluate_trust_store(on_disk_fp: &str, trusted: &[TrustedSummary]) -> DiagnosticEntry {
+    let current_trusted = trusted.iter().any(|t| t.fingerprint == on_disk_fp);
+    let stale: Vec<&TrustedSummary> = trusted
+        .iter()
+        .filter(|t| t.fingerprint != on_disk_fp)
+        .collect();
+    let short = &on_disk_fp[..16.min(on_disk_fp.len())];
+
+    if !current_trusted {
+        return entry(
+            "trust-store",
+            DiagnosticStatus::Fail,
+            format!(
+                "the CA on disk (sha256 {short}…) is not in the system trust store — every HTTPS \
+                 site is a certificate error until `sudo grove ca trust`{}",
+                if stale.is_empty() {
+                    String::new()
+                } else {
+                    format!("; {} other Grove CA(s) are trusted instead", stale.len())
+                }
+            ),
+        );
+    }
+    if let Some(unconstrained) = stale.iter().find(|t| !t.constrained) {
+        return entry(
+            "trust-store",
+            DiagnosticStatus::Fail,
+            format!(
+                "an old, unconstrained Grove CA is still trusted — it can sign any hostname this \
+                 machine will believe. Remove it: {}",
+                unconstrained.remove_hint
+            ),
+        );
+    }
+    if !stale.is_empty() {
+        return entry(
+            "trust-store",
+            DiagnosticStatus::Warn,
+            format!(
+                "{} old Grove CA(s) still trusted (constrained, so harmless, but clutter). \
+                 Remove: {}",
+                stale.len(),
+                stale
+                    .iter()
+                    .map(|t| t.remove_hint.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ; ")
+            ),
+        );
+    }
+    entry(
+        "trust-store",
+        DiagnosticStatus::Pass,
+        format!("this CA (sha256 {short}…) is trusted, and no stale Grove CA is"),
+    )
+}
+
 /// One line for one listener, from what the daemon recorded at bind time.
 pub fn listener_entry(name: &str, port: u16, health: &ListenerHealth) -> DiagnosticEntry {
     match health {
@@ -407,5 +684,115 @@ mod tests {
         // would need a fixture injection. Kept as a smoke test that the
         // function exists on this platform.
         let _ = port_holder(1);
+    }
+
+    fn ts(fp: &str, constrained: bool, hint: &str) -> TrustedSummary {
+        TrustedSummary {
+            fingerprint: fp.into(),
+            constrained,
+            remove_hint: hint.into(),
+        }
+    }
+
+    #[test]
+    fn trust_store_verdicts() {
+        let cur = "c".repeat(64);
+        // Exactly this CA, nothing else: pass.
+        let e = evaluate_trust_store(&cur, &[ts(&cur, true, "")]);
+        assert_eq!(e.status, DiagnosticStatus::Pass, "{}", e.detail);
+
+        // Not trusted at all: fail, and say what fixes it.
+        let e = evaluate_trust_store(&cur, &[]);
+        assert_eq!(e.status, DiagnosticStatus::Fail);
+        assert!(e.detail.contains("sudo grove ca trust"), "{}", e.detail);
+
+        // The 1.5.0 hazard: current trusted, but an old unconstrained one too.
+        let e = evaluate_trust_store(
+            &cur,
+            &[
+                ts(&cur, true, ""),
+                ts(
+                    &"a".repeat(64),
+                    false,
+                    "sudo security delete-certificate -Z AAAA x",
+                ),
+            ],
+        );
+        assert_eq!(e.status, DiagnosticStatus::Fail);
+        assert!(e.detail.contains("unconstrained"), "{}", e.detail);
+        assert!(
+            e.detail.contains("-Z AAAA"),
+            "the removal command is the store's own: {}",
+            e.detail
+        );
+
+        // Old but constrained: clutter, not danger.
+        let e = evaluate_trust_store(
+            &cur,
+            &[ts(&cur, true, ""), ts(&"b".repeat(64), true, "rm b")],
+        );
+        assert_eq!(e.status, DiagnosticStatus::Warn);
+        assert!(e.detail.contains("harmless"), "{}", e.detail);
+    }
+
+    #[test]
+    fn leaf_summaries() {
+        assert_eq!(summarize_leaves(&[]).status, DiagnosticStatus::Pass);
+        let ok = summarize_leaves(&[("a.test".into(), 300), ("b.test".into(), 12)]);
+        assert_eq!(ok.status, DiagnosticStatus::Pass);
+        assert!(ok.detail.contains("12 days (b.test)"), "{}", ok.detail);
+        let exp = summarize_leaves(&[("a.test".into(), 300), ("old.test".into(), -3)]);
+        assert_eq!(exp.status, DiagnosticStatus::Warn);
+        assert!(
+            exp.detail.contains("old.test") && exp.detail.contains("reissued"),
+            "{}",
+            exp.detail
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_world_accessible_ipc_socket_fails_and_a_private_one_passes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("grove-doctor-sock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("groved.sock");
+        let _l = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+
+        std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let e = ipc_socket_check(&sock).expect("socket exists");
+        assert_eq!(e.status, DiagnosticStatus::Fail, "{}", e.detail);
+        assert!(e.detail.contains("0666"), "{}", e.detail);
+
+        std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o660)).unwrap();
+        let e = ipc_socket_check(&sock).unwrap();
+        assert_eq!(e.status, DiagnosticStatus::Pass, "{}", e.detail);
+
+        assert!(
+            ipc_socket_check(&dir.join("missing.sock")).is_none(),
+            "no socket, no entry"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_world_writable_grove_home_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("grove-doctor-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let e = grove_home_check(&dir);
+        assert_eq!(e.status, DiagnosticStatus::Fail, "{}", e.detail);
+        assert!(e.detail.contains("chmod o-w"), "{}", e.detail);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(grove_home_check(&dir).status, DiagnosticStatus::Pass);
+        assert_eq!(
+            grove_home_check(&dir.join("nope")).status,
+            DiagnosticStatus::Fail
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
