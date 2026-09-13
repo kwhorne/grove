@@ -1913,7 +1913,11 @@ mod lifecycle {
             run_user.as_deref(),
             run_ids,
             &cfg.general.tld,
-            cfg.general.dns_port,
+            grove_os::service::ListenPorts {
+                http: cfg.general.http_port,
+                https: cfg.general.https_port,
+                dns: cfg.general.dns_port,
+            },
         )
         .context("installing service")?;
 

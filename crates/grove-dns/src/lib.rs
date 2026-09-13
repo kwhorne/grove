@@ -152,17 +152,35 @@ async fn refuse<R: ResponseHandler>(request: &Request, handle: &mut R) -> Respon
 /// Bind UDP+TCP on `addr:port` and serve the resolver until the future is
 /// dropped/aborted.
 pub async fn serve(tld: &str, addr: SocketAddr) -> Result<Server<GroveResolver>, DnsError> {
+    let (udp, tcp) = bind(addr).await?;
+    tracing::info!(%addr, tld, "DNS resolver listening");
+    Ok(serve_on(tld, udp, tcp))
+}
+
+/// Bind the resolver's two sockets, so a caller can learn whether port 53 was
+/// actually taken before the server starts answering.
+///
+/// DNS needs **both** halves: a query that does not fit in a datagram is
+/// retried over TCP, and a resolver that answers only UDP looks healthy right
+/// up until the first large response. See `grove_proxy::bind` for why the bind
+/// is split from the serve.
+pub async fn bind(addr: SocketAddr) -> Result<(UdpSocket, TcpListener), DnsError> {
+    let udp = UdpSocket::bind(addr).await?;
+    let tcp = TcpListener::bind(addr).await?;
+    Ok((udp, tcp))
+}
+
+/// Serve the resolver on two sockets that are already bound.
+///
+/// The sockets may have been bound by this process or handed over by launchd
+/// or systemd, which is how the daemon serves port 53 without ever having been
+/// root. Nothing here can tell the difference, and nothing here should.
+pub fn serve_on(tld: &str, udp: UdpSocket, tcp: TcpListener) -> Server<GroveResolver> {
     let handler = GroveResolver::new(tld);
     let mut server = Server::new(handler);
-
-    let udp = UdpSocket::bind(addr).await?;
     server.register_socket(udp);
-
-    let tcp = TcpListener::bind(addr).await?;
     server.register_listener(tcp, Duration::from_secs(5), RESPONSE_BUFFER_SIZE);
-
-    tracing::info!(%addr, tld, "DNS resolver listening");
-    Ok(server)
+    server
 }
 
 #[cfg(test)]

@@ -582,6 +582,11 @@ What `sudo grove install` sets up, and the assumptions behind it:
   php-fpm, PostgreSQL, MySQL, Redis — is dropped to your user, whose ids the
   unit records. Earlier versions wrote a `systemctl --user` unit, which cannot
   bind privileged ports at all.
+- **A companion `grove.socket` unit.** systemd binds 80, 443 and 53 (both UDP
+  and TCP) and hands the listening descriptors to the daemon, which serves on
+  them without binding anything itself. It is `Wants=`, not `Requires=`: if the
+  socket unit cannot bind, the daemon still starts and binds what it can.
+  `grove doctor` names what arrived on the `privileges` line.
 - **DNS through systemd-resolved.** Grove creates a dummy link `grove0`, points
   it at its own DNS on `127.0.0.1:53`, and routes `~test` to it; the unit
   recreates that on every boot (the settings do not persist on their own).

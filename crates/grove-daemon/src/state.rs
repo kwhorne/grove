@@ -105,6 +105,14 @@ pub struct DaemonState {
     /// Hash of `config.toml` as last loaded or written by this daemon, so a
     /// hand edit on disk is noticed before the in-memory copy is saved over it.
     config_digest: std::sync::Mutex<Option<u64>>,
+    /// Which sockets launchd or systemd bound and handed over at startup, as a
+    /// display string ("none" when the daemon bound everything itself).
+    ///
+    /// Recorded rather than inferred: whether the privileged ports arrived as
+    /// descriptors is the difference between a daemon that needs root and one
+    /// that does not, and `grove doctor` should be able to say which this is
+    /// without guessing from the unit file.
+    inherited_sockets: std::sync::Mutex<String>,
 }
 
 impl DaemonState {
@@ -117,7 +125,9 @@ impl DaemonState {
         fpm: Arc<FpmManager>,
     ) -> Self {
         let config_digest = std::sync::Mutex::new(config_file_digest(&paths));
+        let inherited_sockets = std::sync::Mutex::new("none".to_string());
         Self {
+            inherited_sockets,
             paths,
             listeners: Arc::new(Listeners::default()),
             config: Mutex::new(config),
@@ -182,6 +192,21 @@ impl DaemonState {
     /// to rebuild from the in-memory copy only, so a hand edit was invisible
     /// until a restart. A file that no longer parses is reported and the
     /// running config kept.
+    /// Record what the service manager delivered, once, at startup.
+    pub fn set_inherited_sockets(&self, sockets: String) {
+        if let Ok(mut slot) = self.inherited_sockets.lock() {
+            *slot = sockets;
+        }
+    }
+
+    /// What the service manager delivered, for `grove doctor`.
+    pub fn inherited_sockets(&self) -> String {
+        self.inherited_sockets
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_else(|_| "unknown".to_string())
+    }
+
     pub async fn reload(&self) -> anyhow::Result<usize> {
         let fresh = Config::load(&self.paths).context("re-reading config.toml")?;
         let mut config = self.config.lock().await;

@@ -122,14 +122,29 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     // *recorded*, not just logged. IPC comes up regardless of these binds, and
     // before this a daemon that had lost port 80 to Apache still answered
     // `grove status` with every light green.
+    //
+    // Each listener asks the supervisor first. launchd and systemd can bind a
+    // privileged port while they are root and hand the listening descriptor
+    // over, which is how this daemon can serve :80 without being root itself.
+    // An old unit delivers nothing and every bind happens here as before, so
+    // the two can coexist across an upgrade.
+    let mut inherited = grove_core::activation::Inherited::from_environment();
+    if !inherited.is_empty() {
+        tracing::info!(sockets = %inherited.describe(), "sockets delivered by the service manager");
+    }
+    daemon.set_inherited_sockets(inherited.describe());
     let mut tasks = Vec::new();
 
     {
         let tld = general.tld.clone();
         let dns_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, general.dns_port));
         let listeners = daemon.listeners.clone();
+        let handed = adopt_dns(&mut inherited, general.dns_port);
         tasks.push(tokio::spawn(async move {
-            match grove_dns::serve(&tld, dns_addr).await {
+            match dns_sockets(handed, dns_addr)
+                .await
+                .map(|(udp, tcp)| grove_dns::serve_on(&tld, udp, tcp))
+            {
                 Ok(mut server) => {
                     listeners.set_dns(ListenerHealth::Up);
                     if let Err(e) = server.block_until_done().await {
@@ -147,7 +162,11 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     {
         let http_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, general.http_port));
-        match grove_proxy::bind(http_addr).await {
+        let handed = adopt_tcp(&mut inherited, general.http_port, "http");
+        match match handed {
+            Some(listener) => Ok(listener),
+            None => grove_proxy::bind(http_addr).await,
+        } {
             Ok(listener) => {
                 daemon.listeners.set_http(ListenerHealth::Up);
                 let shared = shared.clone();
@@ -169,7 +188,11 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     {
         let https_addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, general.https_port));
-        match grove_proxy::bind(https_addr).await {
+        let handed = adopt_tcp(&mut inherited, general.https_port, "https");
+        match match handed {
+            Some(listener) => Ok(listener),
+            None => grove_proxy::bind(https_addr).await,
+        } {
             Ok(listener) => {
                 daemon.listeners.set_https(ListenerHealth::Up);
                 let shared = shared.clone();
@@ -191,7 +214,11 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
 
     if general_services.mail_enabled {
         let mail_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, general_services.mail_port));
-        match grove_services::bind_smtp(mail_addr).await {
+        let handed = adopt_tcp(&mut inherited, general_services.mail_port, "mail");
+        match match handed {
+            Some(listener) => Ok(listener),
+            None => grove_services::bind_smtp(mail_addr).await,
+        } {
             Ok(listener) => {
                 daemon.listeners.set_mail(ListenerHealth::Up);
                 let mail = mail.clone();
@@ -236,6 +263,83 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     let _ = std::fs::remove_file(paths.pid_file());
     tracing::info!("groved stopped");
     Ok(())
+}
+
+/// The TCP listener the supervisor bound for `port`, ready for tokio.
+///
+/// `None` means nothing was delivered for that port and the caller should bind
+/// it itself — the ordinary case on an install whose unit predates socket
+/// activation. A descriptor that arrives but cannot be registered with the
+/// runtime is also `None`: the socket is closed as it drops, and the bind that
+/// follows fails loudly with the port in the message, which is a better outcome
+/// than a listener nobody is polling.
+fn adopt_tcp(
+    inherited: &mut grove_core::activation::Inherited,
+    port: u16,
+    what: &str,
+) -> Option<tokio::net::TcpListener> {
+    let handed = inherited.take_tcp(port)?;
+    match tokio::net::TcpListener::from_std(handed) {
+        Ok(listener) => {
+            let addr = listener
+                .local_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|_| format!(":{port}"));
+            tracing::info!(%addr, listener = what, "serving on a socket the service manager bound");
+            Some(listener)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, listener = what, port, "could not adopt the delivered socket");
+            None
+        }
+    }
+}
+
+/// The resolver's two sockets, as far as the supervisor delivered them.
+///
+/// Returned separately because a unit can legitimately carry one half: DNS
+/// answers over UDP and, for responses too large for a datagram, over TCP, and
+/// an administrator who listed only one gets the other bound here rather than a
+/// resolver that half works.
+type HandedDns = (
+    Option<tokio::net::UdpSocket>,
+    Option<tokio::net::TcpListener>,
+);
+
+fn adopt_dns(inherited: &mut grove_core::activation::Inherited, port: u16) -> HandedDns {
+    let udp = inherited.take_udp(port).and_then(|socket| {
+        match tokio::net::UdpSocket::from_std(socket) {
+            Ok(socket) => {
+                tracing::info!(port, "serving DNS over UDP on a socket the service manager bound");
+                Some(socket)
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, port, "could not adopt the delivered DNS datagram socket");
+                None
+            }
+        }
+    });
+    let tcp = adopt_tcp(inherited, port, "dns");
+    (udp, tcp)
+}
+
+/// Fill in whichever half of the resolver the supervisor did not hand over.
+async fn dns_sockets(
+    handed: HandedDns,
+    addr: SocketAddr,
+) -> Result<(tokio::net::UdpSocket, tokio::net::TcpListener), grove_dns::DnsError> {
+    match handed {
+        (Some(udp), Some(tcp)) => Ok((udp, tcp)),
+        (None, None) => grove_dns::bind(addr).await,
+        (Some(udp), None) => {
+            tracing::warn!(%addr, "only the UDP half of DNS was delivered; binding TCP here");
+            Ok((udp, tokio::net::TcpListener::bind(addr).await?))
+        }
+        (None, Some(tcp)) => {
+            tracing::warn!(%addr, "only the TCP half of DNS was delivered; binding UDP here");
+            Ok((tokio::net::UdpSocket::bind(addr).await?, tcp))
+        }
+    }
 }
 
 /// The OS's reason for a failed bind, without the address the caller already
