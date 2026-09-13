@@ -148,7 +148,7 @@ jobs:
           - name: linux-x86_64
             runner: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: craft-configs
           path: craft
@@ -242,7 +242,7 @@ jobs:
     if: ${{ needs.plan.outputs.versions != '[]' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: php-*
           merge-multiple: true
