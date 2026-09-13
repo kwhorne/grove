@@ -37,6 +37,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model-based test checks the stack semantics and the dotfile rule over
   thousands of traversal-shaped inputs.
 
+### Changed
+
+- **ElyraSQL is pinned to 1.11.3** (was 1.11.2). Upstream fixes two things a
+  Grove site can hit: `SET @var` inside a stored procedure now reaches the
+  session instead of vanishing when `CALL` returns, and the expression-depth
+  limit follows the calling thread's stack, so a deeply nested expression is
+  refused cleanly rather than overflowing a small stack and aborting the
+  process. It also adds `UTC_TIMESTAMP()`/`CONVERT_TZ()`, freezes `NOW()` to one
+  instant per statement, and makes `||` honour `PIPES_AS_CONCAT`. The archive
+  unpacks to a versioned directory beside the data directory, so
+  `grove service install elyrasql` fetches the new build and the existing
+  database is untouched.
+
 ## [1.7.1] — 2026-09-07
 
 Fixes for what happens *after* an update: the daemon kept running the old
