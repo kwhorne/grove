@@ -142,7 +142,8 @@ pub fn local_checks(paths: &GrovePaths, config: Option<&Config>) -> Vec<Diagnost
 /// one is constrained — and to the TLD actually in use — is worth saying out
 /// loud rather than leaving to be discovered.
 fn ca_scope(paths: &GrovePaths, configured_tld: &str) -> DiagnosticEntry {
-    match grove_tls::constrained_tld(paths) {
+    let pem = std::fs::read_to_string(paths.ca_cert()).ok();
+    match scope_of(pem.as_deref(), || grove_tls::constrained_tld(paths)) {
         Some(tld) if tld == configured_tld => entry(
             "root-ca-scope",
             DiagnosticStatus::Pass,
@@ -159,10 +160,26 @@ fn ca_scope(paths: &GrovePaths, configured_tld: &str) -> DiagnosticEntry {
         None => entry(
             "root-ca-scope",
             DiagnosticStatus::Warn,
-            "unconstrained: it can sign any hostname, and it is in the system \
-             trust store. `sudo grove ca rotate` replaces it with one limited \
-             to your TLD",
+            "unconstrained: it can sign any hostname a machine trusting it is \
+             asked about. `sudo grove ca rotate` replaces it with one limited \
+             to your TLD (see `trust-store` for what the machine trusts)",
         ),
+    }
+}
+
+/// What the CA is really limited to.
+///
+/// `ca-meta.json` records the TLD Grove *meant* to constrain the CA to, and
+/// reading it is cheap — but it is a note beside the certificate, not the
+/// certificate. A CA minted before the constraint existed, or replaced by
+/// hand, leaves the note saying one thing and the extension another, and the
+/// extension is what every TLS client enforces. So the certificate answers
+/// whenever it parses, including when its answer is "nothing constrains me";
+/// the note is the fallback for a CA that cannot be read at all.
+fn scope_of(pem: Option<&str>, recorded: impl FnOnce() -> Option<String>) -> Option<String> {
+    match pem.filter(|p| grove_tls::fingerprint_sha256(p).is_some()) {
+        Some(p) => grove_tls::permitted_dns_subtrees(p)?.into_iter().next(),
+        None => recorded(),
     }
 }
 
@@ -626,6 +643,63 @@ pub fn daemon_down_entry(socket: &Path) -> DiagnosticEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ca-meta.json` is a note beside the certificate. When the two disagree,
+    /// the extension is what browsers enforce, so the extension must win — in
+    /// both directions. The second half is the one that bites: a note left over
+    /// from a constrained CA, beside a certificate that constrains nothing,
+    /// must not produce a green `root-ca-scope`.
+    #[test]
+    fn the_certificate_outranks_the_note_beside_it() {
+        let base = std::env::temp_dir().join(format!("grove-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let paths = GrovePaths::with_base(&base);
+        paths.ensure().unwrap();
+        let ca = grove_tls::CertificateAuthority::load_or_create(&paths).unwrap();
+        let constrained = std::fs::read_to_string(paths.ca_cert()).unwrap();
+        assert_eq!(ca.constrained_tld(), Some("test"));
+
+        assert_eq!(
+            scope_of(Some(&constrained), || Some("wrong".into())),
+            Some("test".into()),
+            "the extension decides, not the note"
+        );
+        assert_eq!(
+            scope_of(Some(UNCONSTRAINED), || Some("test".into())),
+            None,
+            "a stale note must not vouch for a CA that constrains nothing"
+        );
+        assert_eq!(
+            scope_of(Some("not a certificate"), || Some("test".into())),
+            Some("test".into()),
+            "only an unreadable certificate falls back to the note"
+        );
+        assert_eq!(scope_of(None, || None), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Self-signed, no `NameConstraints` — the shape of a Grove CA minted
+    /// before 1.5.0 added the extension.
+    const UNCONSTRAINED: &str = "\
+-----BEGIN CERTIFICATE-----
+MIIC0DCCAbgCCQD9pHpVq7tyhDANBgkqhkiG9w0BAQsFADAqMRcwFQYDVQQDDA5O
+b3QgQSBHcm92ZSBDQTEPMA0GA1UECgwGTm9ib2R5MB4XDTI2MDkxMzE4NDQ1M1oX
+DTQ2MDkwODE4NDQ1M1owKjEXMBUGA1UEAwwOTm90IEEgR3JvdmUgQ0ExDzANBgNV
+BAoMBk5vYm9keTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALmZ/kqy
+6P8n3OCjhJlNSiKgymXaFPy1E6/BMf2TNADb3jc45P9rhRrrzZdj5oQeUzI4W106
+W9QkJjA85BGBqP08VNbtvf6KEaKL0GOY2EJsRpNGLz7oG28t8Y2tTgE5NUNX/+1e
+bnuOs4O8q72II7zX0HTZ9lcEvqTRlolzAtg/VxBuw+Qzg7aSobmCEjxGO8nugD+6
+oDnK7YFGRxF7qCRzzSPn8SGObRepbsgO6KpLlT5yXDg51eH2x3wZSQXrnaDmATMn
+DK038oHg7zqXHR6qhHbheoj0WQKz7FSC89cR6Zma3D2nFX74F7B7+vRyYF2zswvz
+kS/cJf4TatE7q38CAwEAATANBgkqhkiG9w0BAQsFAAOCAQEAJScBKEIX9DFytJus
+Ne/P1sA5cbBcCZu/ea7i/qaC3idML0H8FBoAq0ZOTO8J75XsGPdZy8+cY69nPvGM
+yl+3PWhnaCB5ZZ0i7V28hbJag10TAkMv685a6PuYj2ee++UO8/ol+lrtGNawJC+l
+8FUaw0mdzSDnW6+J4lQqRd4AdxvYTqVGC3+D/cb43bpzPKxOJiUwcH9hnsO59i4d
+5qMBYPLpoN5vkmF+wMCFcFEWlao/tiH4axsXP2wQL3IF/a4LauRVIqZrjhK5V9Iu
+QHBGjXmc8m6KA0HyNheMMfCO0wGgwYguWnLj664X2H1X93eJilOJ676jIErCUZMd
+698Y9Q==
+-----END CERTIFICATE-----
+";
 
     #[test]
     fn a_bound_listener_passes_and_a_failed_one_names_the_port() {

@@ -16,11 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   expired ones noted as reissued on next request), and `trust-store` — is the
   CA on disk what the system trusts, and is it the *only* Grove CA trusted. The
   last catches what `grove ca rotate` without `sudo` used to leave behind: an
-  old, unconstrained CA in the keychain, able to sign any hostname. It names the
-  stale entry's own removal command (`security delete-certificate -Z <sha1>` on
-  macOS, the anchor path on Linux). Runtime-hash verification is not among
-  them yet: there is no recorded digest to compare against until runtimes are
-  content-addressed.
+  old, unconstrained CA the machine still believes, able to sign any hostname.
+  It names the stale entry's own removal command (`security delete-certificate
+  -Z <sha1>` on macOS, the anchor path on Linux). *Believes*, not merely
+  stores: a rotate strips the old CA's trust settings and leaves the
+  certificate in the keychain, so the check asks the system's trust evaluator
+  rather than searching the keychain, and an inert leftover raises nothing.
+  `root-ca-scope` likewise reads the `NameConstraints` extension off the
+  certificate instead of trusting `ca-meta.json` beside it, so a note left over
+  from an earlier CA cannot vouch for one that constrains nothing. Runtime-hash
+  verification is not among them yet: there is no recorded digest to compare
+  against until runtimes are content-addressed.
 - **Security invariants as tests.** 1.5.0's central claim — a leaked Grove CA
   key cannot mint a certificate for anything outside the configured TLD that a
   machine trusting the CA will accept — lived in two doc comments. It is now a
