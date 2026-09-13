@@ -2217,3 +2217,121 @@ mod tests {
         assert!(!is_upgrade_request(&plain));
     }
 }
+
+/// Properties of the request-path sanitizer and the dotfile check, over inputs
+/// nobody would think to write down.
+///
+/// `sanitize_path` is the one function between an attacker-chosen URL and
+/// `document_root.join(...)`. The example tests above show it blocks
+/// `/../../etc/passwd`; these state what it guarantees for *every* string.
+#[cfg(test)]
+mod path_properties {
+    use super::{is_hidden_path, sanitize_path};
+    use proptest::prelude::*;
+    use std::path::{Component, Path};
+
+    /// Request paths in two flavours: arbitrary strings, and paths assembled
+    /// from the segments an attacker actually sends. The first alone is not
+    /// enough — `any::<String>()` almost never yields a bare `..` between
+    /// slashes, and a sanitizer that *pushed* `..` instead of popping it passed
+    /// 2000 such cases. The mutation was caught only by the model test below;
+    /// with hostile shapes in the mix, this test catches it too.
+    fn path_input() -> impl Strategy<Value = String> {
+        let hostile = (prop::collection::vec(segment(), 0..10), 0usize..3)
+            .prop_map(|(segs, slashes)| format!("{}{}", "/".repeat(slashes), segs.join("/")));
+        prop_oneof![1 => any::<String>(), 2 => hostile]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2000))]
+
+        /// For any request path whatsoever: the result is relative, contains
+        /// only ordinary components, and joined to a document root stays under
+        /// it. Sanitizing twice changes nothing, and every component that comes
+        /// out went in as a literal segment — nothing is invented or decoded.
+        #[test]
+        fn sanitized_paths_never_escape_the_document_root(input in path_input()) {
+            let out = sanitize_path(&input);
+
+            prop_assert!(!out.is_absolute(), "{input:?} -> {out:?} is absolute");
+            prop_assert!(
+                out.components().all(|c| matches!(c, Component::Normal(_))),
+                "{input:?} -> {out:?} has a non-Normal component"
+            );
+
+            let root = Path::new("/srv/site/public");
+            let joined = root.join(&out);
+            prop_assert!(joined.starts_with(root), "{input:?} -> {joined:?} left the root");
+
+            let again = sanitize_path(&out.to_string_lossy());
+            prop_assert_eq!(&again, &out, "sanitizing is not idempotent for {:?}", input);
+
+            for c in out.components() {
+                let seg = c.as_os_str().to_string_lossy();
+                prop_assert!(
+                    input.split('/').any(|s| s == seg),
+                    "{input:?} -> component {seg:?} was not a segment of the input"
+                );
+            }
+        }
+    }
+
+    /// Segments an attacker actually sends, mixed freely.
+    fn segment() -> impl Strategy<Value = String> {
+        prop_oneof![
+            4 => "[a-zA-Z0-9_-]{1,8}",
+            1 => Just("..".to_string()),
+            1 => Just(".".to_string()),
+            1 => Just(String::new()),
+            1 => Just(".env".to_string()),
+            1 => Just(".git".to_string()),
+            1 => Just(".well-known".to_string()),
+            1 => Just("%2e%2e".to_string()),
+            1 => Just("..%2f..".to_string()),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2000))]
+
+        /// Model-based: the sanitizer behaves as a stack — `.` and empty
+        /// segments vanish, `..` pops (never below the bottom), anything else
+        /// is pushed verbatim — and the dotfile check, applied to the result
+        /// as the handler applies it, hides exactly the paths its doc comment
+        /// says: any `.`-prefixed component, unless the *first* component is
+        /// `.well-known`. Traversal noise around `.env` cannot un-hide it.
+        #[test]
+        fn sanitize_is_a_stack_and_hidden_matches_its_spec(
+            segs in prop::collection::vec(segment(), 0..10),
+            leading_slashes in 0usize..3,
+        ) {
+            let input = format!("{}{}", "/".repeat(leading_slashes), segs.join("/"));
+
+            let mut model: Vec<&str> = Vec::new();
+            for s in &segs {
+                match s.as_str() {
+                    "" | "." => {}
+                    ".." => { model.pop(); }
+                    other => model.push(other),
+                }
+            }
+
+            let out = sanitize_path(&input);
+            let got: Vec<String> = out
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect();
+            prop_assert_eq!(&got, &model, "input {:?}", input);
+
+            let expect_hidden = model.first() != Some(&".well-known")
+                && model.iter().any(|c| c.starts_with('.'));
+            prop_assert_eq!(
+                is_hidden_path(&out),
+                expect_hidden,
+                "input {:?} -> {:?}",
+                input,
+                out
+            );
+        }
+    }
+}

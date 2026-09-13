@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Security invariants as tests.** 1.5.0's central claim — a leaked Grove CA
+  key cannot mint a certificate for anything outside the configured TLD that a
+  machine trusting the CA will accept — lived in two doc comments. It is now a
+  regression test through rustls + webpki, the same verifier and rules browsers
+  apply, in three parts: a Grove-signed leaf for `google.com` is refused; the
+  *same* leaf from a CA without the constraint is accepted (so the refusal is
+  the extension's doing, not an expired date or a bad chain); and the
+  certificates Grove actually issues are accepted, wildcard subdomains
+  included. A fourth test pins that the constraint is a DNS suffix
+  (`myapp.localtest` is outside `.test`). And the request-path sanitizer — the
+  one function between an attacker's URL and `document_root.join(…)` — gets
+  property tests: for any string, the result is relative, only ordinary
+  components, stays under the root, and sanitizing twice changes nothing; a
+  model-based test checks the stack semantics and the dotfile rule over
+  thousands of traversal-shaped inputs.
+
 ## [1.7.1] — 2026-09-07
 
 Fixes for what happens *after* an update: the daemon kept running the old
