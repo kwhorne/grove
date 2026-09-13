@@ -122,7 +122,7 @@ jobs:
             cat "craft/craft-$v.yml"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ steps.filter.outputs.versions != '[]' }}
         with:
           name: craft-configs
@@ -230,7 +230,7 @@ jobs:
           tar -czf "dist/php-${full}-fpm-${{ matrix.target.name }}.tar.gz" -C buildroot/bin php-fpm
           ls -la dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: php-${{ matrix.php }}-${{ matrix.target.name }}
           path: work/dist/*.tar.gz
