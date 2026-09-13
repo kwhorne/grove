@@ -24,3 +24,8 @@ tracing.workspace = true
 futures.workspace = true
 anyhow.workspace = true
 once_cell.workspace = true
+
+[dev-dependencies]
+# Property tests for the request-path sanitizer: any string in, never a path
+# outside the document root out.
+proptest = "1"

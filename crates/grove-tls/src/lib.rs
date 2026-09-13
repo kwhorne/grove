@@ -697,4 +697,152 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&base);
     }
+
+    // ---- What a machine that trusts this CA will and will not believe ----
+    //
+    // Everything below verifies through rustls + webpki, the same code path a
+    // Rust client uses and the same rules (RFC 5280 name constraints) Chrome,
+    // Safari and Firefox apply. It is the test of 1.5.0's central claim: a
+    // leaked Grove CA key cannot mint a certificate for anything outside the
+    // configured TLD that this machine will accept.
+
+    fn ders(pem: &str) -> Vec<rustls::pki_types::CertificateDer<'static>> {
+        rustls_pemfile::certs(&mut pem.as_bytes())
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .expect("valid PEM")
+    }
+
+    /// A verifier configured like a machine that has run `grove ca trust`:
+    /// exactly one root, this CA.
+    fn machine_trusting(ca_pem: &str) -> std::sync::Arc<rustls::client::WebPkiServerVerifier> {
+        let mut roots = rustls::RootCertStore::empty();
+        for der in ders(ca_pem) {
+            roots.add(der).expect("CA parses as a trust anchor");
+        }
+        rustls::client::WebPkiServerVerifier::builder_with_provider(
+            std::sync::Arc::new(roots),
+            std::sync::Arc::new(rustls::crypto::ring::default_provider()),
+        )
+        .build()
+        .expect("verifier builds")
+    }
+
+    /// Would that machine accept `leaf_pem` when connecting to `host`?
+    fn believes(
+        machine: &rustls::client::WebPkiServerVerifier,
+        leaf_pem: &str,
+        host: &str,
+    ) -> std::result::Result<(), rustls::Error> {
+        use rustls::client::danger::ServerCertVerifier;
+        let chain = ders(leaf_pem);
+        let name = rustls::pki_types::ServerName::try_from(host).expect("valid server name");
+        machine
+            .verify_server_cert(
+                &chain[0],
+                &chain[1..],
+                &name,
+                &[],
+                rustls::pki_types::UnixTime::now(),
+            )
+            .map(|_| ())
+    }
+
+    /// A CA with the same shape as Grove's minus the one extension under test.
+    /// Signing the same hostile name with it must *succeed* — otherwise the
+    /// refusal below could be for any reason at all.
+    fn unconstrained_ca() -> (String, Issuer<'static, KeyPair>) {
+        let mut params = CertificateParams::default();
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::CrlSign,
+            KeyUsagePurpose::DigitalSignature,
+        ];
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, "Unconstrained control CA");
+        params.distinguished_name = dn;
+        params.not_before = OffsetDateTime::now_utc() - Duration::days(1);
+        params.not_after = OffsetDateTime::now_utc() + Duration::days(30);
+        let key = KeyPair::generate().unwrap();
+        let cert = params.self_signed(&key).unwrap();
+        (cert.pem(), Issuer::new(params, key))
+    }
+
+    fn leaf_from(issuer: &Issuer<'static, KeyPair>, name: &str) -> String {
+        let mut params = CertificateParams::default();
+        params.subject_alt_names = vec![SanType::DnsName(
+            name.to_string().try_into().expect("dns name"),
+        )];
+        params.not_before = OffsetDateTime::now_utc() - Duration::days(1);
+        params.not_after = OffsetDateTime::now_utc() + Duration::days(30);
+        let key = KeyPair::generate().unwrap();
+        params.signed_by(&key, issuer).unwrap().pem()
+    }
+
+    /// The claim, as a regression test: a machine that trusts Grove's CA does
+    /// not believe a Grove-signed certificate for `google.com`.
+    ///
+    /// Note what is being tested. `issue_leaf` does *not* refuse the name — it
+    /// signs whatever it is handed, and that is deliberate here: the threat is
+    /// a leaked CA key in an attacker's hands, and no check inside Grove's own
+    /// issuer helps then. The defence is the `NameConstraints` extension in
+    /// the CA certificate the OS trusts, enforced by every verifier that sees
+    /// the chain.
+    #[test]
+    fn a_trusting_machine_refuses_grove_signed_certificates_outside_the_tld() {
+        let ca = CertificateAuthority::generate_for_tld("test").unwrap();
+        let machine = machine_trusting(&ca.cert_pem());
+
+        for hostile in ["google.com", "bank.example", "test.com", "latest.io"] {
+            let (leaf, _) = ca.issue_leaf(&[hostile.to_string()]).unwrap();
+            let verdict = believes(&machine, &leaf, hostile);
+            assert!(
+                verdict.is_err(),
+                "a Grove-signed leaf for {hostile} must be refused by a machine trusting the CA"
+            );
+        }
+    }
+
+    /// The control: the *same* hostile leaf from a CA without the constraint is
+    /// accepted. This is what makes the refusal above mean something — it is
+    /// the extension doing the work, not an expired date or a bad chain.
+    #[test]
+    fn without_the_constraint_the_same_certificate_is_believed() {
+        let (ca_pem, issuer) = unconstrained_ca();
+        let machine = machine_trusting(&ca_pem);
+        let leaf = leaf_from(&issuer, "google.com");
+        believes(&machine, &leaf, "google.com").expect(
+            "an unconstrained CA's leaf for google.com is accepted — the control must pass",
+        );
+    }
+
+    /// And the certificates Grove actually issues are accepted — the site's
+    /// own name and, through the wildcard SAN, its subdomains. Without this the
+    /// two tests above could be satisfied by a CA nobody can use.
+    #[test]
+    fn a_trusting_machine_accepts_the_sites_grove_serves() {
+        let ca = CertificateAuthority::generate_for_tld("test").unwrap();
+        let machine = machine_trusting(&ca.cert_pem());
+        let (leaf, _) = ca
+            .issue_leaf(&["myapp.test".to_string(), "*.myapp.test".to_string()])
+            .unwrap();
+        for host in ["myapp.test", "api.myapp.test", "www.myapp.test"] {
+            believes(&machine, &leaf, host)
+                .unwrap_or_else(|e| panic!("{host} must be accepted: {e}"));
+        }
+    }
+
+    /// The constraint is on DNS labels, not on a string suffix: `.test` the
+    /// TLD, not anything ending in the letters "test". A name under a *sibling*
+    /// TLD is outside it even when Grove signed it.
+    #[test]
+    fn the_constraint_is_a_dns_suffix_not_a_string_suffix() {
+        let ca = CertificateAuthority::generate_for_tld("test").unwrap();
+        let machine = machine_trusting(&ca.cert_pem());
+        let (leaf, _) = ca.issue_leaf(&["myapp.localtest".to_string()]).unwrap();
+        assert!(
+            believes(&machine, &leaf, "myapp.localtest").is_err(),
+            "'localtest' ends in 'test' but is a different TLD"
+        );
+    }
 }

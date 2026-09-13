@@ -137,6 +137,14 @@ root-created CA is owned by root while a *user-owned* key is claimed on the next
 root load, and the certificate stays readable either way; and that runtime probes
 (`php -m` and friends) do not exec as root when a run user is known.
 
+### Property tests
+
+`grove-proxy` has `proptest` tests for the request-path sanitizer and the
+dotfile check (`path_properties` in `handler.rs`). They run with the normal
+suite, 2000 cases each. If one fails, proptest prints a *minimal failing
+input* and writes it to `crates/grove-proxy/proptest-regressions/`; commit that
+file so the case is replayed first on every future run.
+
 ### Network tests
 
 Checksum verification is only as good as its agreement with what publishers
