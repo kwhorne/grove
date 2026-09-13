@@ -10,6 +10,146 @@ use crate::{OsError, Result};
 /// Service label / identifier shared across platforms.
 pub const SERVICE_LABEL: &str = "com.elyra.grove";
 
+/// The ports the service manager binds on the daemon's behalf.
+///
+/// All three are below 1024, which is the whole reason the daemon has had to
+/// be root. launchd and systemd bind them while *they* are root and hand the
+/// listening descriptors over, so the process that serves on them need not be.
+/// The daemon still binds any port it was not given, so a unit written before
+/// this existed keeps working unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListenPorts {
+    pub http: u16,
+    pub https: u16,
+    pub dns: u16,
+}
+
+/// The `Sockets` entry the daemon looks for; see `grove_core::activation`.
+const SOCKET_NAME: &str = "Listeners";
+
+/// The `Sockets` dictionary for the launchd plist.
+///
+/// HTTP and HTTPS are left without a node name, which is launchd's way of
+/// saying every interface — matching the `0.0.0.0` the daemon binds when it
+/// binds for itself. DNS is pinned to loopback for the same reason: a resolver
+/// answering the whole network is not what `grove install` promised. Both
+/// halves of DNS are listed because a response too large for a datagram is
+/// retried over TCP.
+fn launchd_sockets(ports: ListenPorts) -> String {
+    let ListenPorts { http, https, dns } = ports;
+    let any = |port: u16| {
+        format!(
+            "            <dict><key>SockType</key><string>stream</string>\
+<key>SockFamily</key><string>IPv4</string>\
+<key>SockServiceName</key><string>{port}</string></dict>\n"
+        )
+    };
+    let loopback = |kind: &str, port: u16| {
+        format!(
+            "            <dict><key>SockType</key><string>{kind}</string>\
+<key>SockFamily</key><string>IPv4</string>\
+<key>SockNodeName</key><string>127.0.0.1</string>\
+<key>SockServiceName</key><string>{port}</string></dict>\n"
+        )
+    };
+    format!(
+        "    <key>Sockets</key>\n    <dict>\n        <key>{SOCKET_NAME}</key>\n        <array>\n\
+         {http_sock}{https_sock}{dns_tcp}{dns_udp}        </array>\n    </dict>\n",
+        http_sock = any(http),
+        https_sock = any(https),
+        dns_tcp = loopback("stream", dns),
+        dns_udp = loopback("dgram", dns),
+    )
+}
+
+/// The whole launchd plist, as text.
+///
+/// Separated from writing it so the document can be linted and asserted on in
+/// a test; a plist that does not parse is a daemon that never starts, and the
+/// only feedback is a machine that has stopped serving.
+fn launchd_plist(
+    exe: &std::path::Path,
+    grove_home: &std::path::Path,
+    run_user: Option<&str>,
+    run_uid: Option<(u32, u32)>,
+    ports: ListenPorts,
+) -> String {
+    let run_user_xml = run_user
+        .map(|u| {
+            format!(
+                "        <key>GROVE_RUN_USER</key><string>{}</string>\n",
+                xml_escape(u)
+            )
+        })
+        .unwrap_or_default();
+    // Numeric ids so the daemon can authorize its IPC socket without
+    // resolving a username. Rendered from `u32`, so no XML escaping is
+    // needed here even though the surrounding template does not escape.
+    let run_id_xml = run_uid
+        .map(|(uid, gid)| {
+            format!(
+                "        <key>GROVE_RUN_USER_ID</key><string>{uid}</string>\n\
+                         <key>GROVE_RUN_GROUP_ID</key><string>{gid}</string>\n"
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe}</string>
+        <string>daemon</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>GROVE_HOME</key><string>{home}</string>
+{run_user_xml}{run_id_xml}    </dict>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+{sockets}    <key>StandardOutPath</key><string>{home}/daemon.out.log</string>
+    <key>StandardErrorPath</key><string>{home}/daemon.err.log</string>
+</dict>
+</plist>
+"#,
+        label = SERVICE_LABEL,
+        exe = xml_escape(&exe.display().to_string()),
+        home = xml_escape(&grove_home.display().to_string()),
+        run_user_xml = run_user_xml,
+        run_id_xml = run_id_xml,
+        sockets = launchd_sockets(ports),
+    )
+}
+
+/// The companion `grove.socket` unit for systemd.
+///
+/// `Wants=`, not `Requires=`, on the service side: a socket unit that fails to
+/// bind must not stop the daemon from starting, because the daemon can still
+/// bind for itself and serving on some ports beats serving on none.
+pub fn linux_socket_unit(ports: ListenPorts) -> String {
+    let ListenPorts { http, https, dns } = ports;
+    format!(
+        "[Unit]\nDescription=Elyra Grove listening sockets\n\n\
+         [Socket]\n\
+         ListenStream=0.0.0.0:{http}\n\
+         ListenStream=0.0.0.0:{https}\n\
+         ListenStream=127.0.0.1:{dns}\n\
+         ListenDatagram=127.0.0.1:{dns}\n\
+         BindIPv6Only=both\n\
+         Service=grove.service\n\n\
+         [Install]\nWantedBy=sockets.target\n"
+    )
+}
+
+/// Where the systemd socket unit lives.
+#[cfg(target_os = "linux")]
+fn socket_unit_path() -> PathBuf {
+    PathBuf::from("/etc/systemd/system/grove.socket")
+}
+
 /// Where the launchd/systemd unit lives, per platform.
 pub fn unit_path() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
@@ -79,67 +219,23 @@ pub fn install(
     run_user: Option<&str>,
     run_uid: Option<(u32, u32)>,
     tld: &str,
-    dns_port: u16,
+    ports: ListenPorts,
 ) -> Result<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         // The resolver on macOS is a file under /etc/resolver, written by
         // `install_resolver`; the unit does not need it.
-        let _ = (tld, dns_port);
+        let _ = tld;
         if !crate::is_elevated() {
             return Err(OsError::Unsupported(
                 "installing the system service needs root — run `sudo grove install`".into(),
             ));
         }
         let path = unit_path().ok_or_else(|| OsError::Unsupported("no unit path".into()))?;
-        let run_user_xml = run_user
-            .map(|u| {
-                format!(
-                    "        <key>GROVE_RUN_USER</key><string>{}</string>\n",
-                    xml_escape(u)
-                )
-            })
-            .unwrap_or_default();
-        // Numeric ids so the daemon can authorize its IPC socket without
-        // resolving a username. Rendered from `u32`, so no XML escaping is
-        // needed here even though the surrounding template does not escape.
-        let run_id_xml = run_uid
-            .map(|(uid, gid)| {
-                format!(
-                    "        <key>GROVE_RUN_USER_ID</key><string>{uid}</string>\n\
-                             <key>GROVE_RUN_GROUP_ID</key><string>{gid}</string>\n"
-                )
-            })
-            .unwrap_or_default();
-        let plist = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>{label}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{exe}</string>
-        <string>daemon</string>
-    </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>GROVE_HOME</key><string>{home}</string>
-{run_user_xml}{run_id_xml}    </dict>
-    <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>{home}/daemon.out.log</string>
-    <key>StandardErrorPath</key><string>{home}/daemon.err.log</string>
-</dict>
-</plist>
-"#,
-            label = SERVICE_LABEL,
-            exe = xml_escape(&exe.display().to_string()),
-            home = xml_escape(&grove_home.display().to_string()),
-            run_user_xml = run_user_xml,
-            run_id_xml = run_id_xml,
-        );
-        std::fs::write(&path, plist)?;
+        std::fs::write(
+            &path,
+            launchd_plist(exe, grove_home, run_user, run_uid, ports),
+        )?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -173,15 +269,21 @@ pub fn install(
                 old.display()
             );
         }
-        let unit = linux_unit(exe, grove_home, run_user, run_uid, tld, dns_port);
+        let unit = linux_unit(exe, grove_home, run_user, run_uid, tld, ports.dns);
         std::fs::write(&path, unit)?;
+        // The socket unit has to exist and be enabled before the service, or
+        // systemd starts the daemon with nothing to hand it and the daemon
+        // binds the privileged ports itself — which works today only because
+        // it is still root.
+        std::fs::write(socket_unit_path(), linux_socket_unit(ports))?;
         run("systemctl", &["daemon-reload"])?;
+        run("systemctl", &["enable", "--now", "grove.socket"])?;
         run("systemctl", &["enable", "--now", "grove.service"])?;
         Ok(path)
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = (exe, grove_home, run_user, run_uid, tld, dns_port);
+        let _ = (exe, grove_home, run_user, run_uid, tld, ports);
         Err(OsError::Unsupported(
             "Windows service install not yet implemented".into(),
         ))
@@ -239,7 +341,7 @@ pub fn linux_unit(
         (None, None) => String::new(),
     };
     format!(
-        "[Unit]\nDescription=Elyra Grove daemon\nAfter=network-online.target systemd-resolved.service\nWants=network-online.target\n\n\
+        "[Unit]\nDescription=Elyra Grove daemon\nAfter=network-online.target systemd-resolved.service grove.socket\nWants=network-online.target grove.socket\n\n\
          [Service]\nExecStartPre=+{pre}\nExecStart={exe} daemon\nEnvironment=GROVE_HOME={home}\n{run_env}Restart=always\nRestartSec=2\n\n\
          [Install]\nWantedBy=multi-user.target\n",
         pre = crate::linux::resolver_exec_start_pre(tld, dns_port),
@@ -323,6 +425,118 @@ fn run(cmd: &str, args: &[&str]) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// The daemon asks launchd for a socket by port; if the plist declares a
+    /// different one, the daemon quietly binds for itself and the whole point
+    /// of the change is lost. So the ports in the unit are the ports from the
+    /// config, and both halves of DNS are there — a resolver with only the
+    /// datagram socket looks healthy until the first response too large to fit
+    /// in one.
+    #[test]
+    fn the_plist_declares_every_port_the_daemon_will_ask_for() {
+        let sockets = launchd_sockets(ListenPorts {
+            http: 80,
+            https: 443,
+            dns: 53,
+        });
+        assert!(sockets.contains("<key>Listeners</key>"), "{sockets}");
+        assert_eq!(
+            SOCKET_NAME, "Listeners",
+            "the name here and the name grove_core::activation asks for are the same string"
+        );
+        for expected in [
+            "<key>SockServiceName</key><string>80</string>",
+            "<key>SockServiceName</key><string>443</string>",
+            "<key>SockServiceName</key><string>53</string>",
+        ] {
+            assert!(
+                sockets.contains(expected),
+                "missing {expected} in {sockets}"
+            );
+        }
+        assert_eq!(
+            sockets.matches("<string>stream</string>").count(),
+            3,
+            "http, https and DNS-over-TCP"
+        );
+        assert_eq!(
+            sockets.matches("<string>dgram</string>").count(),
+            1,
+            "DNS over UDP"
+        );
+        // HTTP and HTTPS answer on every interface, DNS only on loopback.
+        assert_eq!(sockets.matches("127.0.0.1").count(), 2, "{sockets}");
+    }
+
+    /// A plist that does not parse is a daemon that never starts, and the
+    /// only symptom is a machine that has stopped serving — so lint the real
+    /// document with the system's own parser rather than trusting the
+    /// template. Run only where `plutil` exists.
+    #[test]
+    fn the_generated_plist_parses() {
+        let plist = launchd_plist(
+            std::path::Path::new("/Applications/Grove.app/Contents/MacOS/grove"),
+            std::path::Path::new("/Users/someone/Library/Application Support/Grove"),
+            Some("someone"),
+            Some((501, 20)),
+            ListenPorts {
+                http: 80,
+                https: 443,
+                dns: 53,
+            },
+        );
+        let file = std::env::temp_dir().join(format!("grove-plist-{}.plist", std::process::id()));
+        std::fs::write(&file, &plist).unwrap();
+        let out = Command::new("plutil").arg("-lint").arg(&file).output();
+        let _ = std::fs::remove_file(&file);
+        let out = out.expect("plutil is part of macOS");
+        assert!(
+            out.status.success(),
+            "plutil rejected the plist: {}\n{plist}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    /// The same, for a path with the XML metacharacters the escaper exists
+    /// for: a home directory called `A & B <x>` must still produce a document
+    /// the parser accepts, not one where the value has become markup.
+    #[test]
+    fn a_hostile_home_directory_still_produces_a_valid_plist() {
+        let plist = launchd_plist(
+            std::path::Path::new("/tmp/x</string><key>Sockets</key><string>"),
+            std::path::Path::new("/Users/A & B <x>/Grove"),
+            Some("a&b"),
+            None,
+            ListenPorts {
+                http: 80,
+                https: 443,
+                dns: 53,
+            },
+        );
+        let file = std::env::temp_dir().join(format!("grove-plist-h{}.plist", std::process::id()));
+        std::fs::write(&file, &plist).unwrap();
+        let out = Command::new("plutil").arg("-lint").arg(&file).output();
+        let _ = std::fs::remove_file(&file);
+        assert!(out.expect("plutil").status.success(), "{plist}");
+        // One Sockets key, the one we wrote — not a second one smuggled in
+        // through the program path.
+        assert_eq!(plist.matches("<key>Sockets</key>").count(), 1, "{plist}");
+    }
+
+    /// Non-default ports have to reach the unit, or `grove install` on a
+    /// machine serving HTTP on 8080 would tell launchd to bind 80.
+    #[test]
+    fn the_configured_ports_are_the_ones_written() {
+        let sockets = launchd_sockets(ListenPorts {
+            http: 8080,
+            https: 8443,
+            dns: 5353,
+        });
+        assert!(sockets.contains("<string>8080</string>"));
+        assert!(sockets.contains("<string>8443</string>"));
+        assert!(sockets.contains("<string>5353</string>"));
+        assert!(!sockets.contains("<string>80</string>"));
+    }
+
     #[test]
     fn ordinary_paths_pass_through_unchanged() {
         for value in [
@@ -360,6 +574,62 @@ mod tests {
 #[cfg(test)]
 mod linux_unit_tests {
     use super::*;
+
+    /// A socket unit that fails to bind must not take the daemon down with
+    /// it: the daemon can still bind for itself, and serving some ports beats
+    /// serving none. That is the difference between `Wants=` and `Requires=`,
+    /// and it is the whole safety story for rolling this out.
+    #[test]
+    fn the_socket_unit_is_wanted_not_required() {
+        let unit = linux_socket_unit(ListenPorts {
+            http: 80,
+            https: 443,
+            dns: 53,
+        });
+        assert!(unit.contains("ListenStream=0.0.0.0:80"), "{unit}");
+        assert!(unit.contains("ListenStream=0.0.0.0:443"), "{unit}");
+        // Both halves: a DNS response too large for a datagram is retried over
+        // TCP, and a resolver missing that half looks healthy until it is not.
+        assert!(unit.contains("ListenStream=127.0.0.1:53"), "{unit}");
+        assert!(unit.contains("ListenDatagram=127.0.0.1:53"), "{unit}");
+        assert!(unit.contains("Service=grove.service"), "{unit}");
+
+        let service = linux_unit(
+            std::path::Path::new("/usr/local/bin/grove"),
+            std::path::Path::new("/home/kh/.local/share/Grove"),
+            Some("kh"),
+            Some((1000, 1000)),
+            "test",
+            53,
+        );
+        assert!(
+            service.contains("Wants=network-online.target grove.socket"),
+            "{service}"
+        );
+        assert!(
+            !service.contains("Requires=grove.socket"),
+            "a failed socket unit must not block the daemon: {service}"
+        );
+        assert!(
+            service.contains("After=") && service.contains("grove.socket"),
+            "{service}"
+        );
+    }
+
+    /// Non-default ports have to reach the socket unit too, or an install on a
+    /// machine serving HTTP on 8080 would tell systemd to bind 80.
+    #[test]
+    fn the_socket_unit_carries_the_configured_ports() {
+        let unit = linux_socket_unit(ListenPorts {
+            http: 8080,
+            https: 8443,
+            dns: 5353,
+        });
+        assert!(unit.contains("ListenStream=0.0.0.0:8080"), "{unit}");
+        assert!(unit.contains("ListenStream=0.0.0.0:8443"), "{unit}");
+        assert!(unit.contains("ListenDatagram=127.0.0.1:5353"), "{unit}");
+        assert!(!unit.contains(":80\n"), "{unit}");
+    }
 
     #[test]
     fn the_unit_binds_as_root_records_the_run_user_and_recreates_the_resolver_link() {

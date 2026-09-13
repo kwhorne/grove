@@ -1382,15 +1382,24 @@ async fn doctor(state: &Arc<DaemonState>) -> Vec<DiagnosticEntry> {
         ));
     }
 
+    // Three ways a privileged port can be served, and the check has to know
+    // all of them: the daemon is root, the port is not privileged, or the
+    // service manager bound it and handed the descriptor over. The last one is
+    // the reason this reports what was delivered rather than only whether the
+    // process is elevated — a daemon serving :80 from an inherited socket is
+    // healthy precisely because it is *not* root.
+    let handed_over = state.inherited_sockets();
+    let privileged_ports_covered =
+        grove_os::is_elevated() || config.general.http_port > 1024 || handed_over != "none";
     out.push(DiagnosticEntry {
         check: "privileges".into(),
-        status: if grove_os::is_elevated() || config.general.http_port > 1024 {
+        status: if privileged_ports_covered {
             DiagnosticStatus::Pass
         } else {
             DiagnosticStatus::Warn
         },
         detail: format!(
-            "http_port={}, elevated={}",
+            "http_port={}, elevated={}, sockets from the service manager: {handed_over}",
             config.general.http_port,
             grove_os::is_elevated()
         ),

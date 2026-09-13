@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The service manager binds the privileged ports, and hands them over.**
+  Binding 53, 80 and 443 needs root; serving on them does not. `grove install`
+  now writes a `Sockets` dictionary into the launchd plist and a companion
+  `grove.socket` unit for systemd, so launchd or systemd binds those ports
+  while *it* is root and passes the listening descriptors to the daemon. The
+  daemon asks for each port before binding it and serves on whatever it is
+  given — the same accept loops, from a descriptor it did not create. This is
+  the groundwork for a daemon that does not run as root at all; it does not yet
+  change who the daemon runs as.
+
+  Nothing requires the handover. Grove updates itself without rewriting the
+  unit, so a daemon that insisted on delivered sockets would break every
+  existing install the day it shipped: a port nobody handed over is bound by
+  the daemon exactly as before, and the two DNS halves are adopted
+  independently. Running `sudo grove install` is what switches a machine over.
+  `grove doctor` says which sockets arrived, on the `privileges` line, and no
+  longer warns about an unprivileged daemon that was handed :80.
+
 - **`grove doctor` re-checks the 1.5.0 invariants on every run.** Four new
   lines: `ipc-socket` (the daemon's socket must not be world-accessible),
   `grove-home` (the tree root reads binaries out of must not be world-writable;

@@ -171,6 +171,32 @@ to, to bind 53/80/443, install the system resolver and add a CA to the trust
 store — while everything it supervises runs as **you**. That line is where the
 interesting failure modes live, so it is drawn explicitly.
 
+### The privileged ports need not be bound by Grove
+
+Binding a port below 1024 needs root; *serving* on one does not. launchd and
+systemd will bind the port themselves, while they are root, and hand the
+already-listening descriptor to the process they start. `grove install` writes
+that into the unit — a `Sockets` dictionary in the launchd plist, a companion
+`grove.socket` unit under systemd — naming the HTTP, HTTPS and DNS ports the
+config asks for, with both halves of DNS, since a response too large for a
+datagram is retried over TCP.
+
+At startup the daemon asks for each port before binding it (`grove_core::activation`).
+What it gets is an owned socket; what it does with it is exactly what it does
+with one it bound. `grove doctor` reports which sockets arrived, so the
+difference is visible rather than inferred:
+
+```text
+✓ privileges     http_port=80, elevated=false, sockets from the service manager: tcp/53, tcp/80, tcp/443, udp/53
+```
+
+Nothing *requires* the handover. Grove updates itself without rewriting the
+unit, so a daemon that insisted on delivered sockets would break every install
+the moment it shipped; an unmatched port is bound by the daemon as before. That
+also means the two halves can be adopted independently, and that running
+`sudo grove install` is the visible, deliberate step that switches a machine
+over.
+
 ### Root supervises, but nothing it starts stays root
 
 The daemon spawns PHP-FPM pools, PostgreSQL, MySQL, Redis, `grove dev` servers,
