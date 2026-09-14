@@ -350,8 +350,9 @@ fn grove_home_check(base: &Path) -> DiagnosticEntry {
             "grove-home",
             DiagnosticStatus::Warn,
             format!(
-                "{} is owned by root (created by `sudo grove init`?); files inside may not be \
-                 writable for you. `sudo chown -R {me} {}`",
+                "{} is owned by root, and the daemon no longer runs as root — every write it \
+                 makes will fail. `sudo grove install` hands the tree over (or \
+                 `sudo chown -R {me} {}`)",
                 base.display(),
                 base.display()
             ),

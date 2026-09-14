@@ -1907,6 +1907,33 @@ mod lifecycle {
         // so it needs the TLD and port up front; macOS ignores them.
         let svc_paths = GrovePaths::with_base(&service_home);
         let cfg = Config::load(&svc_paths).unwrap_or_default();
+
+        // Everything root does to the Grove home happens *before* the service
+        // starts, and the tree is handed to the run user *after* — because the
+        // daemon the unit starts is no longer root and has to be able to write
+        // what it finds. Do it the other way round and the first thing the new
+        // daemon meets is a root-owned pidfile it cannot replace.
+        //
+        // Self-heal the system resolver (other tools like Herd can remove
+        // /etc/resolver/<tld>); ensure the root CA exists too.
+        use grove_os::PlatformIntegration;
+        let platform = grove_os::current();
+        let _ = grove_tls::CertificateAuthority::load_or_create(&svc_paths);
+        match platform.install_resolver(&cfg.general.tld, cfg.general.dns_port) {
+            Ok(()) => {}
+            Err(e) => tracing::warn!(error = %e, "resolver setup"),
+        }
+
+        // The one-time migration. An install from before the daemon ran as the
+        // user leaves a tree root owns — on a machine in daily use that is
+        // thousands of files, including `config.toml`, every PHP build and the
+        // CA key. `chown -R` is a single `exec`, and it is idempotent, so it
+        // costs nothing on a tree that is already right.
+        if let Some((uid, gid)) = run_ids {
+            let run_as = grove_core::privdrop::RunAs { uid, gid };
+            grove_core::privdrop::own_tree(&service_home, Some(run_as));
+        }
+
         let unit = grove_os::service::install(
             &exe,
             &service_home,
@@ -1920,16 +1947,6 @@ mod lifecycle {
             },
         )
         .context("installing service")?;
-
-        // Self-heal the system resolver (other tools like Herd can remove
-        // /etc/resolver/<tld>); ensure the root CA exists too.
-        use grove_os::PlatformIntegration;
-        let platform = grove_os::current();
-        let _ = grove_tls::CertificateAuthority::load_or_create(&svc_paths);
-        match platform.install_resolver(&cfg.general.tld, cfg.general.dns_port) {
-            Ok(()) => {}
-            Err(e) => tracing::warn!(error = %e, "resolver setup"),
-        }
 
         output::print_message(
             &format!(

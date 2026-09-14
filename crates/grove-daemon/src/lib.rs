@@ -32,6 +32,7 @@ use grove_tls::CertificateAuthority;
 /// start the IPC listener. Runs until cancelled.
 pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     paths.ensure()?;
+    warn_if_the_tree_is_not_ours(&paths);
     guard_single_instance(&paths)?;
     let config = Config::load(&paths).context("loading config")?;
     let general = config.general.clone();
@@ -340,6 +341,36 @@ async fn dns_sockets(
             Ok((tokio::net::UdpSocket::bind(addr).await?, tcp))
         }
     }
+}
+
+/// Say so, loudly and once, when the daemon cannot write its own state
+/// directory.
+///
+/// The daemon used to be root and could write anything. It is not any more, and
+/// the failure mode of an install that was never migrated is a tree root owns:
+/// every write fails, one confusing error at a time, starting with the pidfile.
+/// One line at startup naming the fix is worth more than twenty downstream.
+fn warn_if_the_tree_is_not_ours(paths: &GrovePaths) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let me = crate::ipc::current_uid();
+        let Ok(meta) = std::fs::metadata(paths.base()) else {
+            return;
+        };
+        if meta.uid() == me || me == 0 {
+            return;
+        }
+        tracing::error!(
+            home = %paths.base().display(),
+            owner = meta.uid(),
+            running_as = me,
+            "the Grove home belongs to another user, so writes will fail — \
+             run `sudo grove install` to hand it over"
+        );
+    }
+    #[cfg(not(unix))]
+    let _ = paths;
 }
 
 /// The OS's reason for a failed bind, without the address the caller already

@@ -103,7 +103,7 @@ impl CertificateAuthority {
             // key), but `cert_pem()` returned a certificate that was not the
             // one on disk and not the one the trust store held.
             let issuer = Issuer::from_ca_cert_pem(&cert_pem, key)?;
-            claim_key_for_root(&key_path);
+            claim_key_for_run_user(&key_path);
             return Ok(Self {
                 cert_pem,
                 key_pem,
@@ -179,7 +179,7 @@ impl CertificateAuthority {
         refuse_symlinked_dir(&key_path)?;
         securefs::write_public(&cert_path, &self.cert_pem)?;
         securefs::write_private(&key_path, &self.key_pem)?;
-        claim_key_for_root(&key_path);
+        claim_key_for_run_user(&key_path);
         if let Some(tld) = &self.constrained_tld {
             let meta = CaMeta {
                 constrained_tld: tld.clone(),
@@ -366,48 +366,71 @@ pub fn remove(paths: &GrovePaths) -> Result<()> {
     Ok(())
 }
 
-/// Make the CA private key root-owned, whenever we are root to do it.
+/// Give the CA private key to whoever the daemon will run as.
 ///
 /// This key is the whole point of Grove's HTTPS: it is installed in the
-/// **system** trust store, so whoever holds it can mint a certificate for any
-/// name — `google.com` included — that this machine will believe. Nothing
-/// unprivileged needs it: every caller that loads it is either the root daemon
-/// or a command documented as `sudo`. Leaving it readable by the login user
-/// meant a compromised `npm`/`composer` postinstall hook could walk off with it.
+/// **system** trust store, so whoever holds it can mint a certificate this
+/// machine will believe. It used to be claimed for root, because the daemon
+/// was root and nothing unprivileged needed it.
 ///
-/// `0600` from [`securefs::write_private`] already stops other *users*; this is
-/// what stops unprivileged code running as the login user. Ownership converges
-/// rather than being enforced up front, because a first-run `grove init` without
-/// `sudo` legitimately creates the CA as the user — the root daemon then claims
-/// it on its next start. That leaves a window where the key is user-readable,
-/// but only for a key the user created and therefore already had.
+/// The daemon is no longer root. launchd and systemd bind the privileged ports
+/// and hand the descriptors over, so the process that signs leaves runs as the
+/// login user and must be able to read this file. Claiming it for root now
+/// would simply stop HTTPS working.
 ///
-/// Note that the leaf keys are deliberately *not* included: `grove dev` hands
-/// Vite its certificate and key on purpose, and that process runs as the user. A
-/// stolen leaf key impersonates one local site; a stolen CA key impersonates
-/// everything.
-fn claim_key_for_root(key_path: &Path) {
+/// ## What that costs, plainly
+///
+/// Code running as the login user can read the key. It could not before. What
+/// it buys an attacker is a certificate for a name under the configured TLD,
+/// which is bounded two ways: the CA carries a `NameConstraints` extension
+/// limiting it to that TLD (enforced by every TLS client, and pinned by the
+/// tests in `grove-tls`), and those names resolve to loopback, so the key is
+/// worth nothing on another machine.
+///
+/// Against that: the same code could already reach a **root** daemon through
+/// the IPC socket, whose request surface includes installing runtimes and
+/// services. Removing root from the daemon removes that surface entirely. The
+/// key becoming readable is the smaller half of the trade.
+///
+/// `0600` from [`securefs::write_private`] still keeps other users out.
+/// Ownership converges rather than being enforced up front, because a
+/// first-run `grove init` without `sudo` legitimately creates the CA as the
+/// user, and a `sudo` command may create it as root before the tree is handed
+/// over.
+///
+/// Leaf keys were never included and still are not: `grove dev` hands Vite its
+/// certificate and key on purpose. A stolen leaf key impersonates one local
+/// site; a stolen CA key impersonates every site under the TLD.
+fn claim_key_for_run_user(key_path: &Path) {
     if !grove_core::privdrop::running_as_root() {
         return;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let already_root = fs::metadata(key_path)
-            .map(|m| m.uid() == 0)
+        // Who will the daemon be? The same answer every spawn uses, so the key
+        // cannot end up owned by someone the daemon is not.
+        let Some(run_as) = grove_core::privdrop::target() else {
+            // No run user recorded: the daemon stays root too, so root owning
+            // the key is still the right answer and still readable by it.
+            return;
+        };
+        let already = fs::metadata(key_path)
+            .map(|m| m.uid() == run_as.uid)
             .unwrap_or(false);
-        if already_root {
+        if already {
             return;
         }
-        match std::os::unix::fs::chown(key_path, Some(0), Some(0)) {
+        match std::os::unix::fs::chown(key_path, Some(run_as.uid), Some(run_as.gid)) {
             Ok(()) => tracing::info!(
                 key = %key_path.display(),
-                "took ownership of the root CA key so unprivileged code cannot read it"
+                uid = run_as.uid,
+                "handed the root CA key to the user the daemon runs as"
             ),
             Err(e) => tracing::warn!(
                 error = %e,
                 key = %key_path.display(),
-                "could not take ownership of the root CA key"
+                "could not hand over the root CA key; HTTPS will fail once the daemon drops root"
             ),
         }
     }
@@ -693,14 +716,14 @@ mod tests {
         }
     }
 
-    /// Unprivileged, `claim_key_for_root` must be a no-op rather than an error —
+    /// Unprivileged, `claim_key_for_run_user` must be a no-op rather than an error —
     /// a first-run `grove init` without `sudo` has to keep working.
     #[test]
     fn claiming_the_key_is_a_no_op_without_root() {
         let paths = scratch("claim");
         CertificateAuthority::load_or_create(&paths).unwrap();
         let before = fs::metadata(paths.ca_key()).unwrap();
-        claim_key_for_root(&paths.ca_key());
+        claim_key_for_run_user(&paths.ca_key());
         let after = fs::metadata(paths.ca_key()).unwrap();
         #[cfg(unix)]
         {
