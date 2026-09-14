@@ -260,16 +260,22 @@ exists to serve them.
 
 | Tree | Owner | Holds |
 | --- | --- | --- |
-| `$GROVE_HOME` | shared, root-writable | config, runtimes, services, certs, sockets |
+| `$GROVE_HOME` | you (`sudo grove install` hands it over) | config, runtimes, services, certs, sockets |
 | `~/.grove` | you | identity, secret pins, `cpx.phar`, PATH shims |
 
-The split is load-bearing in both directions. Anything recording *your* trust
-decisions stays in `~/.grove`, where the root daemon has no part in it — and
-root never reads from there. Conversely, anything root *does* read out of
-`$GROVE_HOME` is as privileged as root itself. `php-builds.json` is the sharp
-example: it is a JSON file that names the `php-fpm` binary root will execute, so
-being able to write it is being able to choose that binary. Replacing a binary is
-the obvious attack; naming a different one is the cheaper one.
+The split still matters, but less sharply than it did. Anything recording
+*your* trust decisions stays in `~/.grove`, and nothing privileged reads from
+there. `$GROVE_HOME` used to be the dangerous half: a tree you could write that
+a **root** daemon executed out of, which is why `php-builds.json` — a JSON file
+naming the `php-fpm` binary — was as privileged as root itself. The daemon that
+reads it is now you, so writing that file buys an attacker nothing they did not
+already have.
+
+On a machine that still runs the daemon as root — one where `grove install`
+could not work out who to serve — the old reasoning applies unchanged, and so
+does the defence: `securefs`, and a `grove doctor` that fails when
+`$GROVE_HOME` is world-writable. Replacing a binary is the obvious attack;
+naming a different one is the cheaper one.
 
 ### Files are created with the mode they need
 

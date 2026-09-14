@@ -93,7 +93,8 @@ but it never requires Valet to be installed.
 # 1. First-run setup: config, root CA, a static PHP build, resolver + trust
 sudo grove init
 
-# 2. Install the background service (root daemon, binds 80/443/53, starts at boot)
+# 2. Install the background service (launchd/systemd binds 80/443/53 and hands
+#    them to a daemon that runs as you; starts at boot)
 sudo grove install
 
 # 3. Point Grove at your projects
