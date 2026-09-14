@@ -109,19 +109,19 @@ neither being green in CI means they passed — they have to be run on purpose.
 
 ### Privileged tests
 
-Dropping privileges can only be *proved* by a process that has some. `setgroups`
-is privileged even when it would change nothing, so an unprivileged run can only
-demonstrate the refusal path. These files skip themselves unless they happen to
-be running as root — a no-op on your machine, real evidence in a container:
+One thing here can only be *observed* by a process that has privilege: what a
+root install does with the CA private key. `sudo grove install` creates the CA
+as root and then has to hand it to the user the daemon will run as, because
+since 1.8.0 that daemon is not root and a key it cannot read is HTTPS that does
+not work. The test skips itself unless it happens to be running as root — a
+no-op on your machine, real evidence in a container:
 
 ```bash
 docker run --rm -v "$PWD:/w" -w /w \
   -v grove-linux-target:/target -e CARGO_TARGET_DIR=/target \
   rust:alpine sh -c '
     apk add --no-cache musl-dev openssl-dev &&
-    cargo test -p grove-core    --test privdrop_root     -- --nocapture &&
-    cargo test -p grove-tls     --test ca_ownership_root -- --nocapture &&
-    cargo test -p grove-runtime --test probe_root        -- --nocapture'
+    cargo test -p grove-tls --test ca_ownership_root -- --nocapture'
 ```
 
 The named volume is worth the extra flags. Cargo keys artefacts by target
@@ -130,12 +130,15 @@ build — but it does grow the directory by a second platform's worth of objects
 and it starts from cold every run. In a volume the first run is a ~12-minute
 build and every run after it is seconds.
 
-They cover: that a dropped child really comes out as the requested user and
-group, with none of root's supplementary groups surviving; that with no target
-recorded the child stays root rather than dropping somewhere arbitrary; that a
-root-created CA is owned by root while a *user-owned* key is claimed on the next
-root load, and the certificate stays readable either way; and that runtime probes
-(`php -m` and friends) do not exec as root when a run user is known.
+It covers all four directions: a root install hands the key to the recorded run
+user; a key root already owns moves on the next load; with no run user recorded
+it stays with root, because there the daemon stays root too; and the
+certificate stays world-readable throughout, since nothing can verify a chain
+it cannot read.
+
+Two sibling suites used to live here — `grove-core --test privdrop_root` and
+`grove-runtime --test probe_root` — and they went with the privilege-dropping
+machinery they tested. There is no drop left to prove.
 
 ### Property tests
 

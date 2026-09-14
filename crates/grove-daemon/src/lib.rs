@@ -31,6 +31,7 @@ use grove_tls::CertificateAuthority;
 /// Boot the daemon: load config, build the registry, bring up DNS + proxy, and
 /// start the IPC listener. Runs until cancelled.
 pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
+    refuse_to_run_as_root()?;
     paths.ensure()?;
     warn_if_the_tree_is_not_ours(&paths);
     guard_single_instance(&paths)?;
@@ -341,6 +342,34 @@ async fn dns_sockets(
             Ok((tokio::net::UdpSocket::bind(addr).await?, tcp))
         }
     }
+}
+
+/// Refuse to serve with privilege.
+///
+/// The daemon has no use for root: launchd and systemd bind the privileged
+/// ports and hand the descriptors over. What it *would* do with root is exec
+/// PHP-FPM, PostgreSQL, MySQL and Redis out of `$GROVE_HOME` — a tree the login
+/// user can write — which is the local privilege escalation the old
+/// privilege-dropping machinery existed to prevent. That machinery is gone, so
+/// this takes its place: not starting is recoverable in one command, and
+/// running someone's sites as root is not.
+///
+/// The only way to get here is a unit written before 1.8.0, or one written on a
+/// machine where `grove install` could not work out who to serve. Both are
+/// fixed the same way, and the message says so.
+fn refuse_to_run_as_root() -> anyhow::Result<()> {
+    if !grove_core::ownership::running_as_root() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "the Grove daemon will not run as root.\n\
+         \n\
+         It does not need to: launchd and systemd bind ports 53, 80 and 443 and \
+         hand the sockets over. Running as root would mean starting PHP-FPM and \
+         your databases as root, out of a directory you can write.\n\
+         \n\
+         Run `sudo grove install` to rewrite the service so it starts as you."
+    )
 }
 
 /// Say so, loudly and once, when the daemon cannot write its own state

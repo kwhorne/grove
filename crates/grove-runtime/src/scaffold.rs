@@ -9,7 +9,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use grove_core::paths::GrovePaths;
-use grove_core::privdrop;
 
 use crate::install;
 use crate::node::{self, NodeRegistry};
@@ -90,17 +89,14 @@ fn ensure_laravel_installer(
         return Ok(bin);
     }
     progress("installing the Laravel installer…");
-    // Composer resolves and executes package code from the network. Doing that
-    // as root, with a `php` binary that itself came from a download, is the
-    // widest version of the problem `privdrop` exists for — so drop, and hand
-    // Composer's home to the user first so it can still write there.
-    let run_as = privdrop::target();
-    privdrop::own_tree(&home, run_as);
+    // Composer resolves and executes package code from the network, with a
+    // `php` binary that itself came from a download. That was the widest
+    // version of the privilege problem, and it is gone: this process is the
+    // login user, so Composer is too.
     let mut cmd = std::process::Command::new(php);
     cmd.arg(composer)
         .args(["global", "require", "laravel/installer", "--no-interaction"])
         .env("COMPOSER_HOME", &home);
-    privdrop::apply(&mut cmd, run_as);
     let out = cmd.output()?;
     if !out.status.success() {
         return Err(ScaffoldError::Command(format!(
@@ -219,20 +215,9 @@ pub fn new_laravel(
         .arg("--database=sqlite")
         .current_dir(parent)
         .env("PATH", &path)
-        .env("COMPOSER_HOME", &home)
-        // Only needed while this still ran as root. Kept for the fallback
-        // where there is no run user to drop to, since Composer refuses to be
-        // quiet about it otherwise.
-        .env("COMPOSER_ALLOW_SUPERUSER", "1");
-    // `laravel new` downloads and executes the framework and its dependencies.
-    // As the user, not as root.
-    let run_as = privdrop::target();
-    privdrop::own_tree(&home, run_as);
-    if let Some(node_dir) = &node_bin {
-        // npm writes caches next to its own tree during the asset build.
-        privdrop::own_tree(node_dir, run_as);
-    }
-    privdrop::apply(&mut cmd, run_as);
+        .env("COMPOSER_HOME", &home);
+    // `laravel new` downloads and executes the framework and its dependencies
+    // — as the login user, which is what this process already is.
     match kit {
         Some("livewire") => {
             cmd.arg("--livewire");
@@ -263,51 +248,8 @@ pub fn new_laravel(
         )));
     }
 
-    // The project should already be user-owned, since `laravel new` ran as the
-    // user. Kept for the fallback path where there was no run user to drop to.
-    chown_to_run_user(target);
     progress("done");
     Ok(())
-}
-
-/// When the daemon runs as root, `chown -R` the new project to the invoking
-/// user so they own and can edit their files.
-fn chown_to_run_user(target: &Path) {
-    if !running_as_root() {
-        return;
-    }
-    let Some(user) = run_user() else { return };
-    let _ = std::process::Command::new("chown")
-        .arg("-R")
-        .arg(&user)
-        .arg(target)
-        .status();
-}
-
-fn running_as_root() -> bool {
-    #[cfg(unix)]
-    {
-        extern "C" {
-            #[link_name = "geteuid"]
-            fn geteuid() -> u32;
-        }
-        unsafe { geteuid() == 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
-}
-
-fn run_user() -> Option<String> {
-    for var in ["GROVE_RUN_USER", "SUDO_USER"] {
-        if let Ok(u) = std::env::var(var) {
-            if !u.is_empty() && u != "root" {
-                return Some(u);
-            }
-        }
-    }
-    None
 }
 
 /// Create a minimal static site at `target`.
@@ -320,7 +262,6 @@ pub fn new_static(target: &Path, name: &str) -> Result<()> {
         "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>{name}</title>\n  <style>body{{font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;background:#16161e;color:#c0caf5}}h1{{font-weight:600}}</style>\n</head>\n<body>\n  <h1>🌳 {name}</h1>\n</body>\n</html>\n",
     );
     std::fs::write(target.join("index.html"), html)?;
-    chown_to_run_user(target);
     Ok(())
 }
 

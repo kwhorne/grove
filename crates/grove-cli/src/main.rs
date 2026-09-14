@@ -1930,8 +1930,8 @@ mod lifecycle {
         // CA key. `chown -R` is a single `exec`, and it is idempotent, so it
         // costs nothing on a tree that is already right.
         if let Some((uid, gid)) = run_ids {
-            let run_as = grove_core::privdrop::RunAs { uid, gid };
-            grove_core::privdrop::own_tree(&service_home, Some(run_as));
+            let run_as = grove_core::ownership::RunAs { uid, gid };
+            grove_core::ownership::own_tree(&service_home, Some(run_as));
         }
 
         let unit = grove_os::service::install(
@@ -2326,7 +2326,7 @@ mod lifecycle {
     /// The daemon runs as root and can write anything; the CLI cannot.
     fn own_as_invoking_user(path: &std::path::Path) {
         if let Some((uid, gid)) = numeric_ids_from_sudo() {
-            grove_core::privdrop::own_path(path, Some(grove_core::privdrop::RunAs { uid, gid }));
+            grove_core::ownership::own_path(path, Some(grove_core::ownership::RunAs { uid, gid }));
         }
     }
 

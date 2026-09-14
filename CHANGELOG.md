@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **The privilege-dropping machinery, and the daemon's ability to run as
+  root.** 1.8.0 moved the daemon to the login user; this deletes what that made
+  unnecessary. `grove_core::privdrop` is gone, and with it the `pre_exec` block
+  that called `setgroups`/`setgid`/`setuid` between fork and exec — the most
+  delicate `unsafe` in the workspace — along with its twenty-odd call sites
+  across PHP-FPM, the runtime probes, the scaffolding tools and every bundled
+  service. Two hand-rolled copies of `geteuid` went too, as did
+  `--allow-to-run-as-root` and the `user`/`listen.owner` pool directives that
+  only ever meant anything to a root master. Net 433 lines.
+
+  What survives is the half the privileged *commands* still need, now called
+  `grove_core::ownership`: `sudo grove install` creates files as root and has
+  to hand them to the user who will read them.
+
+- **`crates/grove-core/tests/privdrop_root.rs` and
+  `crates/grove-runtime/tests/probe_root.rs`**, which proved a drop that no
+  longer happens. `ca_ownership_root.rs` stays: which user owns the CA key
+  after a root install is still only observable as root.
+
+### Changed
+
+- **The daemon refuses to start as root**, naming `sudo grove install` as the
+  fix, and exits non-zero so the service manager does not treat it as a
+  successful start. It has no use for privilege — launchd and systemd hand it
+  the ports — and what it *would* do with privilege is exec PHP-FPM and your
+  databases out of a directory you can write, which is exactly the escalation
+  the deleted machinery existed to prevent. Not starting is recoverable in one
+  command; running your sites as root is not. The only way to reach it is a
+  unit written before 1.8.0.
+
+- **The IPC socket is no longer a privilege boundary**, and says so. It still
+  refuses other local users, by mode and by peer credentials, because another
+  account has no business restarting your daemon or dumping your databases.
+  What it no longer guards is a root-privileged command surface, because there
+  is not one.
+
 ## [1.8.0] — 2026-09-14
 
 The daemon stops being root. Binding a port below 1024 needs privilege;
