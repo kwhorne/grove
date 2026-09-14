@@ -71,7 +71,7 @@ grove --version
 ```
 
 ```text
-grove 1.7.1
+grove 1.8.0
 ```
 
 > Every example below uses `grove …`. If you skip the symlink, replace `grove`
@@ -140,7 +140,7 @@ grove status
 ```
 
 ```text
-Grove 1.7.1
+Grove 1.8.0
   TLD          .test
   HTTP         :80
   HTTPS        :443
@@ -169,13 +169,19 @@ grove doctor
 ✓ http           listening on :80
 ✓ https          listening on :443
 ✓ mail           listening on :1025
-✓ privileges     http_port=80, elevated=true
+✓ privileges     http_port=80, elevated=false, sockets from the service manager: tcp/443, tcp/53, tcp/80, udp/53
 ✓ php-extensions 1 build(s), nothing required missing
 ```
 
 `doctor` exits non-zero if anything shows `✗`, so it can gate a script. It
 works with the daemon stopped too: the config, CA and resolver checks run
 locally and the daemon line says so.
+
+`privileges` is where you see the daemon is not root: `elevated=false` beside
+the privileged ports it was handed. On a machine that still runs the daemon as
+root — one where `grove install` could not work out who to serve — it reads
+`elevated=true` and `sockets from the service manager: none`, and that is also
+fine.
 
 Four of the lines re-check, on every run, what 1.5.0 fixed once: `ipc-socket`
 (the socket every privileged operation goes through must not be

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-09-14
+
+The daemon stops being root. Binding a port below 1024 needs privilege;
+serving on one does not, so launchd and systemd now bind 53, 80 and 443 while
+they are root and hand the listening descriptors to a process that never had
+privilege at all. What is left that genuinely needs root is one-off and
+visible: writing the unit, `/etc/resolver`, the system trust store.
+
+Everything else here follows from that, or from re-checking what 1.5.0 claimed:
+`grove doctor` re-runs those invariants on every start, and the central one —
+that a leaked Grove CA key cannot mint a certificate for anything outside your
+TLD — stops being a doc comment and becomes a test through the same verifier
+browsers use.
+
 ### Upgrade notes
 
 - **`sudo grove install` once, to move the daemon off root.** Nothing happens

@@ -6,8 +6,8 @@ Security fixes target the latest released version.
 
 | Version | Supported |
 | --- | --- |
-| 1.7.x | ✅ |
-| < 1.7 | ❌ |
+| 1.8.x | ✅ |
+| < 1.8 | ❌ |
 
 ## Reporting a vulnerability
 

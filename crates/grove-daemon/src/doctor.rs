@@ -338,7 +338,7 @@ fn grove_home_check(base: &Path) -> DiagnosticEntry {
             DiagnosticStatus::Fail,
             format!(
                 "{} is world-writable (mode {mode:04o}): anyone on this machine can plant a \
-                 php-fpm binary the root daemon will run. `chmod o-w {}`",
+                 php-fpm binary the daemon will run. `chmod o-w {}`",
                 base.display(),
                 base.display()
             ),
