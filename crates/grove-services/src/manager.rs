@@ -14,7 +14,6 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 
 use grove_core::paths::GrovePaths;
-use grove_core::privdrop;
 use grove_core::securefs;
 
 use crate::catalog::{self, ServiceKind, ServiceSpec};
@@ -667,7 +666,6 @@ impl ServiceManager {
             .arg(&target)
             .arg("--force");
         // The live file must stay the server's, and the server runs dropped.
-        privdrop::apply(&mut cmd, privdrop::target());
         let out = cmd.output()?;
         let restored = out.status.success();
         let start_result = self.start("elyrasql");
@@ -696,13 +694,10 @@ impl ServiceManager {
         std::fs::create_dir_all(&data)?;
         // The daemon may be root, but mysqld refuses to run as root — initialise
         // (and later run) as the invoking user, owning the data dir to match.
-        let run_as = privdrop::target();
-        privdrop::own_tree(&data, run_as);
         let mut cmd = std::process::Command::new(bin.join("mysqld"));
         cmd.arg("--initialize-insecure")
             .arg(format!("--datadir={}", data.display()))
             .arg(format!("--basedir={}", base.display()));
-        privdrop::apply(&mut cmd, run_as);
         let out = cmd.output()?;
         if !out.status.success() {
             return Err(ServiceError::Init(
@@ -720,16 +715,13 @@ impl ServiceManager {
                 .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?,
         );
         progress("compiling Redis (make)…");
-        // `make` runs whatever the Makefile in this tree says, and the tree came
-        // out of a download into `$GROVE_HOME`. Running it as root turned a
-        // tampered archive into root code execution; drop first, and give the
-        // tree to the user so the build can still write its objects.
-        let run_as = privdrop::target();
-        privdrop::own_tree(&src, run_as);
+        // `make` runs whatever the Makefile in this tree says, and the tree
+        // came out of a download into `$GROVE_HOME`. That was root code
+        // execution from a tampered archive until the daemon stopped being
+        // root; it is now the same user who could edit the tree anyway.
         let mut make = std::process::Command::new("make");
         make.current_dir(&src)
             .args(["-j4", "MALLOC=libc", "BUILD_TLS=no"]);
-        privdrop::apply(&mut make, run_as);
         let out = make.output().map_err(|e| {
             ServiceError::Init(format!(
                 "make failed to start ({e}); a C toolchain is required"
@@ -761,13 +753,10 @@ impl ServiceManager {
         progress("initialising database cluster (initdb)…");
         std::fs::create_dir_all(&data)?;
         // Postgres refuses to run as root; init (and run) as the invoking user.
-        let run_as = privdrop::target();
-        privdrop::own_tree(&data, run_as);
         let mut cmd = std::process::Command::new(bin.join("initdb"));
         cmd.arg("-D")
             .arg(&data)
             .args(["-U", "grove", "--auth=trust", "--encoding=UTF8"]);
-        privdrop::apply(&mut cmd, run_as);
         let out = cmd.output()?;
         if !out.status.success() {
             return Err(ServiceError::Init(
@@ -800,8 +789,6 @@ impl ServiceManager {
         // root" — but `redis-server` is fetched into `$GROVE_HOME`, which the
         // user owns, so a root Redis meant replacing that binary was a root
         // shell. Being happy as root is not a reason to be root.
-        let run_as = privdrop::target();
-        privdrop::own_tree(&self.data_dir(spec), run_as);
 
         let child = match spec.kind {
             ServiceKind::Postgres => {
@@ -815,13 +802,11 @@ impl ServiceManager {
                     .arg(&data)
                     .stdout(logf.try_clone()?)
                     .stderr(logf);
-                privdrop::apply(&mut cmd, run_as);
                 cmd.spawn()?
             }
             ServiceKind::Redis => {
                 let data = self.data_dir(spec);
                 std::fs::create_dir_all(&data)?;
-                privdrop::own_tree(&data, run_as);
                 let mut cmd = std::process::Command::new(bin.join("redis-server"));
                 cmd.args(["--port", &port.to_string()])
                     .arg("--dir")
@@ -829,13 +814,11 @@ impl ServiceManager {
                     .args(["--daemonize", "no", "--save", ""])
                     .stdout(logf.try_clone()?)
                     .stderr(logf);
-                privdrop::apply(&mut cmd, run_as);
                 cmd.spawn()?
             }
             ServiceKind::ElyraSql => {
                 let data = self.data_dir(spec);
                 std::fs::create_dir_all(&data)?;
-                privdrop::own_tree(&data, run_as);
                 let mut cmd = std::process::Command::new(bin.join("elyrasql"));
                 // No accounts: ElyraSQL's "open auth" makes every client Admin,
                 // which it permits on a loopback bind and refuses elsewhere. That
@@ -848,7 +831,6 @@ impl ServiceManager {
                     .arg(format!("127.0.0.1:{port}"))
                     .stdout(logf.try_clone()?)
                     .stderr(logf);
-                privdrop::apply(&mut cmd, run_as);
                 cmd.spawn()?
             }
             ServiceKind::Mysql => {
@@ -866,7 +848,6 @@ impl ServiceManager {
                     .arg("--mysqlx=OFF")
                     .stdout(logf.try_clone()?)
                     .stderr(logf);
-                privdrop::apply(&mut cmd, run_as);
                 cmd.spawn()?
             }
         };
@@ -982,11 +963,6 @@ impl Drop for ServiceManager {
         }
     }
 }
-
-// ---- privilege dropping ---------------------------------------------------
-// The daemon may run as root (macOS LaunchDaemon) so it can bind 53/80/443, but
-// MySQL and PostgreSQL refuse to run as root. When we're root, run them as the
-// invoking user (like PHP-FPM) and own their data dirs accordingly.
 
 // ---- persisted autostart state ------------------------------------------
 

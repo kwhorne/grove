@@ -402,7 +402,7 @@ pub fn remove(paths: &GrovePaths) -> Result<()> {
 /// certificate and key on purpose. A stolen leaf key impersonates one local
 /// site; a stolen CA key impersonates every site under the TLD.
 fn claim_key_for_run_user(key_path: &Path) {
-    if !grove_core::privdrop::running_as_root() {
+    if !grove_core::ownership::running_as_root() {
         return;
     }
     #[cfg(unix)]
@@ -410,7 +410,7 @@ fn claim_key_for_run_user(key_path: &Path) {
         use std::os::unix::fs::MetadataExt;
         // Who will the daemon be? The same answer every spawn uses, so the key
         // cannot end up owned by someone the daemon is not.
-        let Some(run_as) = grove_core::privdrop::target() else {
+        let Some(run_as) = grove_core::ownership::run_user() else {
             // No run user recorded: the daemon stays root too, so root owning
             // the key is still the right answer and still readable by it.
             return;
@@ -728,7 +728,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if !grove_core::privdrop::running_as_root() {
+            if !grove_core::ownership::running_as_root() {
                 assert_eq!(before.uid(), after.uid(), "ownership must not change");
             }
         }

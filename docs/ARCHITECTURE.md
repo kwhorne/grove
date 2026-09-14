@@ -30,7 +30,7 @@ local Unix-socket JSON-RPC.
 
 | Crate | Responsibility |
 | --- | --- |
-| `grove-core` | Site registry, driver detection, TOML config, paths — and the primitives the privileged parts need: `securefs` (mode-at-`open`, `O_NOFOLLOW`), `privdrop` (setuid/setgid for spawned children), `checksum` (SHA-256 verification), `redact` (stripping secrets out of logs). No port binding, no supervision. |
+| `grove-core` | Site registry, driver detection, TOML config, paths — and the primitives the privileged parts need: `securefs` (mode-at-`open`, `O_NOFOLLOW`), `ownership` (handing files to the user a `sudo` command acts for), `checksum` (SHA-256 verification), `redact` (stripping secrets out of logs). No port binding, no supervision. |
 | `grove-ipc` | JSON-RPC protocol types + newline-delimited transport, and the client used by CLI/GUI. |
 | `grove-tls` | Root CA generation, `NameConstraints`-scoped to the configured TLD, + on-demand leaf issuance and renewal (rcgen/rustls). |
 | `grove-dns` | Embedded authoritative resolver for `*.<tld>` (hickory). |
