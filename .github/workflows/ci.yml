@@ -75,7 +75,7 @@ jobs:
         working-directory: crates/grove-gui/ui
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         with:
           version: 10
       - uses: actions/setup-node@v4
@@ -111,7 +111,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         with:
           version: 10
       - uses: actions/setup-node@v4
