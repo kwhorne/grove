@@ -437,6 +437,66 @@ databases) and PostgreSQL (`--engine postgres`) snapshots are plain SQL dumps;
 an ElyraSQL snapshot (`--engine elyrasql`) is a hot, consistent copy of its
 single database file, taken while it serves.
 
+### A database per git branch
+
+Checking out a branch changes the code in a second and leaves the database
+where it was. A feature branch's migrations land in the tables `main` uses, and
+going back to `main` means `migrate:fresh` or an app that no longer matches its
+schema. Grove can keep one database per branch and swap it in when you check
+the branch out:
+
+```bash
+cd ~/Code/myapp
+grove db branches on
+git checkout -b feature/invoices     # starts from main's data
+php artisan migrate                  # only feature/invoices sees this
+git checkout main                    # main's tables are back, untouched
+```
+
+```bash
+grove db branches
+```
+
+```text
+myapp  mysql myapp
+  live      main  (checked out)
+  parked   feature/invoices             3 tables    70.6 MB
+```
+
+The database keeps its name the whole time. Grove swaps its *contents*, so every
+client sees the right branch without being told: the app, `php artisan` in a
+terminal, a test run, TablePlus. On MySQL a swap is one `RENAME TABLE` moving
+every table at once, which takes the same few tens of milliseconds for 70 MB as
+for an empty schema. On SQLite it is two file renames. The first visit to a
+branch is the one case that copies: the branch you left gets a parked copy of
+the data, and the data you were using carries on as the new branch's starting
+point.
+
+While a switch runs, the site answers `503` with `Retry-After`, and its
+`grove dev` processes stop and start again afterwards, so a queue worker runs
+the new branch's code against the new branch's data. A detached `HEAD` never
+moves anything, which keeps the database still through a rebase, a bisect or
+`git checkout <sha>`.
+
+Things to know:
+
+- **MySQL on Grove's own server and SQLite files only, so far.** A remote MySQL,
+  PostgreSQL and ElyraSQL are refused with a message, not half-followed.
+- **A MySQL database with views, triggers, stored routines or events is
+  refused.** They belong to the schema rather than to a table, so a table swap
+  would leave them acting on the wrong branch's data.
+- **Two worktrees cannot follow the same database.** Each would swap the other's
+  data away; give one of them its own `DB_DATABASE`.
+- **Parked copies live beside the live one:** MySQL as `<database>__gb_<id>`
+  schemas, SQLite under `$GROVE_HOME/branch-databases/`. `grove db branches off`
+  stops following and keeps them; `on` picks them up again. Deleting one is
+  always explicit: `grove db branches drop <branch>`. The status names the
+  copies whose git branch has been deleted.
+- **A database client writing at the moment of a switch is outside what Grove
+  can hold back.** On MySQL it sees one branch or the other, never a mix. On
+  SQLite a switch waits while another process has the file open, and says which
+  one.
+
 ### ElyraSQL
 
 [ElyraSQL](https://github.com/kwhorne/ElyraSQL) is a MySQL-compatible SQL

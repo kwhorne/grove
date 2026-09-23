@@ -5,6 +5,7 @@
 //!   * a **bundled service manager** that downloads + supervises portable
 //!     database/cache builds (PostgreSQL today) under `$GROVE_HOME/services`.
 
+pub mod branches;
 pub mod catalog;
 pub mod convert;
 pub mod mail;
@@ -13,6 +14,7 @@ pub mod qlog;
 pub mod snapshot;
 pub mod store;
 
+pub use branches::{BranchError, BranchStore, ParkedSize};
 pub use catalog::{ServiceKind, ServiceSpec, CATALOG};
 pub use convert::{convert as convert_database, DbConnSpec};
 pub use mail::{bind_smtp, serve_smtp, serve_smtp_on};

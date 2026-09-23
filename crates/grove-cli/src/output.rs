@@ -284,6 +284,56 @@ pub fn print_response(resp: &Response, json: bool) {
         }) => {
             println!("replayed → {status} in {duration_ms}ms (see it in `grove requests`)");
         }
+        Some(ResponseData::DbBranches(followed)) => {
+            if followed.is_empty() {
+                println!(
+                    "no site follows its git branch — run `grove db branches on` in a project to start"
+                );
+            }
+            for f in followed {
+                println!(
+                    "{}  {} {}{}",
+                    f.site,
+                    f.engine,
+                    f.database,
+                    if f.following {
+                        ""
+                    } else {
+                        "  (not following — `grove db branches on` resumes)"
+                    }
+                );
+                let caught_up = f.head == f.live;
+                println!(
+                    "  live      {}{}",
+                    f.live,
+                    if caught_up {
+                        "  (checked out)".to_string()
+                    } else {
+                        format!("  — checkout is on {}", f.head)
+                    }
+                );
+                for (i, p) in f.parked.iter().enumerate() {
+                    let label = if i == 0 { "  parked   " } else { "           " };
+                    let gone = if p.branch_exists {
+                        String::new()
+                    } else {
+                        format!(
+                            "  branch deleted — `grove db branches drop {}` frees it",
+                            p.branch
+                        )
+                    };
+                    println!(
+                        "{label}{:<28} {:>4} tables {:>10}{gone}",
+                        p.branch,
+                        p.tables,
+                        human_bytes(p.bytes)
+                    );
+                }
+                if let Some(err) = &f.last_error {
+                    println!("  ! {err}");
+                }
+            }
+        }
         Some(ResponseData::Snapshots(snaps)) => {
             if snaps.is_empty() {
                 println!("no database snapshots yet — take one with `grove db snapshot`");
@@ -505,4 +555,20 @@ pub fn print_php_extensions(builds: &[PhpBuild], show_present: bool, json: bool)
         "or get everything by pointing Grove at your own PHP:\n  \
          grove php register <version> <path-to-php-fpm>"
     );
+}
+
+/// `48.2 MB`, `3 KB`, `0 B` — for sizes a person reads, not a script.
+fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = n as f64;
+    let mut unit = 0;
+    while size >= 1024.0 && unit < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{n} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
+    }
 }

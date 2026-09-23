@@ -4,6 +4,7 @@
 //! pools, and exposes an IPC endpoint the CLI/GUI drive. The CLI and GUI are
 //! thin clients; all stateful logic lives here.
 
+pub mod branches;
 pub mod commands;
 pub mod dev;
 pub mod docker;
@@ -118,6 +119,13 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
             }
         }));
     }
+
+    // Databases that follow their git branch. A switch a previous daemon was
+    // killed in the middle of is finished or undone first — before anything
+    // can serve the site, and before the poller could start a second one on
+    // top of it.
+    branches::reconcile(&daemon).await;
+    let branch_task = tokio::spawn(branches::follow(daemon.clone()));
 
     // Spawn network listeners. A failure to bind a privileged port does not
     // abort the others, so e.g. DNS can still work without root — but it is
@@ -254,6 +262,7 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     if let Some(t) = docker_task {
         t.abort();
     }
+    branch_task.abort();
     // Stop accepting. In-flight requests run on their own tasks, so aborting
     // the accept loops does not cut them off; give them a moment to finish
     // before the runtime is torn down. A real drain would track them — this

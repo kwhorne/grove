@@ -10,6 +10,7 @@ pub mod checksum;
 pub mod config;
 pub mod driver;
 pub mod error;
+pub mod git;
 pub mod httpgen;
 pub mod ownership;
 pub mod paths;

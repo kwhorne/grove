@@ -420,6 +420,20 @@ impl ServiceManager {
     }
 
     /// Ensure a bundled DB service is installed + running, returning (bin, port).
+    /// The TCP port of a bundled database, started first if it is not running.
+    ///
+    /// For callers that speak the wire protocol themselves rather than through
+    /// a client binary — `branches`, which needs a real connection to issue
+    /// one atomic `RENAME TABLE` and read its result.
+    pub fn ready_port(&self, key: &str) -> Result<u16> {
+        self.db_ready(key).map(|(_, port)| port)
+    }
+
+    /// The port a bundled service listens on, whether or not it is running.
+    pub fn port_of(&self, key: &str) -> Option<u16> {
+        catalog::spec(key).map(|spec| self.effective_port(spec))
+    }
+
     fn db_ready(&self, key: &str) -> Result<(PathBuf, u16)> {
         let spec = catalog::spec(key).ok_or_else(|| ServiceError::Unknown(key.into()))?;
         if !self.is_installed(spec) {

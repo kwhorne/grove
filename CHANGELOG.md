@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A database per git branch.** `grove db branches on` in a project, and
+  checking out a branch swaps in that branch's database: a feature branch's
+  migrations no longer land in `main`'s tables, and going back to `main` brings
+  its data back exactly as it was left. The first checkout of a new branch
+  starts it from the data you were on. The database keeps its name throughout
+  and only its contents move, so the app, `php artisan` in a terminal, a test
+  run and a database client all see the checked-out branch without being told.
+  Pointing the app at a different database per branch would only have reached
+  the requests Grove proxies.
+
+  On MySQL a swap is a single `RENAME TABLE` moving every table between the live
+  schema and the branch's parked one, atomically; measured at 43–46 ms for a
+  70 MB schema, the same as for an empty one. The first visit copies, and took
+  831 ms for 300 000 rows. On SQLite a swap is two renames of the database and
+  its `-wal`/`-shm`. During a switch the site answers `503` with `Retry-After`
+  and its `grove dev` processes restart, so a queue worker comes back on the
+  new branch's code and data. A detached `HEAD` — a rebase, a bisect — moves
+  nothing, and a switch waits until a checkout has settled for a second.
+
+  A switch writes its intent before anything moves, so one interrupted by a
+  crash is finished or undone when the daemon next starts. MySQL on Grove's own
+  server and SQLite are supported; a remote MySQL, PostgreSQL and ElyraSQL are
+  refused with a message, as is a MySQL database with views, triggers, stored
+  routines or events, and two sites (worktrees) following one database.
+  `grove db branches` shows what is live and parked, and flags copies whose git
+  branch is gone; `off` keeps the copies and `on` picks them up again; `drop`
+  is the only thing that deletes one.
+
 ### Removed
 
 - **The privilege-dropping machinery, and the daemon's ability to run as

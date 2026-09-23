@@ -562,6 +562,22 @@ pub async fn handle(
         ));
     }
 
+    if let Some(reason) = state.pause_reason(&site.name) {
+        state.log.record(Record {
+            site: &site.name,
+            host: &host,
+            method: &method,
+            path: &path,
+            status: StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+            duration_ms: start.elapsed().as_millis() as u64,
+            https,
+            headers: req_headers,
+            body: tap.take(),
+            body_truncated: tap.truncated(),
+        });
+        return Ok(paused_page(&reason));
+    }
+
     tracing::debug!(host, site = %site.name, driver = %site.driver, %peer, "dispatch");
 
     let result = if is_hidden_path(&sanitize_path(req.uri().path())) {
@@ -1495,6 +1511,21 @@ fn html_escape(s: &str) -> String {
 /// when a Vite server was not running. Herd and Valet ship pages that name the
 /// fix; so does Grove now. `detail` is the specific situation, `hint` the
 /// command or action that resolves it. Both are escaped.
+/// A site held back for a moment, with `Retry-After` so a client that honours
+/// it — and `fetch` retry helpers, and load testers — waits instead of failing.
+fn paused_page(reason: &str) -> Response<BoxBody> {
+    let mut resp = error_page(
+        StatusCode::SERVICE_UNAVAILABLE,
+        reason,
+        Some("This takes a second or two. Reload when it is done."),
+    );
+    resp.headers_mut().insert(
+        hyper::header::RETRY_AFTER,
+        hyper::header::HeaderValue::from_static("2"),
+    );
+    resp
+}
+
 fn error_page(status: StatusCode, detail: &str, hint: Option<&str>) -> Response<BoxBody> {
     let reason = status.canonical_reason().unwrap_or("Error");
     let hint_html = hint
@@ -2061,6 +2092,36 @@ mod tests {
         );
         assert_eq!(parse_byte_range("items=0-1", 10), None);
         assert_eq!(parse_byte_range("bytes=0-", 0), None, "empty file");
+    }
+
+    /// A site whose database is being swapped answers 503 with `Retry-After`,
+    /// and the reason is text, not markup: it names a git branch, and branch
+    /// names are whatever someone typed.
+    #[test]
+    fn a_paused_site_says_why_and_when_to_retry() {
+        let resp = paused_page("Switching the database to branch <feature/x>");
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(resp.headers()[hyper::header::RETRY_AFTER], "2");
+        let body = futures::executor::block_on(resp.into_body().collect())
+            .unwrap()
+            .to_bytes();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("&lt;feature/x&gt;"), "{html}");
+    }
+
+    /// Pausing is per site, and resuming really lets requests through again —
+    /// a pause that outlived its swap would be a site that stays down.
+    #[test]
+    fn pausing_one_site_leaves_the_others_alone() {
+        let state = crate::state::SharedState::new(grove_core::registry::SiteRegistry::build(
+            &grove_core::Config::default(),
+        ));
+        assert_eq!(state.pause_reason("a"), None);
+        state.pause("a", "switching");
+        assert_eq!(state.pause_reason("a").as_deref(), Some("switching"));
+        assert_eq!(state.pause_reason("b"), None);
+        state.resume("a");
+        assert_eq!(state.pause_reason("a"), None);
     }
 
     #[test]

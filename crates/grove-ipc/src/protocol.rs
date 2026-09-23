@@ -149,6 +149,14 @@ pub enum Request {
     },
     /// List stored database snapshots.
     DbSnapshotList,
+    /// Databases that follow a project's git branch: see `grove db branches`.
+    /// `site` is required for everything but `Status`, where omitting it lists
+    /// every site that follows its branch.
+    DbBranches {
+        #[serde(default)]
+        site: Option<String>,
+        action: DbBranchAction,
+    },
     /// Recent proxied requests (the request timeline), optionally per site.
     RequestLog {
         site: Option<String>,
@@ -428,6 +436,8 @@ pub enum ResponseData {
     DevSites(Vec<String>),
     /// Stored database snapshots.
     Snapshots(Vec<Snapshot>),
+    /// Sites whose database follows their git branch.
+    DbBranches(Vec<FollowedDatabase>),
     /// Recent proxied requests, newest first.
     Requests(Vec<RequestEntry>),
     /// Full captured request for one entry (headers + body).
@@ -664,4 +674,52 @@ mod tests {
         let round: Response = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         assert_eq!(round.error.as_deref(), Some("nope"));
     }
+}
+
+/// What to do with a site's branch-following database.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum DbBranchAction {
+    /// Show what is live, what is checked out, and what is parked.
+    Status,
+    /// Start following: the live data becomes the current branch's.
+    Enable,
+    /// Stop following. Parked copies stay until dropped.
+    Disable,
+    /// Delete one parked branch's copy. The only destructive action.
+    Drop { branch: String },
+}
+
+/// One site whose database follows its git branch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FollowedDatabase {
+    pub site: String,
+    /// False after `grove db branches off`: remembered, copies kept, but the
+    /// database stays put whatever is checked out.
+    pub following: bool,
+    /// `mysql` or `sqlite`.
+    pub engine: String,
+    /// The schema name, or the SQLite file's path.
+    pub database: String,
+    /// The branch whose data is in the live database right now.
+    pub live: String,
+    /// What the checkout says: a branch name, `detached at <sha>`, or
+    /// `not a git repository`. Differs from `live` only for the second or two a
+    /// switch takes, or while one is refused or waiting.
+    pub head: String,
+    pub parked: Vec<ParkedBranch>,
+    /// Why the last attempt to follow did not happen, until one succeeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+/// A branch's database, waiting beside the live one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ParkedBranch {
+    pub branch: String,
+    pub tables: u64,
+    pub bytes: u64,
+    /// False once the git branch has been deleted: the copy is then only taking
+    /// up space, and `grove db branches drop` is the way to reclaim it.
+    pub branch_exists: bool,
 }
