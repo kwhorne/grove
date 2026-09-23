@@ -408,6 +408,10 @@ risky migration and roll back in one command. Stored as SQL under
 | `grove db list` | List stored snapshots. |
 | `grove db restore <id>` | Restore a snapshot by id. |
 | `grove db rm <id>` | Delete a snapshot. |
+| `grove db branches [--site NAME]` | Show which branch's data is live and which branches have parked copies. Without a site, lists every site that follows its branch. |
+| `grove db branches on [--site NAME]` | Give each git branch its own copy of the database, swapped in on checkout. MySQL (Grove's server) and SQLite. |
+| `grove db branches off [--site NAME]` | Stop following; the live database keeps its current branch's data and parked copies are kept. |
+| `grove db branches drop <branch> [--site NAME]` | Delete one branch's parked copy. |
 
 ## Toolchain on your PATH
 

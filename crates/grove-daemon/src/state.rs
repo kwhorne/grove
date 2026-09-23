@@ -113,6 +113,10 @@ pub struct DaemonState {
     /// that does not, and `grove doctor` should be able to say which this is
     /// without guessing from the unit file.
     inherited_sockets: std::sync::Mutex<String>,
+    /// Serialises every read-modify-write of the branch-database state, and
+    /// every switch: the poller and `grove db branches` must never move the
+    /// same site's tables at the same time.
+    pub branch_lock: tokio::sync::Mutex<()>,
 }
 
 impl DaemonState {
@@ -128,6 +132,7 @@ impl DaemonState {
         let inherited_sockets = std::sync::Mutex::new("none".to_string());
         Self {
             inherited_sockets,
+            branch_lock: tokio::sync::Mutex::new(()),
             paths,
             listeners: Arc::new(Listeners::default()),
             config: Mutex::new(config),

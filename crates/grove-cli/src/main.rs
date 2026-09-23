@@ -12,8 +12,9 @@ use grove_ipc::client;
 use grove_ipc::protocol::{Request, ResponseData};
 
 use cli::{
-    BundleAction, CaAction, Cli, Command, DbAction, DebugAction, DevAction, HookAction,
-    LicenseAction, MailAction, NodeAction, PathAction, PhpAction, SecretAction, ServiceAction,
+    BranchAction, BundleAction, CaAction, Cli, Command, DbAction, DebugAction, DevAction,
+    HookAction, LicenseAction, MailAction, NodeAction, PathAction, PhpAction, SecretAction,
+    ServiceAction,
 };
 
 #[tokio::main]
@@ -331,6 +332,23 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             DbAction::List => Request::DbSnapshotList,
             DbAction::Restore { id } => Request::DbSnapshotRestore { id },
             DbAction::Rm { id } => Request::DbSnapshotRemove { id },
+            DbAction::Branches { action, site } => {
+                use grove_ipc::protocol::DbBranchAction;
+                let action = match action {
+                    None => DbBranchAction::Status,
+                    Some(BranchAction::On) => DbBranchAction::Enable,
+                    Some(BranchAction::Off) => DbBranchAction::Disable,
+                    Some(BranchAction::Drop { branch }) => DbBranchAction::Drop { branch },
+                };
+                // Status without a site lists every followed site; anything that
+                // changes one has to know which.
+                let site = match (site, &action) {
+                    (Some(s), _) => Some(s),
+                    (None, DbBranchAction::Status) => site_in_cwd().ok(),
+                    (None, _) => Some(site_in_cwd()?),
+                };
+                Request::DbBranches { site, action }
+            }
         },
         Command::Daemon
         | Command::Ca { .. }

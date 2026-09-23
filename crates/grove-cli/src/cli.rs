@@ -374,6 +374,31 @@ pub enum DbAction {
     Restore { id: String },
     /// Delete a snapshot by id.
     Rm { id: String },
+    /// Give each git branch its own copy of the database, swapped in when you
+    /// check the branch out. With no subcommand, shows what is live and what is
+    /// parked.
+    Branches {
+        #[command(subcommand)]
+        action: Option<BranchAction>,
+        /// Site name. Defaults to the project in the current directory.
+        #[arg(long, global = true)]
+        site: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum BranchAction {
+    /// Start following. The live data becomes the current branch's; the first
+    /// checkout of another branch parks a copy of it.
+    On,
+    /// Stop following. The live database keeps its current branch's data and
+    /// parked copies are kept.
+    Off,
+    /// Delete one branch's parked copy.
+    Drop {
+        /// The branch whose copy to delete.
+        branch: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]

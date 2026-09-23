@@ -874,6 +874,41 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 Err(e) => Ok(Response::err(e.to_string())),
             }
         }
+        Request::DbBranches { site, action } => {
+            use grove_ipc::protocol::DbBranchAction;
+            let need_site = || {
+                site.clone().ok_or_else(|| {
+                    anyhow::anyhow!("which site? run this from the project, or pass --site")
+                })
+            };
+            let result = match action {
+                DbBranchAction::Status => crate::branches::status(state, site.as_deref())
+                    .await
+                    .map(ResponseData::DbBranches),
+                DbBranchAction::Enable => match need_site() {
+                    Ok(s) => crate::branches::enable(state, &s)
+                        .await
+                        .map(ResponseData::Message),
+                    Err(e) => Err(e),
+                },
+                DbBranchAction::Disable => match need_site() {
+                    Ok(s) => crate::branches::disable(state, &s)
+                        .await
+                        .map(ResponseData::Message),
+                    Err(e) => Err(e),
+                },
+                DbBranchAction::Drop { branch } => match need_site() {
+                    Ok(s) => crate::branches::drop_branch(state, &s, &branch)
+                        .await
+                        .map(ResponseData::Message),
+                    Err(e) => Err(e),
+                },
+            };
+            Ok(match result {
+                Ok(data) => Response::ok(data),
+                Err(e) => Response::err(e.to_string()),
+            })
+        }
         Request::DbSnapshotList => {
             let store = grove_services::SnapshotStore::new(&state.paths);
             Ok(Response::ok(ResponseData::Snapshots(store.list())))

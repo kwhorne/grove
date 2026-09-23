@@ -1,5 +1,6 @@
 //! Shared, hot-reloadable state handed to every request handler.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -27,6 +28,17 @@ pub struct SharedState {
     /// 443 in a normal install; a high port in the sudo-less smoke-test setup,
     /// where a redirect to `https://site.test/` would point at nothing.
     pub https_port: u16,
+    /// Sites briefly held back, by name, with the sentence to show instead.
+    ///
+    /// Swapping a site's database under it — which is what following a git
+    /// branch does — has a window in which the tables are neither the old
+    /// branch's nor the new one's. A request in that window would see a
+    /// half-moved schema and, worse, could *write* into it, landing one
+    /// branch's data in the other's copy. Grove is the only way in to the
+    /// app, so it can close the door for the second or two the swap takes.
+    /// A synchronous lock for the same reason as `known_hosts`: it is read on
+    /// every request and written a few times a day.
+    pub paused: Arc<std::sync::RwLock<HashMap<String, String>>>,
 }
 
 impl SharedState {
@@ -38,7 +50,28 @@ impl SharedState {
             log: Arc::new(RequestLog::new(500)),
             hooks: Arc::new(RequestLog::new(200)),
             https_port: 443,
+            paused: Arc::new(std::sync::RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Answer every request for `site` with a 503 and `reason` until
+    /// [`SharedState::resume`] is called.
+    pub fn pause(&self, site: &str, reason: impl Into<String>) {
+        if let Ok(mut paused) = self.paused.write() {
+            paused.insert(site.to_string(), reason.into());
+        }
+    }
+
+    /// Serve `site` normally again.
+    pub fn resume(&self, site: &str) {
+        if let Ok(mut paused) = self.paused.write() {
+            paused.remove(site);
+        }
+    }
+
+    /// Why `site` is paused, if it is.
+    pub fn pause_reason(&self, site: &str) -> Option<String> {
+        self.paused.read().ok()?.get(site).cloned()
     }
 
     /// Where secured sites are redirected to when reached over plain HTTP.

@@ -2360,6 +2360,7 @@ name = "grove-daemon"
 version = "1.8.0"
 dependencies = [
  "anyhow",
+ "e-db",
  "grove-core",
  "grove-dns",
  "grove-ipc",
@@ -2370,6 +2371,7 @@ dependencies = [
  "grove-services",
  "grove-tls",
  "grove-tunnel",
+ "serde",
  "serde_json",
  "tokio",
  "tracing",
