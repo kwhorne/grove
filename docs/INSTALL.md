@@ -71,7 +71,7 @@ grove --version
 ```
 
 ```text
-grove 1.8.0
+grove 1.9.0
 ```
 
 > Every example below uses `grove …`. If you skip the symlink, replace `grove`
@@ -140,7 +140,7 @@ grove status
 ```
 
 ```text
-Grove 1.8.0
+Grove 1.9.0
   TLD          .test
   HTTP         :80
   HTTPS        :443
@@ -683,8 +683,8 @@ What `sudo grove install` sets up, and the assumptions behind it:
   is nothing left to need privilege for; children inherit your identity rather
   than being dropped to it. Earlier versions wrote a `systemctl --user` unit,
   which cannot bind privileged ports at all, and then a root unit that could.
-  If `grove install` cannot work out who to serve, the daemon stays root and
-  drops its children as before.
+  Since 1.9.0 the daemon refuses to run as root at all; if `grove install`
+  cannot work out who to serve, run it with `sudo` from your own account.
 - **A companion `grove.socket` unit.** systemd binds 80, 443 and 53 (both UDP
   and TCP) and hands the listening descriptors to the daemon, which serves on
   them without binding anything itself. It is `Wants=`, not `Requires=`: if the

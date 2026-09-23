@@ -132,9 +132,9 @@ build and every run after it is seconds.
 
 It covers all four directions: a root install hands the key to the recorded run
 user; a key root already owns moves on the next load; with no run user recorded
-it stays with root, because there the daemon stays root too; and the
-certificate stays world-readable throughout, since nothing can verify a chain
-it cannot read.
+it stays with root rather than going to a guessed account; and the certificate
+stays world-readable throughout, since nothing can verify a chain it cannot
+read.
 
 Two sibling suites used to live here — `grove-core --test privdrop_root` and
 `grove-runtime --test probe_root` — and they went with the privilege-dropping

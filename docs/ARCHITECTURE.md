@@ -207,17 +207,16 @@ over.
 
 The unit carries `UserName` (launchd) or `User=` (systemd), so the daemon is
 the login user. Children — PHP-FPM pools, PostgreSQL, MySQL, Redis, `grove dev`
-servers, Composer, the Laravel installer — simply inherit that, and the
-privilege-dropping machinery they used to go through turns itself off: it asks
-`geteuid` first and does nothing when the answer is not zero.
+servers, Composer, the Laravel installer — simply inherit that.
 
-That machinery stays for now, because a machine where `grove install` could not
-work out who to serve still runs the daemon as root, exactly as before. There
-the old path is live: `setgroups` (so root's supplementary groups do not
-survive), then `setgid`, then `setuid` — in that order, because the reverse
-leaves no privilege to drop the others — and the child verifies its own
-`geteuid`/`getegid` afterwards, so a *partial* drop fails the spawn rather than
-quietly running a database as root.
+There used to be a privilege-dropping layer here: every spawn went through
+`setgroups`, `setgid` and `setuid` in a `pre_exec` hook, so a root daemon never
+exec'd a binary out of a tree the user could write. 1.9.0 deleted it, and made
+the daemon refuse to start as root instead. Without the drop, a root daemon
+*would* exec PHP-FPM and the databases out of that tree, so not starting is the
+only safe answer, and `sudo grove install` is the one-command fix. What remains
+is `grove_core::ownership`: `sudo` commands create files as root and hand them
+to the user who will read them.
 
 ### The CA private key belongs to the user now
 
@@ -271,11 +270,11 @@ naming the `php-fpm` binary — was as privileged as root itself. The daemon tha
 reads it is now you, so writing that file buys an attacker nothing they did not
 already have.
 
-On a machine that still runs the daemon as root — one where `grove install`
-could not work out who to serve — the old reasoning applies unchanged, and so
-does the defence: `securefs`, and a `grove doctor` that fails when
-`$GROVE_HOME` is world-writable. Replacing a binary is the obvious attack;
-naming a different one is the cheaper one.
+`securefs` and the `grove doctor` check that fails on a world-writable
+`$GROVE_HOME` stay, because the tree still decides which binaries run.
+Replacing a binary is the obvious attack; naming a different one is the cheaper
+one. What changed is who runs them: another user on the machine, not the login
+user becoming root.
 
 ### Files are created with the mode they need
 
