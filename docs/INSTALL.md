@@ -432,15 +432,15 @@ grove db list
 grove db restore <id>     # data restored exactly as it was
 ```
 
-Snapshots live under `$GROVE_HOME/snapshots/`. MySQL (omit `--db` for all
-databases) and PostgreSQL (`--engine postgres`) snapshots are plain SQL dumps;
-an ElyraSQL snapshot (`--engine elyrasql`) is a hot, consistent copy of its
-single database file, taken while it serves.
-
 A MySQL restore puts each database in the snapshot back *exactly*. A table
 created after the snapshot is gone afterwards, not left beside the restored
 ones. Databases the snapshot does not contain are not touched, and MySQL's own
 system schemas never are.
+
+Snapshots live under `$GROVE_HOME/snapshots/`. MySQL (omit `--db` for all
+databases) and PostgreSQL (`--engine postgres`) snapshots are plain SQL dumps;
+an ElyraSQL snapshot (`--engine elyrasql`) is a hot, consistent copy of its
+single database file, taken while it serves.
 
 ### ElyraSQL
 
