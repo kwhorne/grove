@@ -187,6 +187,28 @@ async fn warn_on_version_mismatch(socket: &std::path::Path) {
     }
 }
 
+/// `90s`, `10m`, `1h` or a bare number of seconds.
+fn parse_idle(text: &str) -> anyhow::Result<u64> {
+    let text = text.trim();
+    let (number, unit) = match text.char_indices().find(|(_, c)| !c.is_ascii_digit()) {
+        Some((i, _)) => text.split_at(i),
+        None => (text, "s"),
+    };
+    let n: u64 = number
+        .parse()
+        .map_err(|_| anyhow::anyhow!("{text:?} is not a duration — use e.g. 90s, 10m or 1h"))?;
+    let secs = match unit {
+        "s" => n,
+        "m" => n * 60,
+        "h" => n * 3600,
+        other => anyhow::bail!("unknown unit {other:?} in {text:?} — use s, m or h"),
+    };
+    if secs == 0 {
+        anyhow::bail!("the idle period has to be at least a second");
+    }
+    Ok(secs)
+}
+
 /// The site name for the current directory, resolved the same way `grove up`
 /// does: an explicit `name` in `grove.toml`, else the directory's own name.
 /// Lets `grove dev start` work with no arguments from inside a project, like
@@ -303,6 +325,13 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             ServiceAction::Stop { key } => Request::ServiceStop { key },
             ServiceAction::Restart { key } => Request::ServiceRestart { key },
             ServiceAction::Port { key, port } => Request::ServiceSetPort { key, port },
+            ServiceAction::OnDemand { key, state, idle } => Request::ServiceOnDemand {
+                key,
+                idle_secs: match state.as_str() {
+                    "on" => Some(parse_idle(&idle)?),
+                    _ => None,
+                },
+            },
         },
         Command::Requests { site, limit } => Request::RequestLog { site, limit },
         Command::SqlCapture { action } => match action.as_str() {
@@ -3297,5 +3326,24 @@ mod secret {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::parse_idle;
+
+    #[test]
+    fn idle_periods_read_the_way_people_write_them() {
+        assert_eq!(parse_idle("90s").unwrap(), 90);
+        assert_eq!(parse_idle("10m").unwrap(), 600);
+        assert_eq!(parse_idle("1h").unwrap(), 3600);
+        assert_eq!(parse_idle("45").unwrap(), 45, "a bare number is seconds");
+        assert!(
+            parse_idle("0m").is_err(),
+            "an idle period of nothing stops mid-handshake"
+        );
+        assert!(parse_idle("10 minutes").is_err());
+        assert!(parse_idle("m").is_err());
     }
 }

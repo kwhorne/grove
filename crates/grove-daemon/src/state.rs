@@ -117,6 +117,8 @@ pub struct DaemonState {
     /// every switch: the poller and `grove db branches` must never move the
     /// same site's tables at the same time.
     pub branch_lock: tokio::sync::Mutex<()>,
+    /// The listeners holding the public ports of services in on-demand mode.
+    pub fronts: Arc<crate::ondemand::Fronts>,
 }
 
 impl DaemonState {
@@ -133,6 +135,7 @@ impl DaemonState {
         Self {
             inherited_sockets,
             branch_lock: tokio::sync::Mutex::new(()),
+            fronts: Arc::new(crate::ondemand::Fronts::new()),
             paths,
             listeners: Arc::new(Listeners::default()),
             config: Mutex::new(config),

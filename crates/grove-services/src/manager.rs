@@ -137,6 +137,12 @@ fn is_system_schema(name: &str) -> bool {
 /// an unclean shutdown runs InnoDB recovery first, which is the slow case.
 const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// A port nothing is listening on, for an on-demand server's internal side.
+fn free_port() -> Result<u16> {
+    let probe = std::net::TcpListener::bind("127.0.0.1:0")?;
+    Ok(probe.local_addr()?.port())
+}
+
 /// Does anything accept a TCP connection on `127.0.0.1:port`?
 fn port_accepts(port: u16) -> bool {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
@@ -212,6 +218,13 @@ pub struct ServiceStatus {
     pub socket: Option<String>,
     /// Ready-to-copy connection URI.
     pub uri: String,
+    /// Runs only while something is connected; `running` then says whether a
+    /// server is up right now.
+    #[serde(default)]
+    pub on_demand: bool,
+    /// How long an on-demand server stays up with nothing connected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_secs: Option<u64>,
 }
 
 /// Persisted, re-derivable service state: which services should auto-start.
@@ -223,6 +236,11 @@ struct ServicesState {
     /// service key -> port override (falls back to the catalog default).
     #[serde(default)]
     ports: BTreeMap<String, u16>,
+    /// service key -> idle seconds, for services that run only while something
+    /// is connected. See `grove-daemon`'s `ondemand` for the front that holds
+    /// the port and starts the server behind it.
+    #[serde(default)]
+    on_demand: BTreeMap<String, u64>,
 }
 
 /// Supervises bundled services. Child handles live for the daemon's lifetime.
@@ -230,6 +248,14 @@ pub struct ServiceManager {
     paths: GrovePaths,
     procs: Mutex<HashMap<String, Child>>,
     state: Mutex<ServicesState>,
+    /// For a service started on demand: the internal port its server actually
+    /// listens on. The public port belongs to the daemon's front.
+    upstream: Mutex<HashMap<String, u16>>,
+    /// One start or stop at a time. A connection arriving through the on-demand
+    /// front and a snapshot calling `db_ready` can both find a server stopped
+    /// in the same instant; two spawns on one data directory is one server
+    /// that works and one that corrupts nothing only by luck.
+    lifecycle: Mutex<()>,
 }
 
 impl ServiceManager {
@@ -239,6 +265,8 @@ impl ServiceManager {
             paths,
             procs: Mutex::new(HashMap::new()),
             state: Mutex::new(state),
+            upstream: Mutex::new(HashMap::new()),
+            lifecycle: Mutex::new(()),
         }
     }
 
@@ -288,7 +316,10 @@ impl ServiceManager {
     /// Called on daemon boot; never touches services that aren't installed.
     pub fn autostart_installed(&self) {
         for spec in catalog::CATALOG {
-            if self.is_installed(spec) && self.wants_autostart(spec.key) {
+            if self.is_installed(spec)
+                && self.wants_autostart(spec.key)
+                && !self.is_on_demand(spec.key)
+            {
                 if let Err(e) = self.start(spec.key) {
                     tracing::warn!(service = spec.key, error = %e, "auto-start failed");
                 }
@@ -365,9 +396,75 @@ impl ServiceManager {
                     username,
                     socket,
                     uri,
+                    on_demand: self.is_on_demand(spec.key),
+                    idle_secs: self.on_demand_idle(spec.key).map(|d| d.as_secs()),
                 }
             })
             .collect()
+    }
+
+    /// Does `key` run only while something is connected?
+    pub fn is_on_demand(&self, key: &str) -> bool {
+        self.state.lock().unwrap().on_demand.contains_key(key)
+    }
+
+    /// How long an on-demand server may sit with nothing connected.
+    pub fn on_demand_idle(&self, key: &str) -> Option<std::time::Duration> {
+        self.state
+            .lock()
+            .unwrap()
+            .on_demand
+            .get(key)
+            .map(|s| std::time::Duration::from_secs(*s))
+    }
+
+    /// Switch `key` between always-on (`None`) and on demand with an idle
+    /// timeout. Only the recorded mode changes here; the daemon moves the
+    /// listener and the server to match.
+    pub fn set_on_demand(&self, key: &str, idle: Option<std::time::Duration>) -> Result<()> {
+        let _ = catalog::spec(key).ok_or_else(|| ServiceError::Unknown(key.to_string()))?;
+        let mut state = self.state.lock().unwrap();
+        match idle {
+            Some(d) => {
+                state.on_demand.insert(key.to_string(), d.as_secs().max(1));
+            }
+            None => {
+                state.on_demand.remove(key);
+            }
+        }
+        save_state(&self.paths, &state);
+        Ok(())
+    }
+
+    /// The internal port an on-demand server listens on, while it runs.
+    pub fn upstream_port(&self, key: &str) -> Option<u16> {
+        if !self.is_running(key) {
+            return None;
+        }
+        self.upstream.lock().unwrap().get(key).copied()
+    }
+
+    /// Stop a server cleanly, without changing whether it should run.
+    ///
+    /// `SIGTERM` first and up to fifteen seconds to act on it: MySQL flushes
+    /// InnoDB and exits clean, where `SIGKILL` leaves crash recovery for the
+    /// next start. An on-demand server is stopped every time it goes idle, so
+    /// the difference is paid over and over.
+    pub fn suspend(&self, key: &str) -> Result<()> {
+        let _guard = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
+        let child = self.procs.lock().unwrap().remove(key);
+        if let Some(mut child) = child {
+            let clean = grove_core::process::terminate_child(
+                &mut child,
+                std::time::Duration::from_secs(15),
+            );
+            tracing::info!(service = key, clean, "stopped service");
+        }
+        if let Some(spec) = catalog::spec(key) {
+            let _ = std::fs::remove_file(self.pid_file(spec));
+        }
+        self.upstream.lock().unwrap().remove(key);
+        Ok(())
     }
 
     /// Build (username, socket, connection-uri) for a service.
@@ -379,17 +476,20 @@ impl ServiceManager {
         match spec.kind {
             ServiceKind::Postgres => (
                 Some("grove".into()),
-                Some(self.data_dir(spec).to_string_lossy().into_owned()),
+                // On demand the server's socket is named for its internal
+                // port; clients connect over TCP to the front.
+                (!self.is_on_demand(spec.key))
+                    .then(|| self.data_dir(spec).to_string_lossy().into_owned()),
                 format!("postgresql://grove@127.0.0.1:{port}/postgres"),
             ),
             ServiceKind::Mysql => (
                 Some("root".into()),
-                Some(
+                (!self.is_on_demand(spec.key)).then(|| {
                     self.data_dir(spec)
                         .join("mysql.sock")
                         .to_string_lossy()
-                        .into_owned(),
-                ),
+                        .into_owned()
+                }),
                 format!("mysql://root@127.0.0.1:{port}"),
             ),
             ServiceKind::Redis => (None, None, format!("redis://127.0.0.1:{port}")),
@@ -934,6 +1034,7 @@ impl ServiceManager {
         if !self.is_installed(spec) {
             return Err(ServiceError::NotInstalled(spec.name.into()));
         }
+        let _guard = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
         if self.is_running(key) {
             return Ok(());
         }
@@ -941,10 +1042,17 @@ impl ServiceManager {
             .bin_dir(spec)
             .ok_or_else(|| ServiceError::Unsupported(spec.name.into()))?;
         let log = self.paths.logs_dir().join(format!("{key}.log"));
+        let on_demand = self.is_on_demand(key);
         // Not secret, but a symlink here would let a root daemon append service
         // output into an arbitrary file.
         let logf = securefs::create_public(&log)?;
-        let port = self.effective_port(spec);
+        // On demand, the public port belongs to the daemon's front, and the
+        // server listens on a free internal one that only the front dials.
+        let port = if on_demand {
+            free_port()?
+        } else {
+            self.effective_port(spec)
+        };
 
         // Something already answering on the port means this server will fail
         // to bind — and worse, the readiness check below would connect to the
@@ -1016,7 +1124,16 @@ impl ServiceManager {
                     .args(["--port", &port.to_string()])
                     .arg(format!(
                         "--socket={}",
-                        self.data_dir(spec).join("mysql.sock").display()
+                        self.data_dir(spec)
+                            .join(if on_demand {
+                                // Not the advertised path: a client on the
+                                // socket would bypass the front, go uncounted,
+                                // and be cut off when the server went idle.
+                                ".grove-on-demand.sock"
+                            } else {
+                                "mysql.sock"
+                            })
+                            .display()
                     ))
                     .arg("--mysqlx=OFF")
                     .stdout(logf.try_clone()?)
@@ -1059,13 +1176,22 @@ impl ServiceManager {
             let _ = securefs::write_public(&self.pid_file(spec), child.id().to_string());
         }
         self.procs.lock().unwrap().insert(key.to_string(), child);
-        self.set_autostart(key, true);
+        if on_demand {
+            self.upstream.lock().unwrap().insert(key.to_string(), port);
+        } else {
+            self.set_autostart(key, true);
+        }
         Ok(())
     }
 
     /// Stop a running service. Clears its auto-start flag so it stays stopped
     /// across daemon restarts until the user starts it again.
     pub fn stop(&self, key: &str) -> Result<()> {
+        if self.is_on_demand(key) {
+            // The next connection will start it again; turning that off is
+            // `grove service on-demand <key> off`.
+            return self.suspend(key);
+        }
         if let Some(mut child) = self.procs.lock().unwrap().remove(key) {
             let _ = child.kill();
             let _ = child.wait();
@@ -1092,6 +1218,7 @@ impl ServiceManager {
             tracing::info!(service = %key, "stopped service for shutdown");
         }
         procs.clear();
+        self.upstream.lock().unwrap().clear();
     }
 
     /// Terminate database processes left over from a previous daemon that did
@@ -1577,5 +1704,76 @@ mod honesty_tests {
             "DROP DATABASE IF EXISTS {db}; DROP DATABASE IF EXISTS {other};"
         ));
         let _ = std::fs::remove_file(&dump);
+    }
+}
+
+#[cfg(test)]
+mod on_demand_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> ServiceManager {
+        let base = std::env::temp_dir().join(format!("grove-od-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let paths = GrovePaths::with_base(&base);
+        paths.ensure().unwrap();
+        ServiceManager::new(paths)
+    }
+
+    /// The mode is persisted, survives a new manager reading the same home,
+    /// and switching it off forgets the idle period.
+    #[test]
+    fn on_demand_is_remembered_across_restarts() {
+        let sm = scratch("persist");
+        assert!(!sm.is_on_demand("mysql"));
+        sm.set_on_demand("mysql", Some(std::time::Duration::from_secs(600)))
+            .unwrap();
+        let again = ServiceManager::new(sm.paths.clone());
+        assert!(again.is_on_demand("mysql"));
+        assert_eq!(
+            again.on_demand_idle("mysql"),
+            Some(std::time::Duration::from_secs(600))
+        );
+        again.set_on_demand("mysql", None).unwrap();
+        assert!(!ServiceManager::new(sm.paths.clone()).is_on_demand("mysql"));
+        assert!(sm.set_on_demand("nope", None).is_err());
+    }
+
+    /// On demand, the server's socket is not the advertised one — a client on
+    /// it would bypass the front and go uncounted — so nothing advertises one.
+    /// The TCP address stays exactly what it was.
+    #[test]
+    fn an_on_demand_service_advertises_tcp_only() {
+        let sm = scratch("socket");
+        let before = sm
+            .status_all()
+            .into_iter()
+            .find(|s| s.key == "mysql")
+            .unwrap();
+        assert!(before.socket.is_some());
+        assert!(!before.on_demand);
+        sm.set_on_demand("mysql", Some(std::time::Duration::from_secs(60)))
+            .unwrap();
+        let after = sm
+            .status_all()
+            .into_iter()
+            .find(|s| s.key == "mysql")
+            .unwrap();
+        assert_eq!(after.socket, None);
+        assert!(after.on_demand);
+        assert_eq!(after.idle_secs, Some(60));
+        assert_eq!(after.port, before.port, "clients keep the port they had");
+        assert_eq!(after.uri, before.uri);
+    }
+
+    /// A stopped on-demand server has no upstream to dial, which is how the
+    /// front knows to start it.
+    #[test]
+    fn a_stopped_server_has_no_upstream() {
+        let sm = scratch("upstream");
+        sm.set_on_demand("redis", Some(std::time::Duration::from_secs(60)))
+            .unwrap();
+        assert_eq!(sm.upstream_port("redis"), None);
+        // Suspending something that is not running is a no-op, not an error.
+        sm.suspend("redis").unwrap();
     }
 }

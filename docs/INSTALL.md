@@ -421,6 +421,35 @@ MAIL_HOST=127.0.0.1
 MAIL_PORT=1025
 ```
 
+### On demand (a database that costs nothing while you are not using it)
+
+An installed database runs from boot whether anything talks to it or not. An
+idle MySQL takes 500–700 MB. In on-demand mode Grove holds the port instead,
+and the server starts only when something connects:
+
+```bash
+grove service on-demand mysql on            # stops after 10 minutes with nothing connected
+grove service on-demand redis on --idle 30m
+grove service list
+```
+
+```text
+SERVICE      CATEGORY       INSTALLED  RUNNING   PORT   MODE
+MySQL        Database       yes        idle      3306   on demand, stops after 10m idle
+Redis        Cache & Queue  yes        yes       6379   on demand, stops after 30m idle
+```
+
+`idle` means the port answers and the server is not running. The first
+connection waits the fraction of a second the server takes to start, about
+0.35 s for MySQL, and is then served normally. Nothing in `.env` changes, since
+the host and port stay the same. A queue worker or an open database client
+keeps the server up for as long as it stays connected.
+
+Connect over TCP (`DB_HOST=127.0.0.1`), which is Laravel's default. In this
+mode the server's unix socket is moved to a private name. A client on the
+socket would bypass Grove, go uncounted, and be cut off when the server went
+idle. `grove service on-demand mysql off` makes it an always-on server again.
+
 ### Snapshots (time-travel before a risky migration)
 
 Because Grove owns the database, it can snapshot and roll it back in one command:

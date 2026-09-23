@@ -12,6 +12,7 @@ pub mod doctor;
 pub mod ipc;
 pub mod license;
 pub mod logs;
+pub mod ondemand;
 pub mod state;
 pub mod tunnels;
 
@@ -118,6 +119,16 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(8)).await;
             }
         }));
+    }
+
+    // Services in on-demand mode: the daemon takes their public ports now,
+    // and the servers start when something connects. Autostart skipped them.
+    for spec in grove_services::CATALOG {
+        if daemon.services.is_on_demand(spec.key) {
+            if let Err(e) = daemon.fronts.open(daemon.services.clone(), spec.key).await {
+                tracing::error!(service = spec.key, error = %e, "on demand: could not take the port");
+            }
+        }
     }
 
     // Databases that follow their git branch. A switch a previous daemon was

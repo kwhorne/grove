@@ -114,6 +114,13 @@ pub enum Request {
         key: String,
     },
     /// Override a bundled service's listen port.
+    /// Run a bundled service only while something is connected
+    /// (`idle_secs` = how long it may sit unused), or always (`None`).
+    ServiceOnDemand {
+        key: String,
+        #[serde(default)]
+        idle_secs: Option<u64>,
+    },
     ServiceSetPort {
         key: String,
         port: u16,

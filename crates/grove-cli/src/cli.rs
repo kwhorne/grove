@@ -462,6 +462,18 @@ pub enum ServiceAction {
     Restart { key: String },
     /// Set a bundled service's listen port (applied on next start/restart).
     Port { key: String, port: u16 },
+    /// Run a service only while something is connected. Grove keeps the port
+    /// open, starts the server on the first connection, and stops it again
+    /// once nothing has been connected for the idle period.
+    OnDemand {
+        key: String,
+        /// `on` or `off`.
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+        /// How long it may sit with nothing connected before it stops: 90s, 10m, 1h.
+        #[arg(long, default_value = "10m")]
+        idle: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
