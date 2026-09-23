@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 13: Reproducible, in the Repository &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">Why the README does not work</a>
+                <a href="#grove-toml">One file, committed</a>
+                <a href="#what-it-fixes">What this actually fixes</a>
+                <a href="#bundles">When one command is still too many</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-12.html">&larr; 12. A Breakpoint Instead of a Dump</a>
+                    <a href="chapter-14.html">14. The Team, and Keeping It &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 13: Reproducible, in the Repository</h1>
+                <p class="lead">
+                    
+            Everything so far has been done to <em>your</em> machine. This
+            chapter moves it into the repository, where it belongs &mdash; and
+            it is the difference between a good personal setup and a good
+            team.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Your machine is now excellent, and entirely undocumented.
+                    The PHP version this project needs lives in Grove&#039;s
+                    state; the services it needs live in your memory; the dev
+                    processes live in your habits.
+                </p>
+                <p>
+                    Which produces the oldest problem in software: the new
+                    colleague&#039;s first two days. A README written once,
+                    drifted since, and a sequence of questions nobody enjoys
+                    on either side. And the quieter version of the same
+                    problem &mdash; you, on a new laptop, or you in eight
+                    months on a project you have not opened since.
+                </p>
+
+                <h2 id="the-hard-way">Why the README does not work</h2>
+                <p>
+                    A README is prose describing state, and the two drift apart
+                    immediately, in one direction: the setup changes and the
+                    document does not. Nothing breaks when the README goes
+                    stale, so nothing tells you it has &mdash; the only
+                    detector is a new person failing to follow it, which
+                    happens rarely and produces embarrassment rather than a
+                    fix.
+                </p>
+                <p>
+                    Setup instructions in prose are also not
+                    <em>checkable</em>. &ldquo;Install PHP 8.3&rdquo; cannot be
+                    verified by anything; it can only be read and obeyed or
+                    misread and not.
+                </p>
+
+                <h2 id="grove-toml">One file, committed</h2>
+                <pre><code>grove up --write     # scaffold a starter grove.toml
+grove up             # link + pin PHP/Node + start services + optional dev</code></pre>
+                <pre><code># grove.toml
+name = "freddy"
+php = "8.5"
+services = ["mysql", "redis"]
+dev = true</code></pre>
+                <p>
+                    Commit it. Now the environment is described in the place
+                    that cannot drift from the code, because it is versioned
+                    <em>with</em> the code: the commit that requires PHP 8.5
+                    is the commit that says so.
+                </p>
+                <p>
+                    A teammate clones the repository and runs one command:
+                </p>
+                <pre><code>git clone git@github.com:you/freddy.git
+cd freddy
+grove up</code></pre>
+                <pre><code>Bringing up freddy…
+  ✓ link
+  ✓ https on
+  ✓ php 8.5
+  ✓ mysql
+  ✓ redis
+  ✓ dev
+✓ freddy is up → https://freddy.test</code></pre>
+                <p>
+                    Linked, secured, pinned, services running, dev processes
+                    started. From clone to working in one command, on a machine
+                    that has never seen this project.
+                </p>
+
+                <h2 id="what-it-fixes">What this actually fixes</h2>
+                <ul>
+                    <li>
+                        <strong>Onboarding</strong> stops being a ritual. The
+                        first day is spent reading code rather than installing
+                        things.
+                    </li>
+                    <li>
+                        <strong>&ldquo;Works on my machine&rdquo;</strong>
+                        gets narrower. The runtime and the services are the
+                        same by construction, so when behaviour differs the
+                        cause is somewhere more interesting.
+                    </li>
+                    <li>
+                        <strong>Old projects come back to life.</strong> The
+                        client project you last touched in March opens without
+                        archaeology, because the file remembers what you do
+                        not.
+                    </li>
+                    <li>
+                        <strong>Upgrades become reviewable.</strong> Moving to
+                        PHP 8.5 is a one-line diff in a pull request, discussed
+                        and merged like any other change, rather than a message
+                        in Slack asking everyone to please switch.
+                    </li>
+                </ul>
+
+                <h2 id="bundles">When one command is still too many</h2>
+                <p>
+                    Grove can also produce a <strong>bundle</strong>: a
+                    reproducible snapshot of an environment. The distinction
+                    is worth holding on to &mdash; <code>grove.toml</code>
+                    describes what to build, a bundle captures what was built.
+                    The first is what you commit and live with; the second is
+                    for handing an exact environment to someone, or to
+                    yourself later, without rebuilding it from its
+                    description.
+                </p>
+                <div class="callout">
+                    <strong>Add grove.toml to every project you own,</strong>
+                    including the ones with no colleagues. The person it most
+                    often helps is you, on the day you open something you have
+                    not touched in a year, at which point you are effectively a
+                    new team member on your own project.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>A README is prose describing state,</strong> and nothing breaks when it goes stale &mdash; so nothing tells you.</li>
+                    <li><strong>grove.toml is versioned with the code,</strong> so the commit that needs PHP 8.5 is the commit that says so.</li>
+                    <li><strong>One command from clone to running,</strong> on a machine that has never seen the project.</li>
+                    <li><strong>Upgrades become a reviewable one-line diff</strong> instead of a message asking everyone to switch.</li>
+                    <li><strong>grove.toml describes what to build; a bundle captures what was built.</strong></li>
+                    <li><strong>Commit it even alone.</strong> In a year you are a new team member on your own project.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-14.html">Chapter 14</a>
+                    the last chapter: shared secrets that the server cannot read, an AI assistant that can see your environment, and the rhythm that keeps a good setup good.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

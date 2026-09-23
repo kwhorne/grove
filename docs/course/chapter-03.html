@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 3: A Folder Becomes a Site &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#park">Park: a folder of projects</a>
+                <a href="#link">Link: one project, from inside it</a>
+                <a href="#dns">Why DNS, and not /etc/hosts</a>
+                <a href="#drivers">How it knows what your project is</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-02.html">&larr; 2. Install, and What Needs Root</a>
+                    <a href="chapter-04.html">4. A Padlock That Means Something &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 3: A Folder Becomes a Site</h1>
+                <p class="lead">
+                    
+            One command and every project in a folder has a URL. This chapter
+            is about what just happened &mdash; because &ldquo;it works with no
+            configuration&rdquo; is a claim worth taking apart before you rely
+            on it.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Between a folder of code and a working local URL there are
+                    three questions, and the traditional answer to each is a
+                    file you must remember to edit.
+                </p>
+                <ol>
+                    <li>
+                        <strong>What is this project called?</strong> A line
+                        in <code>/etc/hosts</code>.
+                    </li>
+                    <li>
+                        <strong>Where does the server send its
+                        requests?</strong> A virtual host block.
+                    </li>
+                    <li>
+                        <strong>What kind of project is it?</strong> Whether
+                        the document root is the folder or
+                        <code>public/</code>, whether URLs rewrite to
+                        <code>index.php</code> &mdash; more config.
+                    </li>
+                </ol>
+                <p>
+                    Three answers per project, none of them interesting, all
+                    of them yours to maintain forever.
+                </p>
+
+                <h2 id="park">Park: a folder of projects</h2>
+                <pre><code>grove park ~/Code</code></pre>
+                <p>
+                    Every sub-folder is now a site.
+                    <code>~/Code/freddy</code> is
+                    <code>http://freddy.test</code>. Create
+                    <code>~/Code/invoices</code> tomorrow and
+                    <code>http://invoices.test</code> works immediately, with
+                    nothing run and nothing edited.
+                </p>
+                <p>
+                    That last sentence is the one to notice. The site exists
+                    because the directory exists &mdash; there is no registry
+                    to fall out of sync, no step to forget at eleven at night.
+                    Park the folder you keep your work in, once, and the
+                    question &ldquo;how do I set up a local URL&rdquo; stops
+                    being a question you have.
+                </p>
+
+                <h2 id="link">Link: one project, from inside it</h2>
+                <pre><code>cd ~/work/client-site
+grove link                 # → client-site.test
+grove link acme            # → acme.test</code></pre>
+                <p>
+                    For projects that live outside your parked folder.
+                    <code>grove list</code> shows everything Grove serves,
+                    linked and parked together.
+                </p>
+
+                <h2 id="dns">Why DNS, and not /etc/hosts</h2>
+                <p>
+                    Grove answers DNS for your whole TLD. macOS is told once,
+                    in <code>/etc/resolver/test</code>, to ask Grove about
+                    anything ending in <code>.test</code>, and Grove answers
+                    <code>127.0.0.1</code> for all of it.
+                </p>
+                <p>
+                    Compared with a hosts file, that buys four things:
+                </p>
+                <ul>
+                    <li>
+                        <strong>New names cost nothing.</strong> No file, no
+                        <code>sudo</code>, no restart.
+                    </li>
+                    <li>
+                        <strong>Subdomains work.</strong>
+                        <code>api.freddy.test</code>,
+                        <code>tenant-one.freddy.test</code> &mdash; multi-tenant
+                        apps and subdomain routing work locally without a
+                        hosts entry per tenant, which is impossible with the
+                        other approach.
+                    </li>
+                    <li>
+                        <strong>It is visible.</strong>
+                        <code>grove list</code> and <code>grove doctor</code>
+                        can tell you what is being served and whether the
+                        resolver is in place. A hosts file is a system file
+                        that nothing in your project can see.
+                    </li>
+                    <li>
+                        <strong>It is reversible.</strong> Stop Grove and your
+                        machine stops resolving <code>.test</code> &mdash;
+                        there is no residue to clean up in six months.
+                    </li>
+                </ul>
+                <p>
+                    Use <code>.test</code> and nothing else, by the way. It is
+                    reserved by the IETF for exactly this and will never be
+                    bought by anyone. <code>.dev</code> was a popular choice
+                    until Google bought it and turned on enforced HTTPS,
+                    which broke a great many machines in an afternoon.
+                </p>
+
+                <h2 id="drivers">How it knows what your project is</h2>
+                <p>
+                    The third question &mdash; what kind of project is this
+                    &mdash; Grove answers by looking. It detects Laravel,
+                    WordPress, plain PHP, static sites and proxies, and serves
+                    each the way that kind of project expects: the right
+                    document root, the right rewrite rules.
+                </p>
+                <p>
+                    Detection is a default, not a decree. When you are running
+                    something Grove has never seen &mdash; a Node app on a
+                    port, a container &mdash; say so:
+                </p>
+                <pre><code>grove proxy dashboard http://127.0.0.1:3000</code></pre>
+                <p>
+                    Now <code>dashboard.test</code> is your Node app, with the
+                    same DNS and, from the next chapter, the same trusted
+                    certificate as everything else. This is also how a Docker
+                    or OrbStack container becomes a proper local site.
+                </p>
+                <div class="callout">
+                    <strong>Try it now.</strong> Park your projects folder and
+                    run <code>grove list</code>. Everything you have been
+                    meaning to set up a local URL for has one, including the
+                    projects you had forgotten were there.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>Park a folder and every sub-folder is a site</strong> &mdash; the URL exists because the directory does.</li>
+                    <li><strong>Link is for projects that live elsewhere,</strong> and both show up in <code>grove list</code>.</li>
+                    <li><strong>A real resolver gives you wildcards, subdomains and reversibility</strong> that a hosts file cannot.</li>
+                    <li><strong>Use .test.</strong> It is reserved for this; .dev was bought and broke everyone using it.</li>
+                    <li><strong>Project type is detected, not configured</strong> &mdash; and <code>grove proxy</code> is the override for anything it has not seen.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-04.html">Chapter 4</a>
+                    HTTPS &mdash; why local development needs it now, and how a certificate authority on your own machine can be safe.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

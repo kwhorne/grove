@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 11: Letting the Outside In &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#tunnel">A public URL</a>
+                <a href="#webhooks">The webhooks bucket</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-10.html">&larr; 10. Seeing the Request</a>
+                    <a href="chapter-12.html">12. A Breakpoint Instead of a Dump &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 11: Letting the Outside In</h1>
+                <p class="lead">
+                    
+            Some things cannot be tested on localhost: a payment provider&#039;s
+            webhook, an OAuth callback, a client who wants to see it. This
+            chapter is about opening a door, and about not having to knock
+            twice.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Third-party integrations are the worst part of local
+                    development, and the reason is a loop that cannot close.
+                    Stripe needs to send a webhook to a URL it can reach.
+                    Your machine is not reachable. So you either deploy to a
+                    staging environment to test each change &mdash; minutes per
+                    iteration &mdash; or you fake the payload and discover on
+                    launch day that the real one has a field you did not
+                    expect.
+                </p>
+
+                <h2 id="tunnel">A public URL</h2>
+                <pre><code>grove share freddy</code></pre>
+                <p>
+                    A public HTTPS address that forwards to your local site.
+                    The provider can reach it, the client can open it on their
+                    phone, the OAuth callback resolves. Your code stays on your
+                    machine with your debugger attached and your breakpoints
+                    in place.
+                </p>
+                <p>
+                    Two things to be deliberate about. It is a door into your
+                    laptop: share the site you are working on, close it when
+                    you are done. And your app must produce correct absolute
+                    URLs when reached by another name &mdash; the usual cause
+                    of a share that loads but whose assets and redirects point
+                    back at <code>.test</code>.
+                </p>
+
+                <h2 id="webhooks">The webhooks bucket</h2>
+                <p>
+                    Sharing solves reachability. It does not solve the
+                    <em>second</em> problem, which is that every test costs a
+                    real event: another payment, another push, another form
+                    filled in on a provider&#039;s dashboard.
+                </p>
+                <pre><code>grove hooks</code></pre>
+                <p>
+                    Grove captures incoming webhooks in a bucket you can
+                    inspect and, crucially, <strong>deliver again</strong>. So
+                    the loop becomes:
+                </p>
+                <ol>
+                    <li>Trigger the event once, for real.</li>
+                    <li>Read the payload &mdash; the actual one, with the
+                        fields the provider actually sends, not the one in
+                        their documentation.</li>
+                    <li>Deliver it to your app. Watch it fail.</li>
+                    <li>Fix the code. Deliver the same payload again.</li>
+                    <li>Repeat until it passes.</li>
+                </ol>
+                <p>
+                    One real event, twenty iterations. The alternative is
+                    twenty real events, which for a payment provider means
+                    twenty test charges and a great deal of clicking.
+                </p>
+                <p>
+                    And because the payload is the real one, you are debugging
+                    against what the provider sends rather than against what
+                    you believe they send. The gap between those two is where
+                    integration bugs live.
+                </p>
+                <div class="callout">
+                    <strong>Keep the interesting ones.</strong> A webhook that
+                    exposed a bug is a fixture. Combined with chapter 10&#039;s
+                    <em>copy as Pest</em>, the payload that broke your handler
+                    in March becomes a test that stops it breaking again in
+                    November &mdash; without an account at the provider or a
+                    network connection.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>grove share gives a local site a public HTTPS URL,</strong> so the provider can reach you while the code stays here.</li>
+                    <li><strong>Close the door when you are done,</strong> and make sure your app builds absolute URLs from the request.</li>
+                    <li><strong>Webhooks are captured and re-deliverable.</strong> One real event, twenty iterations.</li>
+                    <li><strong>Debug against the payload they actually send,</strong> not the one in the documentation.</li>
+                    <li><strong>A payload that found a bug is a fixture.</strong> Turn it into a test and it never comes back.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-12.html">Chapter 12</a>
+                    step-debugging: a breakpoint instead of a dump, why a static PHP cannot load Xdebug, and what to do about it.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 10: Seeing the Request &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#timeline">The timeline</a>
+                <a href="#replay">Replay, and copy as</a>
+                <a href="#causal">The queries a request caused</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-09.html">&larr; 9. Before the Scary Migration</a>
+                    <a href="chapter-11.html">11. Letting the Outside In &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 10: Seeing the Request</h1>
+                <p class="lead">
+                    
+            Grove is the web server, so it sees every request before your
+            application does and after it finishes. This chapter is about what
+            that makes possible, and it is the feature you will miss most if
+            you ever go back.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Something went wrong in a request you were not watching. A
+                    webhook arrived at three in the morning. A form submission
+                    failed for one user. An AJAX call returned 500 and the
+                    page swallowed it. In each case the request is gone: you
+                    have a log line if you are lucky, and the rest is
+                    reconstruction from memory and guesswork.
+                </p>
+                <p>
+                    Worse, reproducing it means recreating the exact request
+                    &mdash; the same headers, the same body, the same session
+                    &mdash; which for anything involving a third party is an
+                    afternoon of work before you have even started debugging.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    The usual tools each see one slice. Your framework&#039;s
+                    debug bar sees requests that rendered a page &mdash; not
+                    the API call, not the webhook, not the one that died before
+                    the view. The access log sees a line with a status code and
+                    no body. Xdebug sees everything but only while you sit
+                    there with a breakpoint, which is no use for something that
+                    happened at three in the morning.
+                </p>
+                <p>
+                    None of them can replay. And none of them can see the whole
+                    request, because none of them is the web server.
+                </p>
+
+                <h2 id="timeline">The timeline</h2>
+                <pre><code>grove requests
+grove requests --site freddy</code></pre>
+                <p>
+                    Every request Grove served: method, path, status, duration.
+                    Not a sample, not only the ones that rendered, not only the
+                    ones your framework knew about &mdash; every one, because
+                    Grove handled it.
+                </p>
+                <p>
+                    Open one and you get its detail: headers, body, response,
+                    timing. The request that failed at three in the morning is
+                    there, with the payload that caused it.
+                </p>
+
+                <h2 id="replay">Replay, and copy as</h2>
+                <p>
+                    This is the part that changes how you debug. A captured
+                    request can be <strong>replayed</strong> &mdash; sent again,
+                    exactly as it arrived &mdash; so the loop becomes: replay,
+                    read the error, change the code, replay. Seconds per
+                    iteration, with no third party involved and no form to fill
+                    in again.
+                </p>
+                <p>
+                    And it can be copied out:
+                </p>
+                <ul>
+                    <li>
+                        <strong>as curl</strong> &mdash; to paste into a
+                        terminal, or to a colleague who does not have your
+                        machine.
+                    </li>
+                    <li>
+                        <strong>as an HTTP file</strong> &mdash; for the
+                        client in your editor.
+                    </li>
+                    <li>
+                        <strong>as a Pest test</strong> &mdash; and this is
+                        the one to notice. A bug you just reproduced becomes a
+                        failing test in one click, which is the difference
+                        between fixing a bug and fixing it <em>permanently</em>.
+                        The barrier to writing that test was never the typing;
+                        it was reconstructing the request.
+                    </li>
+                </ul>
+
+                <h2 id="causal">The queries a request caused</h2>
+                <p>
+                    With SQL capture on, the timeline shows the database
+                    queries belonging to each request &mdash; not a global
+                    query log you must correlate by timestamp, but the queries
+                    <em>that request</em> caused, in order, with their
+                    durations.
+                </p>
+                <p>
+                    Which makes the N+1 problem visible rather than deducible.
+                    A page that runs 340 queries where you expected six is
+                    obvious in a list; it is nearly invisible in a page that
+                    renders in 900ms on a laptop with a warm local database,
+                    right up until it is a production incident on a table with
+                    a million rows.
+                </p>
+                <pre><code>grove explain</code></pre>
+                <p>
+                    walks the causal chain for a request in one place: what
+                    arrived, what ran, what it asked the database, what came
+                    back. The value is that it is one place. Every part of that
+                    story exists somewhere in a conventional setup, in four
+                    different tools with four different clocks.
+                </p>
+                <div class="callout">
+                    <strong>Leave it on.</strong> The cost is small and the
+                    benefit is retrospective: the request you wish you had
+                    captured is always one that has already happened. A tool
+                    you must remember to start is a tool that is off when you
+                    need it.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>Grove sees every request</strong> &mdash; including the ones that died before your framework was involved.</li>
+                    <li><strong>Replay turns debugging into a loop</strong> measured in seconds, with no third party and no form to refill.</li>
+                    <li><strong>Copy as Pest makes the fix permanent.</strong> The barrier to that test was reconstructing the request, not typing it.</li>
+                    <li><strong>Queries are attributed to the request that caused them,</strong> which makes N+1 visible instead of deducible.</li>
+                    <li><strong>Leave capture on.</strong> The request you wish you had is always one that already happened.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-11.html">Chapter 11</a>
+                    the outside world: a public URL for your local site, and webhooks you can re-deliver instead of re-triggering.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

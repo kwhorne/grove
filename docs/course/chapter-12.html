@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 12: A Breakpoint Instead of a Dump &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way, and why nobody does it</a>
+                <a href="#trigger">On demand</a>
+                <a href="#static">The honest catch</a>
+                <a href="#cli">Debugging the command line</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-11.html">&larr; 11. Letting the Outside In</a>
+                    <a href="chapter-13.html">13. Reproducible, in the Repository &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 12: A Breakpoint Instead of a Dump</h1>
+                <p class="lead">
+                    
+            Most PHP developers debug by printing things. Step-debugging is
+            better in every way and almost nobody sets it up, because setting
+            it up used to mean choosing between a debugger and a fast machine.
+            That trade is gone; this chapter is the five minutes.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    <code>dd($user)</code> tells you one value at one point.
+                    If the value is wrong you learn nothing about
+                    <em>why</em>, so you move the dump up a frame and run it
+                    again. And again. Each iteration is a page reload and a
+                    guess about where to look, and the guessing is the slow
+                    part.
+                </p>
+                <p>
+                    A step-debugger answers a different question. Stop here;
+                    now show me every variable in scope, the call stack that
+                    got here, and let me step forward one line at a time. You
+                    are not guessing where the value went wrong &mdash; you are
+                    watching it.
+                </p>
+
+                <h2 id="the-hard-way">The hard way, and why nobody does it</h2>
+                <p>
+                    Historically, enabling Xdebug meant loading it for
+                    <em>every</em> request, which made every request slower
+                    &mdash; noticeably, on a large framework. So people enabled
+                    it for an afternoon, felt their machine turn to treacle,
+                    and turned it off. The tool that would have saved them
+                    hours was a tool they associated with being slow.
+                </p>
+
+                <h2 id="trigger">On demand</h2>
+                <img src="images/tools.png" alt="Grove&#039;s Tools panel: an Xdebug step-debugging toggle with per-runtime status, and a Migrate MySQL from Herd form with source host, port, user and password." />
+                <pre><code>grove debug on</code></pre>
+                <p>
+                    Xdebug is loaded into PHP-FPM, but it only <em>activates</em>
+                    for a request that opts in with an
+                    <code>XDEBUG_TRIGGER</code> cookie or parameter. Your
+                    editor listens on DBGp port 9003. Requests that do not opt
+                    in pay almost no overhead.
+                </p>
+                <p>
+                    So the debugger is always available and never in the way.
+                    A browser extension sets the cookie with one click; the
+                    page you are debugging stops at your breakpoint and every
+                    other page on your machine runs at full speed.
+                </p>
+
+                <h2 id="static">The honest catch</h2>
+                <p>
+                    Read the panel: <em>unavailable &mdash; needs a PHP with
+                    Xdebug</em>.
+                </p>
+                <p>
+                    Grove&#039;s own PHP builds are fully static, and a fully
+                    static binary cannot load a dynamic extension at runtime
+                    &mdash; that is what static means. The same property that
+                    makes those builds immune to a Homebrew upgrade breaking
+                    them is the property that stops them loading Xdebug. It is
+                    a real trade-off and the panel says so rather than leaving
+                    you to work it out from an error.
+                </p>
+                <p>
+                    The fix is chapter 5&#039;s escape hatch:
+                </p>
+                <pre><code>grove php register /opt/homebrew/opt/php@8.4/sbin/php-fpm</code></pre>
+                <p>
+                    Register a PHP that has Xdebug &mdash; from Homebrew, or
+                    any build you like &mdash; and isolate the site you are
+                    debugging to it. The rest of your sites keep the static
+                    builds. You pay the trade only where you need it, and only
+                    while you need it.
+                </p>
+
+                <h2 id="cli">Debugging the command line</h2>
+                <p>
+                    Breakpoints in an <code>artisan</code> command, a queue
+                    job, or a failing test:
+                </p>
+                <pre><code>eval "$(grove debug env)"
+php artisan queue:work</code></pre>
+                <p>
+                    That exports the environment Xdebug needs for CLI
+                    processes in the current shell. Point your editor&#039;s
+                    DBGp listener at port 9003 and your breakpoint in a job
+                    handler is hit when the worker picks up the job.
+                </p>
+                <p>
+                    Debugging a queue job is where step-debugging earns its
+                    keep most decisively, because it is the place dumping is
+                    worst: the output goes to a worker&#039;s log you are not
+                    watching, the job may be retried, and the state you care
+                    about is the payload it was given rather than anything you
+                    typed.
+                </p>
+                <div class="callout">
+                    <strong>Set it up before you need it.</strong> Nobody
+                    configures a debugger while hunting a bug &mdash; the
+                    pressure pushes you back to <code>dd()</code>, and the bug
+                    that would have taken ten minutes takes two hours. Do it
+                    now, on a quiet afternoon, and hit a breakpoint once so you
+                    know it works.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>A dump answers one question; a debugger answers the one you actually have.</strong></li>
+                    <li><strong>Trigger mode means always available, never in the way</strong> &mdash; requests that do not opt in pay almost nothing.</li>
+                    <li><strong>Static builds cannot load Xdebug,</strong> which is the same property that makes them unbreakable. The panel says so.</li>
+                    <li><strong>Register a PHP that has it</strong> and isolate only the site you are debugging.</li>
+                    <li><strong>eval "$(grove debug env)" covers CLI</strong> &mdash; artisan commands, queue jobs, failing tests.</li>
+                    <li><strong>Set it up on a quiet afternoon.</strong> Under pressure you will reach for dd() instead.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-13.html">Chapter 13</a>
+                    the chapter that makes all of this portable: one file in the repository that turns a git clone into a running environment.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

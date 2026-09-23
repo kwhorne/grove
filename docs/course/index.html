@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>The Perfect Setup &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Chapters</div>
+                <a href="chapter-01.html">1. What a Local Environment Actually Is</a>
+                <a href="chapter-02.html">2. Install, and What Needs Root</a>
+                <a href="chapter-03.html">3. A Folder Becomes a Site</a>
+                <a href="chapter-04.html">4. A Padlock That Means Something</a>
+                <a href="chapter-05.html">5. PHP, Exactly the One You Need</a>
+                <a href="chapter-06.html">6. The Rest of the Stack</a>
+                <a href="chapter-07.html">7. The Terminal Follows the Project</a>
+                <a href="chapter-08.html">8. The Processes a Project Needs</a>
+                <a href="chapter-09.html">9. Before the Scary Migration</a>
+                <a href="chapter-10.html">10. Seeing the Request</a>
+                <a href="chapter-11.html">11. Letting the Outside In</a>
+                <a href="chapter-12.html">12. A Breakpoint Instead of a Dump</a>
+                <a href="chapter-13.html">13. Reproducible, in the Repository</a>
+                <a href="chapter-14.html">14. The Team, and Keeping It</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>The Perfect Setup</h1>
+                <p class="lead">
+                    
+    Local development with Grove, from a machine with nothing on it to a
+    team that shares one environment. Fourteen chapters that build the setup
+    you would have designed yourself if you had ever had a free week &mdash;
+    and explain why each piece is there before showing which command puts it
+    in place.
+
+                </p>
+
+
+                <h2 id="who-this-is-for">Who this is for</h2>
+                <p>
+                    Anyone who runs web projects on a Mac and has felt the
+                    weight of their own machine. You will get the most from it
+                    if you work with PHP &mdash; Laravel, WordPress, plain PHP
+                    &mdash; but the DNS, the certificates, the service
+                    supervision and the request timeline are the same whatever
+                    is behind them.
+                </p>
+                <p>
+                    The running example is <strong>Freddy</strong>, a small
+                    notes app. Substitute your own project everywhere you see
+                    his; nothing here depends on how he was built.
+                </p>
+
+                <h2 id="what-you-need">What you need</h2>
+                <p>
+                    A Mac on Apple silicon or Intel, and administrator access
+                    for two commands in chapter 2. Linux support is in beta and
+                    the commands are the same. Nothing else is required: Grove
+                    brings its own PHP, Node, databases and mail server, so
+                    Homebrew is optional and Herd and Valet are replaceable
+                    &mdash; chapter 7 removes them.
+                </p>
+
+                <h2 id="how-to-read-it">How to read it</h2>
+                <p>
+                    Every chapter is built the same way: <em>the problem</em>
+                    (why this exists at all), <em>the hard way</em> (what you
+                    would do without it, and why that goes wrong), then the
+                    work. The order matters &mdash; chapter 13 makes your
+                    environment reproducible, and it can only do that because
+                    chapters 3 to 8 decided what there is to reproduce.
+                </p>
+
+
+                <h2 id="chapters">The chapters</h2>
+                <ol>
+                    <li>
+                        <a href="chapter-01.html"><strong>1. What a Local Environment Actually Is</strong></a>
+                        &mdash; The five jobs every dev machine does, why they are usually five unrelated tools, and what changes when one process owns them.
+                    </li>
+                    <li>
+                        <a href="chapter-02.html"><strong>2. Install, and What Needs Root</strong></a>
+                        &mdash; Two privileged commands, what each one writes, and why the daemon that serves your sites is not root at all.
+                    </li>
+                    <li>
+                        <a href="chapter-03.html"><strong>3. A Folder Becomes a Site</strong></a>
+                        &mdash; Park, link, and the reason a real DNS resolver beats an /etc/hosts line every single time.
+                    </li>
+                    <li>
+                        <a href="chapter-04.html"><strong>4. A Padlock That Means Something</strong></a>
+                        &mdash; Why localhost needs HTTPS now, one command that provides it, and the constraint that makes a local CA safe.
+                    </li>
+                    <li>
+                        <a href="chapter-05.html"><strong>5. PHP, Exactly the One You Need</strong></a>
+                        &mdash; Several versions at once, pinned per site, and an honest account of which extensions are there and which are not.
+                    </li>
+                    <li>
+                        <a href="chapter-06.html"><strong>6. The Rest of the Stack</strong></a>
+                        &mdash; Databases, Redis and a mail-catcher Grove installs itself &mdash; and one command that writes the .env block for them.
+                    </li>
+                    <li>
+                        <a href="chapter-07.html"><strong>7. The Terminal Follows the Project</strong></a>
+                        &mdash; Shims that make php, composer and node resolve per project &mdash; and the chapter where Herd and Valet come off.
+                    </li>
+                    <li>
+                        <a href="chapter-08.html"><strong>8. The Processes a Project Needs</strong></a>
+                        &mdash; Queue workers, Vite and schedulers started and supervised together &mdash; and the one command you must not put in the list.
+                    </li>
+                    <li>
+                        <a href="chapter-09.html"><strong>9. Before the Scary Migration</strong></a>
+                        &mdash; Snapshots and one-command restores &mdash; what it buys you, and why owning the database is what makes it possible.
+                    </li>
+                    <li>
+                        <a href="chapter-10.html"><strong>10. Seeing the Request</strong></a>
+                        &mdash; A timeline of every request, the queries it caused, and a replay button &mdash; from the process that served it.
+                    </li>
+                    <li>
+                        <a href="chapter-11.html"><strong>11. Letting the Outside In</strong></a>
+                        &mdash; A public URL for a local site, and a webhook you can deliver again without going back to Stripe.
+                    </li>
+                    <li>
+                        <a href="chapter-12.html"><strong>12. A Breakpoint Instead of a Dump</strong></a>
+                        &mdash; Xdebug on demand, the honest reason static builds cannot load it, and how to get it working anyway.
+                    </li>
+                    <li>
+                        <a href="chapter-13.html"><strong>13. Reproducible, in the Repository</strong></a>
+                        &mdash; grove.toml: the environment described where the code lives, so a clone becomes a running setup with one command.
+                    </li>
+                    <li>
+                        <a href="chapter-14.html"><strong>14. The Team, and Keeping It</strong></a>
+                        &mdash; Secrets shared end-to-end encrypted, an assistant that can see your environment, and the habits that stop it rotting.
+                    </li>
+                </ol>
+            </main>
+        </div>
+    </body>
+</html>

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 4: A Padlock That Means Something &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#secure">One command</a>
+                <a href="#safe">Why a CA on your laptop is safe</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-03.html">&larr; 3. A Folder Becomes a Site</a>
+                    <a href="chapter-05.html">5. PHP, Exactly the One You Need &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 4: A Padlock That Means Something</h1>
+                <p class="lead">
+                    
+            Half of what you build refuses to work over plain HTTP, and the
+            usual fix &mdash; a self-signed certificate and a browser warning
+            you click through &mdash; teaches you to ignore the warning that
+            exists to protect you. There is a better answer, and it is one
+            command.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Browsers have spent a decade moving features behind
+                    &ldquo;secure context&rdquo;. Over plain HTTP you lose:
+                </p>
+                <ul>
+                    <li>
+                        <strong>Service workers.</strong> No offline, no push,
+                        no PWA &mdash; they simply do not register.
+                    </li>
+                    <li>
+                        <strong>Secure cookies.</strong>
+                        <code>Secure</code> and <code>SameSite=None</code>
+                        cookies are dropped, which means sessions that behave
+                        one way locally and another in production.
+                    </li>
+                    <li>
+                        <strong>Most OAuth providers.</strong> Many refuse to
+                        register a non-HTTPS callback at all, so
+                        &ldquo;log in with&hellip;&rdquo; cannot be tested
+                        locally.
+                    </li>
+                    <li>
+                        <strong>Clipboard, geolocation, camera, WebAuthn.</strong>
+                        All secure-context only.
+                    </li>
+                </ul>
+                <p>
+                    And beyond the features: if you develop over HTTP and
+                    deploy over HTTPS, mixed-content bugs and protocol-relative
+                    URL mistakes are invisible until production. You are
+                    testing a different thing from the one you ship.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    The usual workaround is a self-signed certificate, which
+                    produces a full-page browser warning you click through
+                    several times a day. That is worse than it looks, for two
+                    reasons.
+                </p>
+                <p>
+                    It <strong>trains the reflex</strong>. The interstitial
+                    exists to stop you proceeding to a site that is lying
+                    about who it is, and you are practising proceeding.
+                </p>
+                <p>
+                    And it <strong>does not actually work</strong> for the
+                    things you wanted. A service worker will not register
+                    behind an untrusted certificate no matter how many times
+                    you dismiss the warning. Neither will an API client that
+                    validates certificates &mdash; so your app&#039;s own
+                    server-to-server calls fail in ways that have nothing to
+                    do with your code.
+                </p>
+
+                <h2 id="secure">One command</h2>
+                <pre><code>grove secure freddy</code></pre>
+                <pre><code>✓ freddy is now served over HTTPS → https://freddy.test</code></pre>
+                <p>
+                    A real padlock. No warning, no exception, no
+                    <code>curl -k</code>. Your browser trusts it, your HTTP
+                    client trusts it, your service worker registers.
+                </p>
+                <p>
+                    What happened: <code>grove init</code> created a
+                    certificate authority on your machine and added it to the
+                    system trust store. <code>grove secure</code> issues a
+                    certificate for that site, signed by it. Your system
+                    trusts the CA, so it trusts the certificate. That is the
+                    whole mechanism, and it is the same one the public web
+                    uses &mdash; only the authority is yours.
+                </p>
+
+                <h2 id="safe">Why a CA on your laptop is safe</h2>
+                <p>
+                    A certificate authority your machine trusts is, in
+                    principle, a dangerous thing: a CA can vouch for
+                    <em>any</em> hostname. If Grove&#039;s CA could sign a
+                    certificate for <code>google.com</code>, and your system
+                    trusts Grove&#039;s CA, then anyone who got hold of that
+                    key could impersonate Google to you.
+                </p>
+                <p>
+                    So the CA carries a <strong>name constraint</strong>: it is
+                    cryptographically limited to your TLD. A certificate it
+                    signs for anything outside <code>.test</code> is rejected
+                    by the verifier &mdash; not by Grove&#039;s politeness, but
+                    by the same rules your browser applies to every certificate
+                    on the internet. The worst a leaked key can do is
+                    impersonate a name that only ever resolves to your own
+                    machine.
+                </p>
+                <p>
+                    That claim is not a promise in a document. It is a
+                    regression test in Grove&#039;s own suite, run through the
+                    same verifier browsers use: a Grove-signed certificate for
+                    <code>google.com</code> is refused, the identical
+                    certificate signed by an unconstrained CA is accepted
+                    &mdash; proving the refusal is the constraint doing its job
+                    and not an unrelated failure &mdash; and the certificates
+                    Grove actually issues are accepted.
+                </p>
+                <div class="callout">
+                    <strong>Secure everything, not just what needs it.</strong>
+                    There is no cost per site and no performance difference
+                    worth measuring, and a machine where some sites are HTTPS
+                    and some are not is a machine where you will spend an
+                    afternoon on a mixed-content bug that only exists locally.
+                    <code>grove unsecure &lt;site&gt;</code> reverses it if you
+                    ever need the plain version.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>Service workers, secure cookies, OAuth callbacks and WebAuthn need HTTPS</strong> &mdash; local development without it tests something you do not ship.</li>
+                    <li><strong>Click-through warnings train the wrong reflex</strong> and still do not enable the features you wanted.</li>
+                    <li><strong>grove secure issues a certificate from a CA your system already trusts.</strong></li>
+                    <li><strong>The CA is name-constrained to your TLD,</strong> enforced by the verifier rather than by good manners.</li>
+                    <li><strong>Secure every site.</strong> Mixed protocols across a machine cost more than the command does.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-05.html">Chapter 5</a>
+                    PHP: several versions at once, pinned per site, with the extensions you need &mdash; including the ones no prebuilt binary has.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

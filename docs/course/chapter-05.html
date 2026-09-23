@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 5: PHP, Exactly the One You Need &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#runtimes">Versions, installed and pinned</a>
+                <a href="#extensions">The extensions screen, and why it exists</a>
+                <a href="#variants">When the extension is not in any build</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-04.html">&larr; 4. A Padlock That Means Something</a>
+                    <a href="chapter-06.html">6. The Rest of the Stack &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 5: PHP, Exactly the One You Need</h1>
+                <p class="lead">
+                    
+            The client project needs 8.1, the new one needs 8.5, and one of
+            them needs an extension no prebuilt binary ships. This chapter is
+            about having all of that at the same time, and about a screen that
+            tells you what is missing before your code does.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    PHP is usually global. One version on the machine, changed
+                    by a command that affects everything, so the moment you
+                    maintain two projects on different versions you are
+                    switching several times a day &mdash; and eventually
+                    running the wrong one without noticing, which produces
+                    errors that make no sense because they are answers to a
+                    question you did not ask.
+                </p>
+                <p>
+                    Extensions make it worse. They are compiled against a
+                    specific PHP, so every version change means rebuilding
+                    them, and a missing one announces itself as
+                    <code>Call to undefined function</code> in a stack trace
+                    forty frames deep.
+                </p>
+
+                <h2 id="runtimes">Versions, installed and pinned</h2>
+                <pre><code>grove php list
+grove php install 8.3
+grove use 8.3              # the machine default</code></pre>
+                <img src="images/php-runtimes.png" alt="Grove&#039;s PHP panel: installed runtimes 8.5 and 8.4 with Update buttons, 8.3 with Install, and an extensions summary per runtime showing modules present and missing." />
+                <p>
+                    These are <strong>self-contained static PHP-FPM builds
+                    downloaded into Grove</strong>. No Homebrew, no Herd, no
+                    compilation, and no shared library on your system that a
+                    later upgrade can pull out from under them.
+                </p>
+                <p>
+                    The default is the machine&#039;s. The interesting command
+                    is the per-site one:
+                </p>
+                <pre><code>grove isolate legacy-client 8.1</code></pre>
+                <p>
+                    Now <code>legacy-client.test</code> is served by 8.1 while
+                    everything else stays on the default. Both run at the same
+                    time; there is no switching, because there is nothing to
+                    switch. Grove is the web server, so it knows which runtime
+                    a request belongs to and routes to it &mdash; the thing
+                    chapter 1 said one supervisor makes possible.
+                    <code>grove unisolate</code> puts it back.
+                </p>
+
+                <h2 id="extensions">The extensions screen, and why it exists</h2>
+                <p>
+                    Look at the panel again. Under each runtime:
+                </p>
+                <pre><code>php@8.4    47 modules, 1 required missing, 6 recommended missing
+           missing: mysqli</code></pre>
+                <p>
+                    That line is worth more than it looks. The alternative
+                    &mdash; and the normal experience with every other PHP
+                    distribution &mdash; is finding out from a fatal error in
+                    a request, at which point you are debugging your
+                    application for a problem that is in your environment.
+                </p>
+                <pre><code>grove php ext</code></pre>
+                <p>
+                    gives the full per-extension breakdown, and this is the
+                    part that makes it useful: it says <strong>why each one
+                    matters</strong>. Not a list of names to search for, but
+                    what depends on it. An extension you have never heard of
+                    and do not need reads as fine; one your framework assumes
+                    reads as a problem, in the same list.
+                </p>
+
+                <h2 id="variants">When the extension is not in any build</h2>
+                <p>
+                    Sooner or later you need something the prebuilt runtimes
+                    do not carry &mdash; an older <code>mysqli</code>, an
+                    imaging library, something from PECL that a client&#039;s
+                    decade-old codebase depends on. Two answers, and it is
+                    worth knowing both exist before you need them.
+                </p>
+                <p>
+                    <strong>Variants.</strong> Grove&#039;s PHP builds come in
+                    more than one flavour, selected with
+                    <code>--variant</code>, so an extension missing from one
+                    may simply be present in another. Try this first; it is a
+                    download rather than a project.
+                </p>
+                <p>
+                    <strong>Register your own.</strong> If you already have a
+                    PHP that does what you need &mdash; from Homebrew, from a
+                    client&#039;s Docker image, compiled yourself &mdash; tell
+                    Grove about it:
+                </p>
+                <pre><code>grove php register /opt/homebrew/opt/php@8.2/sbin/php-fpm</code></pre>
+                <p>
+                    Grove supervises it, routes to it and isolates sites to it
+                    exactly as it does its own. This is the escape hatch that
+                    keeps &ldquo;bring your own runtime&rdquo; from being a
+                    reason not to adopt the rest, and it is the same mechanism
+                    chapter 12 needs for step-debugging.
+                </p>
+                <div class="callout">
+                    <strong>Check the extensions on a quiet afternoon,</strong>
+                    not while something is failing. Five minutes with
+                    <code>grove php ext</code> now is an hour you do not spend
+                    later reading a stack trace that was never about your code.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>Self-contained static builds</strong> &mdash; no Homebrew, nothing on your system to break them later.</li>
+                    <li><strong>grove use sets the machine default; grove isolate pins one site.</strong> Both versions run at once, so there is no switching.</li>
+                    <li><strong>The extensions panel tells you what is missing before your code does,</strong> and <code>grove php ext</code> says why each one matters.</li>
+                    <li><strong>Variants first, register second.</strong> A missing extension may be a different flavour of the same build.</li>
+                    <li><strong>Any PHP-FPM can be registered</strong> and is then supervised, routed and isolated like Grove&#039;s own.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-06.html">Chapter 6</a>
+                    the rest of the stack: databases, cache and a mail-catcher that Grove installs and supervises itself &mdash; and the .env block that wires your app to all of it.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 1: What a Local Environment Actually Is &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#one-supervisor">What changes with one supervisor</a>
+                <a href="#the-arc">What we are building</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-02.html">2. Install, and What Needs Root &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 1: What a Local Environment Actually Is</h1>
+                <p class="lead">
+                    
+            Before installing anything, it is worth naming the parts. A local
+            development environment is not one thing &mdash; it is five jobs
+            that happen to run on the same laptop, and almost every problem
+            you have had with yours came from the seams between them.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    A working machine is invisible. You type
+                    <code>myapp.test</code>, a page appears, and no part of
+                    your attention goes to how. That is exactly as it should
+                    be &mdash; and it is why, when something breaks, nobody
+                    has any idea where to look. The environment was never
+                    designed; it accumulated.
+                </p>
+                <p>
+                    So here are the five jobs, because knowing them is what
+                    turns &ldquo;it doesn&#039;t work&rdquo; into a question
+                    with an answer.
+                </p>
+                <ol>
+                    <li>
+                        <strong>A name resolver.</strong> Something must
+                        decide that <code>myapp.test</code> means your
+                        machine. That is DNS, and it is the first thing that
+                        breaks.
+                    </li>
+                    <li>
+                        <strong>A web server.</strong> Something must accept
+                        the request on port 80 or 443, work out which project
+                        it belongs to, and hand it to the right runtime.
+                    </li>
+                    <li>
+                        <strong>Language runtimes.</strong> PHP, Node &mdash;
+                        and not one of each, but the specific versions each
+                        project needs, at the same time.
+                    </li>
+                    <li>
+                        <strong>Backing services.</strong> A database, a
+                        cache, a queue, somewhere for outgoing mail to land
+                        instead of a real inbox.
+                    </li>
+                    <li>
+                        <strong>Certificates.</strong> Because half of what
+                        you build now refuses to work over plain HTTP.
+                    </li>
+                </ol>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    The traditional answer is one tool per job, assembled over
+                    years by different people with different opinions:
+                    Homebrew for PHP, nvm for Node, Docker for the database,
+                    a line in <code>/etc/hosts</code> for the name, nginx or
+                    Apache configured by hand, mkcert for a certificate, and
+                    MailHog because somebody once sent a test email to a real
+                    customer.
+                </p>
+                <p>
+                    Each piece is fine. The seams are where you lose the days:
+                </p>
+                <ul>
+                    <li>
+                        <strong>Nothing knows about anything else.</strong>
+                        You upgrade PHP with Homebrew and your nginx config
+                        still points at the old socket. Nothing warns you;
+                        the site just stops.
+                    </li>
+                    <li>
+                        <strong>Versions are global.</strong> One PHP at a
+                        time, so the client project on 8.1 and the new one on
+                        8.5 cannot both run &mdash; and switching is a
+                        ceremony you perform several times a day.
+                    </li>
+                    <li>
+                        <strong>Nothing is reproducible.</strong> A new
+                        colleague spends two days recreating your machine
+                        from a README nobody has updated since the last time
+                        someone new joined.
+                    </li>
+                    <li>
+                        <strong>Everything is a little bit root.</strong>
+                        A dozen installers have each asked for your password
+                        for their own reasons, and no one process is
+                        accountable for the result.
+                    </li>
+                </ul>
+                <p>
+                    The <code>/etc/hosts</code> line deserves a paragraph of
+                    its own, because it is the most common approach and the
+                    worst. It maps exactly one name. Every new project is
+                    another manual edit with <code>sudo</code>, wildcards are
+                    impossible, and the file is invisible from inside any
+                    project &mdash; so the reason a site stopped resolving is
+                    in a system file nobody thinks to open.
+                </p>
+
+                <h2 id="one-supervisor">What changes with one supervisor</h2>
+                <p>
+                    Grove does all five jobs in one supervised process, and
+                    the difference is not convenience. It is that the parts
+                    can <em>know about each other</em>.
+                </p>
+                <ul>
+                    <li>
+                        It answers DNS for your TLD, so a new project needs
+                        no file edited anywhere &mdash; the name exists
+                        because the folder does.
+                    </li>
+                    <li>
+                        It is the web server, so it knows which PHP version a
+                        site is pinned to and routes to that runtime without
+                        a config file to keep in sync.
+                    </li>
+                    <li>
+                        It installs the runtimes and the databases, so
+                        upgrading one does not break another&#039;s idea of
+                        where it lives.
+                    </li>
+                    <li>
+                        It owns the certificate authority, so a new HTTPS
+                        site is one command rather than a ceremony.
+                    </li>
+                    <li>
+                        It sees every request, which is why chapters 10 and
+                        12 are possible at all &mdash; nothing assembled from
+                        separate tools can show you the timeline of a request
+                        with the queries it caused.
+                    </li>
+                </ul>
+
+                <h2 id="the-arc">What we are building</h2>
+                <p>
+                    By chapter 14 you will have this, and every part of it
+                    will be something you chose rather than something that
+                    accumulated:
+                </p>
+                <ul>
+                    <li>
+                        Every project in one folder served at
+                        <code>https://&lt;name&gt;.test</code> with a trusted
+                        padlock, no config per project.
+                    </li>
+                    <li>
+                        Several PHP versions at once, pinned per site, with
+                        the extensions you need &mdash; including ones no
+                        prebuilt binary has.
+                    </li>
+                    <li>
+                        Databases, cache and a mail-catcher that Grove
+                        installs and supervises, with snapshots you can roll
+                        back.
+                    </li>
+                    <li>
+                        A terminal whose <code>php</code> and
+                        <code>composer</code> follow the project you are
+                        standing in.
+                    </li>
+                    <li>
+                        A <code>grove.toml</code> in the repository, so a new
+                        colleague goes from <code>git clone</code> to a
+                        running identical environment with one command.
+                    </li>
+                </ul>
+                <div class="callout">
+                    <strong>One honest note before we start.</strong> Grove
+                    replaces a stack you may have spent years arranging, and
+                    that is worth doing deliberately rather than all at once.
+                    Chapter 7 is where Herd and Valet come off, and it comes
+                    <em>after</em> the chapters that make sure everything you
+                    relied on is in place. Nothing here asks you to burn the
+                    boats early.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>A local environment is five jobs:</strong> a name resolver, a web server, runtimes, services and certificates.</li>
+                    <li><strong>The seams are where the days go</strong> &mdash; one tool per job means nothing knows about anything else.</li>
+                    <li><strong>/etc/hosts maps one name</strong> and hides the reason a site stopped working in a system file.</li>
+                    <li><strong>One supervisor lets the parts know about each other,</strong> which is what makes per-site PHP and a request timeline possible at all.</li>
+                    <li><strong>Replace deliberately.</strong> Herd and Valet come off in chapter 7, after everything you relied on is in place.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-02.html">Chapter 2</a>
+                    you install Grove &mdash; and find out precisely what the two commands that ask for your password are doing with it.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

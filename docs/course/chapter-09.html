@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 9: Before the Scary Migration &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#snapshots">Two commands</a>
+                <a href="#branches">A database per branch</a>
+                <a href="#why-possible">Why only a supervisor can do this</a>
+                <a href="#habit">Make it a habit</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-08.html">&larr; 8. The Processes a Project Needs</a>
+                    <a href="chapter-10.html">10. Seeing the Request &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 9: Before the Scary Migration</h1>
+                <p class="lead">
+                    
+            Every developer has run a migration they were not sure about and
+            felt the small cold moment afterwards. This chapter removes it, in
+            two commands, and explains why this particular feature could only
+            come from the thing that installed your database.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    A destructive migration cannot be undone by
+                    <code>migrate:rollback</code>. The <code>down()</code>
+                    method restores the <em>schema</em>; it cannot restore the
+                    column you dropped, because the data went with it. And in
+                    local development the data is often worth more than it
+                    sounds: three weeks of hand-made test cases covering the
+                    edge conditions you had to reason about, which a fresh
+                    seed does not contain.
+                </p>
+                <p>
+                    So people do one of two things. They avoid the experiment
+                    &mdash; writing the migration defensively, never trying the
+                    cleaner schema &mdash; or they run it and lose an
+                    afternoon rebuilding fixtures. Both are the same tax, paid
+                    differently.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    You can do this yourself:
+                    <code>mysqldump</code> to a file, remember where you put
+                    it, remember the flags, restore with the inverse command,
+                    remember which of the four dumps in your Downloads folder
+                    was the right one. It works, and the number of people who
+                    actually do it before every risky migration is
+                    approximately zero, because the ceremony is longer than the
+                    migration.
+                </p>
+
+                <h2 id="snapshots">Two commands</h2>
+                <pre><code>grove db snapshot --db myapp --note "before migrate"
+# ...run the scary migration...
+grove db list
+grove db restore &lt;id&gt;</code></pre>
+                <p>
+                    Data restored exactly as it was. The note is not
+                    decoration &mdash; a week later, <code>grove db list</code>
+                    with five snapshots in it is unreadable without one.
+                </p>
+                <p>
+                    &ldquo;Exactly&rdquo; has been true since 1.9.0, and it is
+                    worth knowing why it was not before. A MySQL dump recreates
+                    the tables it holds and says nothing about any others, so a
+                    restore after a migration that <em>created</em> a table
+                    left that table in place &mdash; the one case a snapshot
+                    before a migration exists for. Each database in the dump is
+                    now dropped and recreated on the way in. If you are on an
+                    older Grove, upgrade before you rely on this chapter.
+                </p>
+                <p>
+                    Snapshots live under Grove&#039;s own directory rather than
+                    in your project, which keeps a database dump out of your
+                    repository and out of your build context. MySQL and
+                    PostgreSQL snapshots are plain SQL dumps &mdash; readable,
+                    greppable, restorable by hand if you ever want to. An
+                    ElyraSQL snapshot is a hot, consistent copy of its single
+                    database file, taken while it serves.
+                </p>
+
+                <h2 id="branches">A database per branch</h2>
+                <p>
+                    A snapshot answers &ldquo;put it back&rdquo;. There is a
+                    second, quieter version of the same problem: you switch
+                    from a feature branch to <code>main</code>, and the feature
+                    branch&#039;s migrations are still in the database. Now
+                    <code>main</code> is running against a schema it has never
+                    seen, and the errors look like bugs in <code>main</code>.
+                </p>
+                <pre><code>grove db branches on</code></pre>
+                <p>
+                    Since 1.9.0 a project can have a database per git branch.
+                    Check out a branch and its data is swapped in; go back to
+                    <code>main</code> and <code>main</code>&#039;s data comes
+                    back exactly as it was left. The first checkout of a new
+                    branch starts it from the data you were on.
+                </p>
+                <p>
+                    The design decision worth noticing: <strong>the database
+                    keeps its name</strong>, and only its contents move. So the
+                    app, <code>php artisan</code> in a terminal, a test run and
+                    a database client all see the checked-out branch without
+                    being told. Pointing the app at a different database per
+                    branch would have reached only the requests Grove proxies,
+                    and your terminal would have kept migrating the old one. On
+                    MySQL the swap is a single atomic <code>RENAME TABLE</code>,
+                    measured at 43&ndash;46 ms for a 70 MB schema.
+                </p>
+
+                <h2 id="why-possible">Why only a supervisor can do this</h2>
+                <p>
+                    This is the chapter that makes the argument for the whole
+                    course, so it is worth stating directly.
+                </p>
+                <p>
+                    A tool that merely <em>connects</em> to your database can
+                    dump it. Only a tool that <em>owns</em> it knows which
+                    engine is running, on which port, with which credentials,
+                    for which project &mdash; without being told, every time,
+                    by you. Grove installed the database, so
+                    <code>grove db snapshot</code> needs no connection string:
+                    it already knows.
+                </p>
+                <p>
+                    That is the same property that made <code>grove env</code>
+                    correct in chapter 6 and per-site PHP routing possible in
+                    chapter 5. Each is small on its own. Together they are the
+                    difference between a collection of tools and an
+                    environment.
+                </p>
+
+                <h2 id="habit">Make it a habit</h2>
+                <p>
+                    Snapshot before a migration you have not run before.
+                    Snapshot before running someone else&#039;s migration on
+                    your data. Snapshot before <code>migrate:fresh --seed</code>
+                    on a database you have been building up by hand.
+                </p>
+                <p>
+                    It costs seconds and it changes what you are willing to
+                    try &mdash; which is the real benefit. The best version of
+                    a schema is usually the third one you attempt, and you only
+                    get to the third if the first two were cheap.
+                </p>
+                <div class="callout">
+                    <strong>This is also what makes an agent safe to let
+                    near your database.</strong> If you have a coding agent
+                    running migrations, a snapshot beforehand turns
+                    &ldquo;what did it just do&rdquo; from a question into a
+                    command. Chapter 14 comes back to this.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>down() restores the schema, not the data.</strong> Hand-made local fixtures are worth more than they sound.</li>
+                    <li><strong>Two commands, with a note,</strong> because five unlabelled snapshots are as good as none.</li>
+                    <li><strong>Snapshots live in Grove&#039;s directory,</strong> not in your repository or your build context.</li>
+                    <li><strong>Owning the database is what makes it one command</strong> &mdash; the same property behind grove env and per-site PHP.</li>
+                    <li><strong>Cheap experiments change what you attempt.</strong> The best schema is usually the third one.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-10.html">Chapter 10</a>
+                    the thing you cannot build from separate tools: the full timeline of a request, the queries it caused, and a replay button.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

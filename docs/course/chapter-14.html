@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 14: The Team, and Keeping It &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#secrets">The last thing sent over Slack</a>
+                <a href="#mcp">An assistant that can see the environment</a>
+                <a href="#rhythm">Keeping it healthy</a>
+                <a href="#finished">What the perfect setup actually is</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-13.html">&larr; 13. Reproducible, in the Repository</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 14: The Team, and Keeping It</h1>
+                <p class="lead">
+                    
+            Two things left that a team needs and a single developer does not,
+            one thing that changes how an assistant can help you, and the
+            short list of habits that keep the whole setup healthy.
+        
+                </p>
+
+
+                <h2 id="secrets">The last thing sent over Slack</h2>
+                <p>
+                    <code>grove.toml</code> describes the environment, and it
+                    is committed, which is exactly why it cannot hold the
+                    Stripe test key or the S3 credentials. So those travel the
+                    old way: pasted into a chat message, and living there
+                    forever in a searchable archive belonging to a company that
+                    is not yours, readable by everyone who joins the channel
+                    afterwards.
+                </p>
+                <p>
+                    <strong>Grove Teams</strong> syncs a project&#039;s secrets
+                    between team members with end-to-end encryption. The
+                    claim worth understanding is the boundary: encryption and
+                    decryption happen on your machines, so
+                    <strong>the backend stores ciphertext it cannot
+                    read</strong>. It is a courier, not a keyholder.
+                </p>
+                <p>
+                    That is a specific and checkable claim, and it is the right
+                    one to ask of anything holding your credentials. The docs
+                    state exactly how much the backend is trusted rather than
+                    saying &ldquo;secure&rdquo; and moving on &mdash; read that
+                    section before you adopt it, because a boundary you have
+                    not read is a boundary you are assuming.
+                </p>
+
+                <h2 id="mcp">An assistant that can see the environment</h2>
+                <p>
+                    Grove exposes an <strong>MCP server</strong>, so an AI
+                    assistant &mdash; Elyra, Claude, Cursor &mdash; can see
+                    your sites, requests, logs and database schema.
+                </p>
+                <p>
+                    The difference this makes is worth being precise about. An
+                    assistant without it is reasoning from your code and your
+                    description of the problem. With it, the questions change:
+                </p>
+                <ul>
+                    <li>
+                        <em>&ldquo;Why is this endpoint slow?&rdquo;</em>
+                        &mdash; it can read the actual request timeline and the
+                        queries that request made, rather than guessing from
+                        the controller.
+                    </li>
+                    <li>
+                        <em>&ldquo;Write a query for this.&rdquo;</em> &mdash;
+                        it can read the live schema rather than inferring it
+                        from migrations, which are history, and models, which
+                        are intent.
+                    </li>
+                    <li>
+                        <em>&ldquo;What broke?&rdquo;</em> &mdash; it can read
+                        the log instead of asking you to paste it.
+                    </li>
+                </ul>
+                <p>
+                    Combine it with chapter 9: a snapshot before you let an
+                    agent run migrations turns &ldquo;what did it just
+                    do&rdquo; from a question into a command.
+                </p>
+
+                <h2 id="rhythm">Keeping it healthy</h2>
+                <p>
+                    A good setup decays the same way a good codebase does
+                    &mdash; slowly, invisibly, one unexamined change at a time.
+                    Four habits, none of them longer than a minute:
+                </p>
+                <ul>
+                    <li>
+                        <strong><code>grove doctor</code> when something is
+                        odd</strong>, before you start guessing. It checks the
+                        things that are true or false rather than matters of
+                        opinion, and it is faster than any theory you have.
+                    </li>
+                    <li>
+                        <strong><code>grove db snapshot</code> before anything
+                        irreversible.</strong> Seconds, and it changes what you
+                        are willing to try.
+                    </li>
+                    <li>
+                        <strong>Keep <code>grove.toml</code> honest.</strong>
+                        When the project starts needing Redis, add it in the
+                        same pull request. A file that drifts is a README with
+                        better syntax.
+                    </li>
+                    <li>
+                        <strong>Update deliberately.</strong> Grove updates its
+                        binary without rewriting the service unit, so
+                        <code>sudo grove install</code> after a major upgrade
+                        is the visible step that adopts anything new at the
+                        privileged layer. Since 1.9.0 it is not optional after
+                        coming from before 1.8.0: the daemon will not run as
+                        root, and it says so at startup.
+                    </li>
+                </ul>
+
+                <h2 id="finished">What the perfect setup actually is</h2>
+                <p>
+                    Not a particular list of tools. It is a setup with three
+                    properties, and every chapter here was in service of one
+                    of them:
+                </p>
+                <p>
+                    <strong>It is legible.</strong> You can say what is running
+                    and why, and when something breaks there is a command that
+                    tells you rather than a folklore you half-remember.
+                </p>
+                <p>
+                    <strong>It is reproducible.</strong> It exists in the
+                    repository, not in your head, so a colleague or a future
+                    you can have it in one command.
+                </p>
+                <p>
+                    <strong>It gets out of the way.</strong> The point was
+                    never the environment. It was the hours you get back
+                    because the environment stopped being a thing you think
+                    about &mdash; which is exactly how much attention a
+                    development environment deserves, and no more.
+                </p>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>Secrets sync end-to-end encrypted;</strong> the backend stores ciphertext it cannot read &mdash; a courier, not a keyholder.</li>
+                    <li><strong>Read the trust boundary before adopting it.</strong> A boundary you have not read is one you are assuming.</li>
+                    <li><strong>MCP lets an assistant read the live environment</strong> &mdash; real timelines, the live schema, the actual log.</li>
+                    <li><strong>Four habits:</strong> doctor before guessing, snapshot before anything irreversible, keep grove.toml honest, update deliberately.</li>
+                    <li><strong>A perfect setup is legible, reproducible, and out of the way.</strong> The point was never the environment.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>That is the course.</strong> The reference for everything here is the <a href="install.html">installation guide</a> and the <a href="commands.html">command reference</a>; the trust boundaries are in <a href="architecture.html">architecture</a>. If your machine still has Herd or Valet on it, <a href="migrate-from-herd.html">migrating</a> takes a few minutes and leaves your databases untouched.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

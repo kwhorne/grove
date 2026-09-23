@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 8: The Processes a Project Needs &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#dev">grove dev</a>
+                <a href="#the-trap">The one command that must not be in the list</a>
+                <a href="#logs">Where it went wrong</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-07.html">&larr; 7. The Terminal Follows the Project</a>
+                    <a href="chapter-09.html">9. Before the Scary Migration &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 8: The Processes a Project Needs</h1>
+                <p class="lead">
+                    
+            A modern app is not one process. It is a site, a queue worker, an
+            asset watcher and a scheduler, and the usual way to run them is
+            four terminal tabs you forget to reopen. This chapter is about
+            giving that job to the thing that is already supervising
+            everything else.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    You know the four tabs. One for <code>npm run dev</code>,
+                    one for <code>php artisan queue:work</code>, one for
+                    <code>php artisan schedule:work</code>, one to actually
+                    type in. They are unlabelled, they are in a different
+                    order on Tuesday, and when you restart your machine you
+                    remember three of them.
+                </p>
+                <p>
+                    The bug that produces is specific and maddening: a feature
+                    that works for you and not for a colleague, or this
+                    morning and not this afternoon, because a queue worker was
+                    running then and is not now. Nothing tells you. The job is
+                    simply queued forever, and the email never arrives.
+                </p>
+
+                <h2 id="dev">grove dev</h2>
+                <pre><code>grove dev freddy</code></pre>
+                <p>
+                    Grove starts the project&#039;s development processes and
+                    supervises them alongside the site &mdash; same lifecycle,
+                    same logs, same place to look. Stop the site and they stop
+                    with it.
+                </p>
+                <p>
+                    It reads what to run from the project itself, so a
+                    colleague who clones the repository gets the same
+                    processes without being told about them. That is the same
+                    idea as chapter 13, arriving early: the environment is
+                    described in the repository rather than in somebody&#039;s
+                    habits.
+                </p>
+
+                <h2 id="the-trap">The one command that must not be in the list</h2>
+                <p>
+                    A Laravel project may define a <code>dev</code> script that
+                    runs everything at once &mdash; typically through
+                    <code>concurrently</code>, starting
+                    <code>php artisan serve</code> among other things.
+                </p>
+                <p>
+                    <strong>Do not let Grove run that one.</strong> It starts
+                    PHP&#039;s built-in development server, which then serves
+                    your site on a port, in parallel with Grove serving the
+                    same site properly. Two servers, one project. The symptoms
+                    are worth recognising because they look like a bug in your
+                    application: a change appears on one reload and not the
+                    next, sessions behave strangely, and a debugger attaches to
+                    a process that is not handling the request you are looking
+                    at.
+                </p>
+                <p>
+                    Grove skips the entries it knows about &mdash; the
+                    all-in-one <code>dev</code> script and the built-in server
+                    &mdash; and says which it skipped, rather than quietly
+                    doing something confusing. Run the individual processes:
+                    the queue worker, the asset watcher, the scheduler. Let
+                    Grove be the web server, since it already is one.
+                </p>
+
+                <h2 id="logs">Where it went wrong</h2>
+                <pre><code>grove logs
+grove logs freddy</code></pre>
+                <p>
+                    One place for the daemon&#039;s log, a site&#039;s PHP-FPM
+                    log, and the output of the dev processes above. Which
+                    matters most when a dev process has died: with four
+                    terminal tabs, a crashed queue worker is a tab you are not
+                    looking at, and the first evidence is a feature that
+                    silently does not work. Supervised, it is a line in a log
+                    you already know how to read.
+                </p>
+                <div class="callout">
+                    <strong>The test for whether you have this right:</strong>
+                    restart your machine, run one command, and have everything
+                    the project needs running again. If the answer involves
+                    remembering anything, the environment is still in your head
+                    rather than in the repository.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>An app is several processes,</strong> and forgotten ones fail silently &mdash; the job is queued forever and nobody is told.</li>
+                    <li><strong>grove dev supervises them with the site,</strong> same lifecycle and same logs.</li>
+                    <li><strong>Never let it run the all-in-one dev script</strong> &mdash; <code>artisan serve</code> beside Grove means two servers for one project.</li>
+                    <li><strong>Grove skips the entries it knows about and says so,</strong> rather than quietly doing something confusing.</li>
+                    <li><strong>One command after a restart.</strong> If it takes remembering, the environment is still in your head.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-09.html">Chapter 9</a>
+                    the thing only a supervisor that owns the database can offer: a snapshot you take before the scary migration and restore in one command.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

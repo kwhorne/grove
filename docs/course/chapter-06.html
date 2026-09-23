@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 6: The Rest of the Stack &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#services">Services Grove owns</a>
+                <a href="#env">The ten tedious minutes, ended</a>
+                <a href="#mail">Mail that never leaves the building</a>
+                <a href="#which-database">Which database</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-05.html">&larr; 5. PHP, Exactly the One You Need</a>
+                    <a href="chapter-07.html">7. The Terminal Follows the Project &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 6: The Rest of the Stack</h1>
+                <p class="lead">
+                    
+            A database, a cache and somewhere for outgoing mail to land. This
+            chapter is about not installing any of them yourself, and about
+            the small command that ends the most tedious ten minutes of
+            starting a project.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Backing services are where local environments rot. A
+                    Homebrew MySQL upgraded itself during an unrelated
+                    <code>brew upgrade</code> and now refuses to start on your
+                    old data directory. A Docker Postgres eats eight gigabytes
+                    of disk and a fan-spinning share of your battery for a
+                    database with four tables in it. Redis was installed for a
+                    project you finished last year and is still running.
+                </p>
+                <p>
+                    Nothing is <em>wrong</em> with any of these tools. The
+                    problem is that nothing owns them. They were installed by
+                    different mechanisms at different times and no single
+                    thing knows what is meant to be running, at which version,
+                    on which port.
+                </p>
+
+                <h2 id="services">Services Grove owns</h2>
+                <img src="images/services.png" alt="Grove&#039;s Services panel: dns, http, https and mail status pills, PostgreSQL, MySQL and ElyraSQL under Database, Redis under Cache &amp; Queue, with Install, Restart and Stop buttons and a Copy .env button." />
+                <pre><code>grove service list
+grove service install postgres
+grove service start postgres</code></pre>
+                <p>
+                    Grove downloads and supervises PostgreSQL, MySQL,
+                    ElyraSQL and Redis itself &mdash; the line under the panel
+                    says it plainly: <em>no Homebrew, MySQL or Redis to
+                    install separately</em>. They start when Grove starts,
+                    stop when it stops, and <code>grove doctor</code> knows
+                    whether they are healthy.
+                </p>
+                <p>
+                    And because Grove owns them, it can do things a service
+                    you installed yourself cannot &mdash; which is chapter 9,
+                    and is the strongest argument in this chapter.
+                </p>
+                <p>
+                    One of those things arrived in 1.9.0. A database you use
+                    twice a week still costs its memory all week, so it can now
+                    run <strong>only while something is connected</strong>:
+                </p>
+                <pre><code>grove service on-demand mysql on</code></pre>
+                <p>
+                    Grove holds the port. The server starts behind the first
+                    connection and stops cleanly after ten idle minutes by
+                    default. Measured on the machine that wrote this, an idle
+                    MySQL at 517 MB went to nothing, and the first query after
+                    it had stopped was answered in 0.35 s including the start.
+                    It is opt-in: nothing about an existing service changes
+                    until you turn it on.
+                </p>
+
+                <h2 id="env">The ten tedious minutes, ended</h2>
+                <p>
+                    Every new project starts the same way: open
+                    <code>.env</code>, try to remember the port, get the
+                    password wrong, find the mail settings from an old
+                    project, run the migration, get a connection error, look
+                    up what the socket path is this time.
+                </p>
+                <pre><code>grove env</code></pre>
+                <pre><code>DB_CONNECTION=pgsql
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_DATABASE=grove
+DB_USERNAME=grove
+DB_PASSWORD=
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+MAIL_MAILER=smtp
+MAIL_HOST=127.0.0.1
+MAIL_PORT=1025</code></pre>
+                <p>
+                    Paste it in. It is correct because Grove is the thing
+                    running the services, so it is reading its own
+                    configuration rather than reciting a convention. The GUI
+                    has the same thing behind <strong>Copy .env</strong>.
+                </p>
+
+                <h2 id="mail">Mail that never leaves the building</h2>
+                <p>
+                    Note the last three lines. Grove runs a mail-catcher on
+                    <code>127.0.0.1:1025</code>, and everything your apps send
+                    is <strong>captured, never delivered</strong>.
+                </p>
+                <pre><code>grove mail</code></pre>
+                <pre><code>#  FROM              TO               SUBJECT           RECEIVED
+1  hello@freddy.test you@example.com  Welcome aboard!   12:04:31</code></pre>
+                <p>
+                    This is a safety feature more than a convenience. Every
+                    developer who has been doing this a while knows somebody
+                    who sent a test run of a welcome sequence to a production
+                    user table &mdash; or was that somebody. With mail pointed
+                    at 1025 from the first commit, the accident is
+                    structurally impossible on this machine, and you also get
+                    to read the HTML your mailer actually produced instead of
+                    imagining it.
+                </p>
+
+                <h2 id="which-database">Which database</h2>
+                <p>
+                    Use whichever your production runs. Local development that
+                    differs from production in the database is how you find
+                    out about a dialect difference during a deploy.
+                </p>
+                <p>
+                    <strong>ElyraSQL</strong> is worth a note since it is
+                    newer: a MySQL-compatible server in one static binary,
+                    with the whole database in a single file. It speaks the
+                    MySQL protocol, so an app connects to it with
+                    <code>DB_CONNECTION=mysql</code> and no code changes. The
+                    single file is the interesting part &mdash; it makes the
+                    snapshots in chapter 9 a copy of one file rather than a
+                    dump and restore.
+                </p>
+                <div class="callout">
+                    <strong>Coming from Herd?</strong> Grove&#039;s Tools
+                    panel has <em>Migrate MySQL from Herd</em>: it copies every
+                    database from another MySQL server into Grove&#039;s with a
+                    logical dump and restore, and <strong>leaves the source
+                    untouched</strong>. The one requirement is that the two
+                    servers are on different ports &mdash; if both want 3306,
+                    move Grove&#039;s to 3307 under Services first. Nothing is
+                    deleted, so you can run both until you are convinced.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>Grove installs and supervises its own databases, cache and mail</strong> &mdash; one thing owns them, at a known version, on a known port.</li>
+                    <li><strong>grove env writes the .env block</strong> from what is actually running rather than from memory.</li>
+                    <li><strong>Mail is captured, never delivered.</strong> The worst accident in local development becomes structurally impossible.</li>
+                    <li><strong>Match production&#039;s database.</strong> A dialect difference found during a deploy is a bad way to learn one.</li>
+                    <li><strong>Herd&#039;s databases can be copied over</strong> with the source left untouched, as long as the ports differ.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-07.html">Chapter 7</a>
+                    the terminal becomes Grove&#039;s: php and composer that follow the project you are standing in, and the moment Herd and Valet can come off.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

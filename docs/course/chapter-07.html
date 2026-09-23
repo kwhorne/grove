@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 7: The Terminal Follows the Project &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#shims">Shims</a>
+                <a href="#cpx">cpx, while we are here</a>
+                <a href="#uninstall">Removing Herd and Valet</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-06.html">&larr; 6. The Rest of the Stack</a>
+                    <a href="chapter-08.html">8. The Processes a Project Needs &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 7: The Terminal Follows the Project</h1>
+                <p class="lead">
+                    
+            Your sites are served by the right PHP. Your terminal is not: it
+            still runs whatever is first on your PATH, which is how
+            <code>php artisan</code> ends up on a different version from the
+            site it belongs to. This chapter fixes that, and it is the point
+            where the old tools can go.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    There are two PHPs in your life and they are not the same
+                    one. The <strong>server</strong> PHP runs your site;
+                    chapter 5 made that per-project. The
+                    <strong>terminal</strong> PHP runs
+                    <code>php artisan migrate</code>, <code>composer
+                    install</code>, <code>vendor/bin/pest</code> &mdash; and it
+                    is whatever your PATH finds first, globally, regardless of
+                    which directory you are standing in.
+                </p>
+                <p>
+                    The failure is quiet and confusing. A site served on 8.1
+                    whose migrations run on 8.5 will mostly work, until a
+                    dependency resolves differently, or a composer install
+                    writes a lock file for the wrong platform, or a test
+                    passes locally and fails in CI. The cause is never where
+                    the symptom is.
+                </p>
+
+                <h2 id="shims">Shims</h2>
+                <pre><code>grove path install</code></pre>
+                <pre><code>✓ Installed shims for php, composer, cpx, node, npm, npx, laravel.
+✓ provisioned toolchain: PHP 8.5 CLI, Composer, cpx, Node 22
+
+    echo 'export PATH="$HOME/Library/Application Support/Grove/shims:$PATH"' &gt;&gt; ~/.zshrc</code></pre>
+                <p>
+                    Add the line, restart your shell, and the commands you type
+                    are Grove&#039;s. A shim is a tiny program that asks one
+                    question before it runs anything: <em>which project am I
+                    in, and what does it pin?</em> Then it executes that
+                    version.
+                </p>
+                <pre><code>cd ~/Code/legacy-client &amp;&amp; php -v      # PHP 8.1
+cd ~/Code/freddy         &amp;&amp; php -v      # PHP 8.5</code></pre>
+                <p>
+                    No switching, no ceremony, no remembering. The same
+                    mechanism covers <code>composer</code>, <code>node</code>,
+                    <code>npm</code>, <code>npx</code> and the
+                    <code>laravel</code> installer, so an npm install in a
+                    project pinned to Node 20 uses Node 20.
+                </p>
+
+                <h2 id="cpx">cpx, while we are here</h2>
+                <p>
+                    Grove also installs <strong>cpx</strong>, a Composer
+                    package executor &mdash; <code>npx</code> for PHP. It runs
+                    a Composer package without installing it into your
+                    project:
+                </p>
+                <pre><code>cpx friendsofphp/php-cs-fixer fix src/</code></pre>
+                <p>
+                    Useful for the tools you want occasionally and do not want
+                    in <code>composer.json</code> forever, where they will
+                    constrain your dependency resolution for years for the
+                    sake of something you ran twice.
+                </p>
+
+                <h2 id="uninstall">Removing Herd and Valet</h2>
+                <p>
+                    This is the moment. Everything the old tool did is now
+                    done: DNS, the proxy, certificates, PHP versions, the
+                    database, the terminal toolchain. Three chapters of
+                    evidence that the replacement works, rather than a leap.
+                </p>
+                <ol>
+                    <li>
+                        <strong>Copy the databases first</strong> if you have
+                        not &mdash; chapter 6, with the source untouched.
+                    </li>
+                    <li>
+                        <strong>Uninstall the old tool</strong> its own way.
+                    </li>
+                    <li>
+                        <strong>Run <code>sudo grove install</code> once
+                        more.</strong> Uninstalling Herd or Valet removes
+                        resolver files and trust-store entries on the way out,
+                        including, sometimes, ones that were not theirs. This
+                        re-asserts Grove&#039;s resolver and CA. If
+                        <code>.test</code> stops resolving after you remove
+                        something, this is the command.
+                    </li>
+                    <li>
+                        <strong><code>grove doctor</code></strong> to confirm
+                        the ports, the resolver and the CA are all where they
+                        should be.
+                    </li>
+                </ol>
+                <div class="callout">
+                    <strong>You can run both for a week.</strong> Nothing in
+                    this course requires the old tool to be gone; the two can
+                    coexist as long as they are not fighting over ports 80,
+                    443 and 3306. Move when you stop reaching for the old one,
+                    not before.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>Two PHPs:</strong> the one serving the site and the one in your terminal. Only the first was per-project until now.</li>
+                    <li><strong>Shims ask which project you are in</strong> before running php, composer, node, npm, npx or laravel.</li>
+                    <li><strong>cpx runs a Composer package without installing it,</strong> keeping occasional tools out of composer.json forever.</li>
+                    <li><strong>Remove the old tool after the evidence,</strong> not before &mdash; and copy the databases first.</li>
+                    <li><strong>Run <code>sudo grove install</code> after uninstalling Herd or Valet.</strong> They take resolver and trust entries with them.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-08.html">Chapter 8</a>
+                    the processes a project needs while you work &mdash; queue workers, Vite, schedulers &mdash; started and supervised by the same thing that serves the site.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

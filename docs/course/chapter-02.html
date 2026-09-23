@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 2: Install, and What Needs Root &mdash; Elyra Sj&aacute;</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Sj&aacute;</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#two-commands">The two commands</a>
+                <a href="#not-root">The daemon that serves your sites is not root</a>
+                <a href="#doctor">Learn to run doctor</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-01.html">&larr; 1. What a Local Environment Actually Is</a>
+                    <a href="chapter-03.html">3. A Folder Becomes a Site &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 2: Install, and What Needs Root</h1>
+                <p class="lead">
+                    
+            Installing takes two commands and about a minute. This chapter
+            spends longer than that explaining what they do, because a tool
+            that asks for your administrator password has an obligation to be
+            legible &mdash; and because Grove&#039;s answer here is unusual.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Developer tools ask for <code>sudo</code> casually. An
+                    installer wants it, a package manager wants it, a helper
+                    daemon wants it forever. Each time the justification is
+                    something small and true &mdash; a port, a system file
+                    &mdash; and the real cost never appears on the invoice:
+                    every bug in that process is now a root bug on your
+                    machine.
+                </p>
+                <p>
+                    You should know what you are agreeing to. So here it is,
+                    line by line.
+                </p>
+
+                <h2 id="two-commands">The two commands</h2>
+                <pre><code>sudo grove init       # config, root CA, a PHP build, resolver + trust
+sudo grove install    # the background service</code></pre>
+                <p>
+                    <strong><code>grove init</code></strong> does four things.
+                    It writes <code>config.toml</code>. It creates a local
+                    certificate authority and adds it to your system trust
+                    store &mdash; that is chapter 4, and it is the part that
+                    needs your password. It downloads a PHP build. And it
+                    writes <code>/etc/resolver/test</code>, a small file that
+                    tells macOS to send every <code>.test</code> lookup to
+                    Grove instead of to the internet.
+                </p>
+                <p>
+                    <strong><code>grove install</code></strong> writes the
+                    launchd unit that keeps the daemon running and restarts it
+                    if it dies. On Linux it writes a systemd unit instead.
+                </p>
+
+                <h2 id="not-root">The daemon that serves your sites is not root</h2>
+                <p>
+                    Here is the part worth reading twice, because it is the
+                    opposite of what the ports suggest.
+                </p>
+                <p>
+                    Grove serves on 80, 443 and 53, and binding a port below
+                    1024 requires privilege. The obvious conclusion &mdash;
+                    and the one Grove itself drew for its first several
+                    versions &mdash; is that the daemon must be root. It does
+                    not, because of one distinction:
+                    <strong>binding a privileged port needs root; serving on one does not.</strong>
+                </p>
+                <p>
+                    A socket is a file descriptor. Whoever binds it needs
+                    privilege; whoever holds it afterwards needs none. And
+                    your machine already has a root process whose entire job
+                    is starting other processes. So launchd binds 53, 80 and
+                    443 while it is root, then starts Grove <em>as you</em>
+                    and hands the already-listening descriptors over.
+                </p>
+                <pre><code>grove doctor</code></pre>
+                <pre><code>✓ privileges     http_port=80, elevated=false, sockets from the
+                 service manager: tcp/53, tcp/80, tcp/443, udp/53</code></pre>
+                <p>
+                    <code>elevated=false</code> is your name on that line.
+                    From its first instruction, the process handling every
+                    request to your sites is running as you &mdash; and so is
+                    everything it starts: PHP-FPM, PostgreSQL, MySQL, Redis,
+                    the Vite server, Composer.
+                </p>
+                <p>
+                    What still needs root is one-off and visible: writing the
+                    unit file, writing <code>/etc/resolver</code>, and adding
+                    the CA to the trust store. All three happen inside the two
+                    commands above, while you are watching, having typed
+                    <code>sudo</code> on purpose. Nothing that happens
+                    <em>while a request is being served</em> is privileged.
+                </p>
+
+                <h2 id="doctor">Learn to run doctor</h2>
+                <p>
+                    <code>grove doctor</code> is the command to reach for
+                    before you start guessing, and it is worth running once
+                    now while everything is fresh, so you know what healthy
+                    looks like.
+                </p>
+                <p>
+                    It checks the things that are true or false rather than
+                    matters of opinion: the daemon is running, the ports are
+                    listening, the resolver file exists and points at Grove,
+                    the CA is trusted by the system, the Grove home is owned
+                    by you and not world-writable, your certificates have not
+                    expired. Each line is a claim you could verify by hand;
+                    the value is that it verifies all of them in a second.
+                </p>
+                <div class="callout">
+                    <strong>The one upgrade note.</strong> Grove updates its
+                    binary without rewriting the launchd unit. From 1.8.0 to
+                    1.9.0 that meant an old machine kept running the daemon as
+                    root; since 1.9.0 the daemon <em>refuses</em> to start as
+                    root, so a machine that never ran the step below stops at
+                    startup &mdash; and names the command that fixes it. That
+                    command is <code>sudo grove install</code>, once. It
+                    rewrites the unit so launchd binds the ports and starts
+                    Grove as you, and it hands the Grove home to you in the
+                    same step, which is why it is one command and not a
+                    surprise permission error on Monday.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li><strong>Two privileged commands, and both are legible.</strong> init writes config, CA, resolver; install writes the service unit.</li>
+                    <li><strong>Binding a privileged port needs root; serving on one does not.</strong> launchd binds and hands the descriptor over.</li>
+                    <li><strong>The daemon runs as you</strong> &mdash; and so does everything it starts. <code>elevated=false</code> in doctor is the proof.</li>
+                    <li><strong>What still needs root is one-off and visible,</strong> and happens while you are watching.</li>
+                    <li><strong>Run doctor once while healthy,</strong> so you know what healthy looks like.</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-03.html">Chapter 3</a>
+                    your first site &mdash; and why a folder becoming a URL with no configuration is a different thing from a shortcut.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>
