@@ -64,7 +64,10 @@ impl SnapshotStore {
         note: &str,
     ) -> Result<Snapshot> {
         std::fs::create_dir_all(&self.dir)?;
-        let id = unique_id();
+        // Held until the snapshot is in the index (or has failed), so a second
+        // snapshot started in the same second cannot be handed the same id.
+        let reservation = Reservation::new(&self.list());
+        let id = reservation.id.clone();
         // ElyraSQL has one database and the snapshot is the whole file.
         let label = if engine == "elyrasql" {
             crate::manager::ELYRASQL_DATABASE
@@ -111,7 +114,7 @@ impl SnapshotStore {
             .list()
             .into_iter()
             .find(|s| s.id == id)
-            .ok_or_else(|| ServiceError::Unknown(format!("snapshot {id}")))?;
+            .ok_or_else(|| ServiceError::NoSnapshot(id.to_string()))?;
         let path = self.dir.join(&snap.file);
         match snap.engine.as_str() {
             "mysql" => services.restore_mysql(&path)?,
@@ -127,7 +130,7 @@ impl SnapshotStore {
         let idx = list
             .iter()
             .position(|s| s.id == id)
-            .ok_or_else(|| ServiceError::Unknown(format!("snapshot {id}")))?;
+            .ok_or_else(|| ServiceError::NoSnapshot(id.to_string()))?;
         let snap = list.remove(idx);
         let _ = std::fs::remove_file(self.dir.join(&snap.file));
         self.save(&list)?;
@@ -149,6 +152,51 @@ fn unique_id() -> String {
         .unwrap_or_else(|_| now.unix_timestamp().to_string())
 }
 
+/// The first of `base`, `base-2`, `base-3`, … that `taken` does not claim.
+///
+/// Ids are to-the-second timestamps, which is what makes them readable — and
+/// what made two snapshots in the same second share one. They shared the file
+/// name too, so the second dump overwrote the first on disk while the index
+/// kept both entries, pointing at the same file under two different notes.
+/// A sandboxed migration takes a snapshot before it runs; two of those in quick
+/// succession was enough.
+fn next_free_id(base: &str, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(base) {
+        return base.to_string();
+    }
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|candidate| !taken(candidate))
+        .expect("an unbounded range always has a free suffix")
+}
+
+/// Ids handed out but not yet written to the index. The daemon serves requests
+/// concurrently, and two creates can read the same index before either saves.
+static RESERVED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// An id nobody else has, released when the snapshot is recorded or abandoned.
+struct Reservation {
+    id: String,
+}
+
+impl Reservation {
+    fn new(existing: &[Snapshot]) -> Self {
+        let mut reserved = RESERVED.lock().unwrap_or_else(|e| e.into_inner());
+        let id = next_free_id(&unique_id(), |c| {
+            existing.iter().any(|s| s.id == c) || reserved.iter().any(|r| r == c)
+        });
+        reserved.push(id.clone());
+        Self { id }
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let mut reserved = RESERVED.lock().unwrap_or_else(|e| e.into_inner());
+        reserved.retain(|r| r != &self.id);
+    }
+}
+
 fn now_iso() -> String {
     let now = OffsetDateTime::now_utc();
     let fmt = format_description!("[year]-[month]-[day] [hour]:[minute]:[second] UTC");
@@ -158,6 +206,48 @@ fn now_iso() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_taken_id_gets_the_next_free_suffix() {
+        assert_eq!(
+            next_free_id("20260923-120000", |_| false),
+            "20260923-120000"
+        );
+        assert_eq!(
+            next_free_id("20260923-120000", |c| c == "20260923-120000"),
+            "20260923-120000-2"
+        );
+        let taken = ["20260923-120000", "20260923-120000-2", "20260923-120000-3"];
+        assert_eq!(
+            next_free_id("20260923-120000", |c| taken.contains(&c)),
+            "20260923-120000-4"
+        );
+    }
+
+    /// Two snapshots started at the same moment, as two sandboxed migrations
+    /// in a row do: neither is in the index yet, and they must still get
+    /// different ids — and therefore different files.
+    #[test]
+    fn concurrent_reservations_never_share_an_id() {
+        let first = Reservation::new(&[]);
+        let second = Reservation::new(&[]);
+        let third = Reservation::new(&[]);
+        assert_ne!(first.id, second.id);
+        assert_ne!(second.id, third.id);
+        assert_ne!(first.id, third.id);
+        // An id already in the index is never handed out either.
+        let existing = Snapshot {
+            id: unique_id(),
+            engine: "mysql".into(),
+            database: "app".into(),
+            file: "x.sql".into(),
+            created: String::new(),
+            note: String::new(),
+            bytes: 0,
+        };
+        let fourth = Reservation::new(std::slice::from_ref(&existing));
+        assert_ne!(fourth.id, existing.id);
+    }
 
     #[test]
     fn index_roundtrip_and_remove() {

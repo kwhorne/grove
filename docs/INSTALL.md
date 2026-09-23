@@ -437,6 +437,11 @@ databases) and PostgreSQL (`--engine postgres`) snapshots are plain SQL dumps;
 an ElyraSQL snapshot (`--engine elyrasql`) is a hot, consistent copy of its
 single database file, taken while it serves.
 
+A MySQL restore puts each database in the snapshot back *exactly*. A table
+created after the snapshot is gone afterwards, not left beside the restored
+ones. Databases the snapshot does not contain are not touched, and MySQL's own
+system schemas never are.
+
 ### ElyraSQL
 
 [ElyraSQL](https://github.com/kwhorne/ElyraSQL) is a MySQL-compatible SQL

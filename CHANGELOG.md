@@ -45,6 +45,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   What it no longer guards is a root-privileged command surface, because there
   is not one.
 
+### Fixed
+
+- **`grove service start` said "started" for a server that had already died.**
+  A successful spawn is a process that exists, not a server that runs: mysqld
+  with no data directory, Postgres with a stale lock file or a port someone
+  else holds each exit within a second, after Grove had reported success. Start
+  now waits until the port accepts a connection, up to 30 seconds, and a server
+  that exits before that fails the command with its own error lines from the
+  log:
+
+  ```text
+  ✗ MySQL exited while starting (exit status: 1):
+    [ERROR] [MY-013276] Failed to set datadir to '…/services/mysql/data/' (OS errno: 2 - No such file or directory)
+    [ERROR] [MY-010119] Aborting
+  ```
+
+  A port that is already taken is refused before anything starts, naming what
+  holds it. Without that the readiness check would connect to the *other*
+  server and call this one up. The fixed 1.5 s sleep before a snapshot or
+  restore went too, since start now returns when the server is ready. That
+  was 0.35 s for MySQL here.
+- **Two snapshots in the same second overwrote each other.** Ids are
+  to-the-second timestamps, and the file name is built from the id, so the
+  second dump replaced the first on disk while the index kept both entries,
+  pointing at the same file under two notes. A sandboxed migration snapshots
+  before it runs, so two in a row was enough. A taken id now gets a `-2`, `-3`
+  suffix, reserved across concurrent requests.
+- **Restoring a MySQL snapshot left tables that were created after it.** A
+  `mysqldump --databases` file recreates the tables it holds and says nothing
+  about any others, so a restore after a migration that created `invoices`
+  still had `invoices`. That is the exact case the sandboxed-migration tool
+  snapshots for. Each database in the dump is now dropped and recreated on the
+  way in, so it comes back exactly as it was. MySQL's own system schemas are
+  never dropped, databases the dump does not contain are left alone, and
+  snapshots taken before this change get the same treatment because it happens
+  at restore time. Restoring an id that does not exist now says so, instead of
+  `unknown service "snapshot …"`.
+
 ## [1.8.0] — 2026-09-14
 
 The daemon stops being root. Binding a port below 1024 needs privilege;

@@ -22,6 +22,11 @@ use crate::catalog::{self, ServiceKind, ServiceSpec};
 pub enum ServiceError {
     #[error("unknown service {0:?}")]
     Unknown(String),
+    /// Not "unknown service": restoring an id that is not in the index used to
+    /// say `unknown service "snapshot 2026…"`, which sent people looking at the
+    /// wrong thing.
+    #[error("no snapshot with id {0:?} — `grove db list` shows the ones there are")]
+    NoSnapshot(String),
     #[error("no portable build of {0} for this platform")]
     Unsupported(String),
     #[error("service {0} is not installed")]
@@ -35,6 +40,159 @@ pub enum ServiceError {
 }
 
 pub type Result<T> = std::result::Result<T, ServiceError>;
+
+/// Load a `mysqldump` file so every database in it comes back exactly as it was.
+///
+/// A dump made with `--databases` or `--all-databases` recreates each table it
+/// holds (`DROP TABLE IF EXISTS`, then `CREATE`), but says nothing about tables
+/// that did not exist when it was taken. Restoring left those behind: roll back
+/// a migration that created `invoices` and `invoices` was still there, which is
+/// precisely the case the sandboxed-migration tool snapshots for. So each
+/// `CREATE DATABASE` in the dump is preceded, on the way in, by a `DROP
+/// DATABASE` of the same name — never for MySQL's own system schemas, and never
+/// for a database the dump does not contain. Snapshots taken before this change
+/// get the same treatment, because it happens at restore time.
+///
+/// Streamed rather than read into memory: a dump is as large as the data.
+pub fn restore_mysql_dump(bin: &std::path::Path, port: u16, sql: &std::path::Path) -> Result<()> {
+    use std::io::{BufRead, Write};
+    let mut child = std::process::Command::new(bin.join("mysql"))
+        .args(["-h", "127.0.0.1", "-P", &port.to_string(), "-u", "root"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    let mut reader = std::io::BufReader::new(std::fs::File::open(sql)?);
+    let mut stdin = child.stdin.take().expect("stdin was piped");
+    let mut line = Vec::new();
+    let fed: std::io::Result<()> = (|| loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(());
+        }
+        if let Some(name) = created_database(&line) {
+            if !is_system_schema(&name) {
+                writeln!(
+                    stdin,
+                    "DROP DATABASE IF EXISTS `{}`;",
+                    name.replace('`', "``")
+                )?;
+            }
+        }
+        stdin.write_all(&line)?;
+    })();
+    drop(stdin);
+    let out = child.wait_with_output()?;
+    // `mysql` stops at the first error and closes its input, which shows up
+    // here as a broken pipe; its own message on stderr is the one worth showing.
+    if !out.status.success() {
+        return Err(ServiceError::Init(format!(
+            "restore into MySQL failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    if let Err(e) = fed {
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            return Err(e.into());
+        }
+    }
+    Ok(())
+}
+
+/// The database a `mysqldump` `CREATE DATABASE` line creates, unquoted.
+///
+/// mysqldump writes `CREATE DATABASE /*!32312 IF NOT EXISTS*/ `name` …;` — the
+/// first backquoted identifier on the line, with any backquote inside it
+/// doubled.
+fn created_database(line: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(line).ok()?;
+    let rest = text.strip_prefix("CREATE DATABASE ")?;
+    let open = rest.find('`')?;
+    let mut name = String::new();
+    let mut chars = rest[open + 1..].chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '`' {
+            if chars.peek() == Some(&'`') {
+                chars.next();
+                name.push('`');
+            } else {
+                return Some(name);
+            }
+        } else {
+            name.push(c);
+        }
+    }
+    None
+}
+
+/// Schemas a restore must never drop, whatever a dump says.
+fn is_system_schema(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "mysql" | "sys" | "performance_schema" | "information_schema"
+    )
+}
+
+/// How long a bundled server gets to start accepting connections. MySQL after
+/// an unclean shutdown runs InnoDB recovery first, which is the slow case.
+const STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Does anything accept a TCP connection on `127.0.0.1:port`?
+fn port_accepts(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200)).is_ok()
+}
+
+/// The command and pid listening on `port`, if `lsof` can say.
+fn port_holder(port: u16) -> Option<String> {
+    let out = std::process::Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let pid = text.lines().find_map(|l| l.strip_prefix('p'))?;
+    let cmd = text.lines().find_map(|l| l.strip_prefix('c'))?;
+    Some(format!("{cmd} (pid {pid})"))
+}
+
+/// What a server wrote to its log during this start, reduced to the lines that
+/// explain a failure: its own error lines if it wrote any, else the last few.
+fn log_excerpt(log: &std::path::Path, from: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(log) else {
+        return String::new();
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    // At most the last 16 KiB of this run's output.
+    let start = from.max(len.saturating_sub(16 * 1024));
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return String::new();
+    }
+    let mut bytes = Vec::new();
+    let _ = f.read_to_end(&mut bytes);
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let errors: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|l| {
+            l.contains("[ERROR]")
+                || l.contains("FATAL")
+                || l.contains("# Fatal")
+                || l.starts_with("ERROR")
+        })
+        .collect();
+    let chosen: Vec<&str> = if errors.is_empty() {
+        lines.iter().rev().take(5).rev().copied().collect()
+    } else {
+        errors.into_iter().take(5).collect()
+    };
+    if chosen.is_empty() {
+        String::new()
+    } else {
+        format!(":\n  {}", chosen.join("\n  "))
+    }
+}
 
 /// Status projection surfaced to the CLI/GUI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -428,8 +586,9 @@ impl ServiceManager {
             )));
         }
         if !self.is_running(key) {
+            // `start` returns once the server accepts connections, so there is
+            // no fixed wait to guess at here any more.
             self.start(key)?;
-            std::thread::sleep(std::time::Duration::from_millis(1500));
         }
         let bin = self
             .bin_dir(spec)
@@ -507,18 +666,7 @@ impl ServiceManager {
     /// Restore an SQL dump into Grove's bundled MySQL.
     pub fn restore_mysql(&self, sql: &std::path::Path) -> Result<()> {
         let (bin, port) = self.db_ready("mysql")?;
-        let infile = std::fs::File::open(sql)?;
-        let out = std::process::Command::new(bin.join("mysql"))
-            .args(["-h", "127.0.0.1", "-P", &port.to_string(), "-u", "root"])
-            .stdin(infile)
-            .output()?;
-        if !out.status.success() {
-            return Err(ServiceError::Init(format!(
-                "restore into MySQL failed: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            )));
-        }
-        Ok(())
+        restore_mysql_dump(&bin, port, sql)
     }
 
     /// Dump a PostgreSQL database (self-contained, with CREATE/DROP) to `out`.
@@ -784,13 +932,24 @@ impl ServiceManager {
         let logf = securefs::create_public(&log)?;
         let port = self.effective_port(spec);
 
-        // Every service drops to the invoking user when the daemon is root, and
-        // its data dir goes with it. Redis used to be exempted — "happy as
-        // root" — but `redis-server` is fetched into `$GROVE_HOME`, which the
-        // user owns, so a root Redis meant replacing that binary was a root
-        // shell. Being happy as root is not a reason to be root.
+        // Something already answering on the port means this server will fail
+        // to bind — and worse, the readiness check below would connect to the
+        // *other* server and report this one as up. Say so before starting.
+        if port_accepts(port) {
+            return Err(ServiceError::Init(format!(
+                "port {port} is already in use{} — stop that server, or give {} another port with \
+                 `grove service port {key} <port>`",
+                port_holder(port)
+                    .map(|h| format!(" by {h}"))
+                    .unwrap_or_default(),
+                spec.name
+            )));
+        }
+        // Only this run's lines are worth quoting if it falls over; the log
+        // accumulates every start there has ever been.
+        let log_start = std::fs::metadata(&log).map(|m| m.len()).unwrap_or(0);
 
-        let child = match spec.kind {
+        let mut child = match spec.kind {
             ServiceKind::Postgres => {
                 let data = self.data_dir(spec);
                 let mut cmd = std::process::Command::new(bin.join("postgres"));
@@ -851,6 +1010,34 @@ impl ServiceManager {
                 cmd.spawn()?
             }
         };
+        // A spawn that succeeded is a process that exists, not a server that
+        // runs. mysqld with no data directory, Postgres with a stale lock file,
+        // Redis refusing its config — each exits within a second, and the old
+        // code had already said "started". Wait until the port answers, or the
+        // process dies and its own log says why.
+        let deadline = std::time::Instant::now() + STARTUP_TIMEOUT;
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Err(ServiceError::Init(format!(
+                    "{} exited while starting ({status}){}",
+                    spec.name,
+                    log_excerpt(&log, log_start)
+                )));
+            }
+            if port_accepts(port) {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!(
+                    service = key,
+                    port,
+                    "still not accepting connections after {}s; leaving it running",
+                    STARTUP_TIMEOUT.as_secs()
+                );
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         tracing::info!(service = key, port, "started service");
         // Recorded so a daemon that comes back after SIGKILL can find and stop
         // this process instead of spawning a second one on the same port.
@@ -1190,5 +1377,191 @@ hash redis-7.4.2.tar.gz sha256 4ddebbf09061cbb589011786febdb34f29767dd7f89dbe712
             catalog::archive_root(spec).as_deref(),
             Some(format!("redis-{}", spec.version).as_str())
         );
+    }
+}
+
+#[cfg(test)]
+mod honesty_tests {
+    use super::*;
+
+    #[test]
+    fn a_dump_create_database_line_names_its_database() {
+        assert_eq!(
+            created_database(
+                b"CREATE DATABASE /*!32312 IF NOT EXISTS*/ `shop` /*!40100 DEFAULT CHARACTER SET utf8mb4 */;\n"
+            ),
+            Some("shop".into())
+        );
+        assert_eq!(
+            created_database(b"CREATE DATABASE /*!32312 IF NOT EXISTS*/ `we``ird`;\n"),
+            Some("we`ird".into())
+        );
+        assert_eq!(created_database(b"USE `shop`;\n"), None);
+        assert_eq!(created_database(b"-- CREATE DATABASE `shop`\n"), None);
+        assert_eq!(
+            created_database(b"INSERT INTO t VALUES ('CREATE DATABASE `x`');\n"),
+            None
+        );
+    }
+
+    /// An `--all-databases` dump contains `CREATE DATABASE `mysql``. Dropping
+    /// that on restore would take the server's accounts with it.
+    #[test]
+    fn system_schemas_are_never_dropped() {
+        for name in [
+            "mysql",
+            "sys",
+            "performance_schema",
+            "information_schema",
+            "MySQL",
+        ] {
+            assert!(is_system_schema(name), "{name}");
+        }
+        assert!(!is_system_schema("shop"));
+    }
+
+    /// When a server falls over at start, its own error lines are the message
+    /// — not the lines from every earlier start, and not the noise around them.
+    #[test]
+    fn the_log_excerpt_is_this_runs_errors() {
+        let log = std::env::temp_dir().join(format!("grove-logx-{}.log", std::process::id()));
+        std::fs::write(&log, "old run [ERROR] something from last week\n").unwrap();
+        let from = std::fs::metadata(&log).unwrap().len();
+        std::fs::write(
+            &log,
+            "old run [ERROR] something from last week\n\
+             [System] starting\n\
+             [ERROR] [MY-013276] Failed to set datadir (OS errno: 2 - No such file or directory)\n\
+             [ERROR] [MY-010119] Aborting\n\
+             [System] Shutdown complete\n",
+        )
+        .unwrap();
+        let excerpt = log_excerpt(&log, from);
+        assert!(excerpt.contains("Failed to set datadir"), "{excerpt}");
+        assert!(excerpt.contains("Aborting"), "{excerpt}");
+        assert!(!excerpt.contains("last week"), "{excerpt}");
+        assert!(!excerpt.contains("starting"), "{excerpt}");
+
+        // No error lines at all: the tail is the next best thing.
+        std::fs::write(&log, "a\nb\nc\n").unwrap();
+        assert_eq!(log_excerpt(&log, 0), ":\n  a\n  b\n  c");
+        let _ = std::fs::remove_file(&log);
+    }
+
+    /// The negative half uses port 1, not the port just released: tests run in
+    /// parallel, and another one binding `127.0.0.1:0` can be handed the freed
+    /// port in the same instant — which failed this once in a full run. Port 1
+    /// needs root to bind, so nothing unprivileged is ever listening there.
+    #[test]
+    fn a_listening_port_is_seen_as_taken() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(port_accepts(port));
+        drop(listener);
+        assert!(!port_accepts(1));
+    }
+
+    /// Against a real MySQL (`GROVE_TEST_MYSQL_PORT`, and the client binaries
+    /// in `GROVE_TEST_MYSQL_BIN`): a table created after the snapshot is gone
+    /// after the restore, changed rows are back, and a database the dump does
+    /// not contain is left alone.
+    #[test]
+    fn a_restore_puts_the_database_back_exactly() {
+        let (Some(port), Some(bin)) = (
+            std::env::var("GROVE_TEST_MYSQL_PORT")
+                .ok()
+                .and_then(|p| p.parse::<u16>().ok()),
+            std::env::var("GROVE_TEST_MYSQL_BIN")
+                .ok()
+                .map(PathBuf::from),
+        ) else {
+            eprintln!("skipped: set GROVE_TEST_MYSQL_PORT and GROVE_TEST_MYSQL_BIN");
+            return;
+        };
+        let db = format!("grove_rt_{}", std::process::id());
+        let other = format!("grove_rt_other_{}", std::process::id());
+        let sql = |q: &str| {
+            let out = std::process::Command::new(bin.join("mysql"))
+                .args([
+                    "-h",
+                    "127.0.0.1",
+                    "-P",
+                    &port.to_string(),
+                    "-u",
+                    "root",
+                    "-N",
+                    "-e",
+                    q,
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{q}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        sql(&format!(
+            "DROP DATABASE IF EXISTS {db}; DROP DATABASE IF EXISTS {other};
+             CREATE DATABASE {db}; CREATE TABLE {db}.users (id INT PRIMARY KEY, name VARCHAR(20));
+             INSERT INTO {db}.users VALUES (1,'ada'),(2,'bob');
+             CREATE DATABASE {other}; CREATE TABLE {other}.keep (id INT);"
+        ));
+        let dump = std::env::temp_dir().join(format!("grove-rt-{}.sql", std::process::id()));
+        let status = std::process::Command::new(bin.join("mysqldump"))
+            .args(["-h", "127.0.0.1", "-P", &port.to_string(), "-u", "root"])
+            .args([
+                "--single-transaction",
+                "--no-tablespaces",
+                "--column-statistics=0",
+                "--databases",
+                &db,
+            ])
+            .stdout(std::fs::File::create(&dump).unwrap())
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        // What a migration does after the snapshot.
+        sql(&format!(
+            "CREATE TABLE {db}.invoices (id INT); UPDATE {db}.users SET name='changed'; \
+             DELETE FROM {db}.users WHERE id=2;"
+        ));
+
+        restore_mysql_dump(&bin, port, &dump).unwrap();
+        assert_eq!(
+            sql(&format!(
+                "SELECT GROUP_CONCAT(table_name) FROM information_schema.tables WHERE table_schema='{db}'"
+            )),
+            "users",
+            "the table created after the snapshot must be gone"
+        );
+        assert_eq!(
+            sql(&format!(
+                "SELECT GROUP_CONCAT(name ORDER BY id) FROM {db}.users"
+            )),
+            "ada,bob"
+        );
+        assert_eq!(
+            sql(&format!(
+                "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='{other}'"
+            )),
+            "1",
+            "a database the dump does not contain is not touched"
+        );
+
+        // A dump that fails part-way reports failure, not success.
+        std::fs::write(
+            &dump,
+            format!("CREATE DATABASE `{db}`;\nTHIS IS NOT SQL;\n"),
+        )
+        .unwrap();
+        assert!(restore_mysql_dump(&bin, port, &dump).is_err());
+
+        sql(&format!(
+            "DROP DATABASE IF EXISTS {db}; DROP DATABASE IF EXISTS {other};"
+        ));
+        let _ = std::fs::remove_file(&dump);
     }
 }
