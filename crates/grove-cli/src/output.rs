@@ -130,17 +130,32 @@ pub fn print_response(resp: &Response, json: bool) {
         }
         Some(ResponseData::Services(svcs)) => {
             println!(
-                "{:<12} {:<14} {:<10} {:<9} PORT",
-                "SERVICE", "CATEGORY", "INSTALLED", "RUNNING"
+                "{:<12} {:<14} {:<10} {:<9} {:<6} MODE",
+                "SERVICE", "CATEGORY", "INSTALLED", "RUNNING", "PORT"
             );
             for s in svcs {
+                // An idle on-demand server is not "not running" in any sense
+                // that matters to a client: the port answers, and the server
+                // starts behind it.
+                let running = match (s.running, s.on_demand) {
+                    (true, _) => "yes",
+                    (false, true) => "idle",
+                    (false, false) => "no",
+                };
+                let mode = match (s.on_demand, s.idle_secs) {
+                    (true, Some(secs)) => format!("on demand, stops after {}", idle_text(secs)),
+                    (true, None) => "on demand".to_string(),
+                    (false, _) if s.installed => "always".to_string(),
+                    (false, _) => String::new(),
+                };
                 println!(
-                    "{:<12} {:<14} {:<10} {:<9} {}",
+                    "{:<12} {:<14} {:<10} {:<9} {:<6} {}",
                     s.name,
                     s.category,
                     if s.installed { "yes" } else { "no" },
-                    if s.running { "yes" } else { "no" },
-                    s.port
+                    running,
+                    s.port,
+                    mode
                 );
             }
         }
@@ -570,5 +585,14 @@ fn human_bytes(n: u64) -> String {
         format!("{n} B")
     } else {
         format!("{size:.1} {}", UNITS[unit])
+    }
+}
+
+/// `10m idle`, `90s idle` — for the MODE column.
+fn idle_text(secs: u64) -> String {
+    match secs {
+        s if s >= 3600 && s % 3600 == 0 => format!("{}h idle", s / 3600),
+        s if s >= 60 && s % 60 == 0 => format!("{}m idle", s / 60),
+        s => format!("{s}s idle"),
     }
 }

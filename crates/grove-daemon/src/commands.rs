@@ -665,9 +665,72 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 .services
                 .set_port(&key, port)
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            // On demand, the port is the front's, not the server's: move the
+            // listener now rather than on some later restart.
+            if state.fronts.is_open(&key).await {
+                state.fronts.close(&key).await;
+                state.fronts.open(state.services.clone(), &key).await?;
+                return Ok(Response::ok(ResponseData::Message(format!(
+                    "{key} now answers on port {port} (on demand)"
+                ))));
+            }
             Ok(Response::ok(ResponseData::Message(format!(
                 "{key} port set to {port} (restart the service to apply)"
             ))))
+        }
+        Request::ServiceOnDemand { key, idle_secs } => {
+            let services = state.services.clone();
+            let installed = services
+                .status_all()
+                .into_iter()
+                .find(|s| s.key == key)
+                .map(|s| s.installed)
+                .ok_or_else(|| anyhow::anyhow!("unknown service {key}"))?;
+            match idle_secs {
+                Some(secs) => {
+                    if !installed {
+                        anyhow::bail!(
+                            "{key} is not installed — `grove service install {key}` first"
+                        );
+                    }
+                    let was_on = services.is_on_demand(&key);
+                    services
+                        .set_on_demand(&key, Some(std::time::Duration::from_secs(secs)))
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    let port = state.fronts.open(services.clone(), &key).await?;
+                    Ok(Response::ok(ResponseData::Message(if was_on {
+                        format!("{key} stops after {} idle now", human_secs(secs))
+                    } else {
+                        format!(
+                            "{key} now starts on the first connection to :{port} and stops after \
+                             {} with nothing connected",
+                            human_secs(secs)
+                        )
+                    })))
+                }
+                None => {
+                    if !services.is_on_demand(&key) {
+                        return Ok(Response::ok(ResponseData::Message(format!(
+                            "{key} is not in on-demand mode"
+                        ))));
+                    }
+                    // Give the port back, stop the server behind the front
+                    // (it listens on an internal port), and start it the
+                    // ordinary way on the public one.
+                    state.fronts.close(&key).await;
+                    let (s, k) = (services.clone(), key.clone());
+                    tokio::task::spawn_blocking(move || -> grove_services::manager::Result<()> {
+                        s.suspend(&k)?;
+                        s.set_on_demand(&k, None)?;
+                        s.start(&k)
+                    })
+                    .await?
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    Ok(Response::ok(ResponseData::Message(format!(
+                        "{key} runs all the time again"
+                    ))))
+                }
+            }
         }
 
         Request::Reload => {
@@ -1503,4 +1566,13 @@ async fn doctor(state: &Arc<DaemonState>) -> Vec<DiagnosticEntry> {
     out.push(entry);
 
     out
+}
+
+/// `10m`, `90s`, `2h` — for messages, not parsing.
+fn human_secs(secs: u64) -> String {
+    match secs {
+        s if s >= 3600 && s % 3600 == 0 => format!("{}h", s / 3600),
+        s if s >= 60 && s % 60 == 0 => format!("{}m", s / 60),
+        s => format!("{s}s"),
+    }
 }

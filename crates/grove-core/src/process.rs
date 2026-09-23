@@ -120,6 +120,42 @@ pub fn terminate(pid: u32, grace: std::time::Duration) -> bool {
     !is_alive(pid)
 }
 
+/// Stop a process *this* process spawned: `SIGTERM`, up to `grace` to exit,
+/// then `SIGKILL`. Reaps it either way.
+///
+/// Not [`terminate`], for a reason that cost fourteen seconds per stop: a
+/// child that has exited stays a zombie until its parent waits for it, and a
+/// zombie still answers `kill(pid, 0)`. So `terminate` on our own child always
+/// sat out its whole grace period after a clean exit — while whoever called it
+/// held a lock the next connection was waiting on. With the `Child` in hand,
+/// `try_wait` both notices the exit and reaps it.
+#[cfg(unix)]
+pub fn terminate_child(child: &mut std::process::Child, grace: std::time::Duration) -> bool {
+    // SAFETY: signalling a process we spawned and have not yet reaped, so the
+    // pid cannot have been reused.
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    let deadline = std::time::Instant::now() + grace;
+    while std::time::Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(25)),
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    false
+}
+
+#[cfg(not(unix))]
+pub fn terminate_child(child: &mut std::process::Child, _grace: std::time::Duration) -> bool {
+    let _ = child.kill();
+    let _ = child.wait();
+    false
+}
+
 #[cfg(not(unix))]
 pub fn terminate(_pid: u32, _grace: std::time::Duration) -> bool {
     false
@@ -305,5 +341,47 @@ mod tests {
             "files outside the prefix are untouched"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod terminate_child_tests {
+    use super::*;
+
+    /// A child that exits on SIGTERM is noticed — and reaped — at once, not
+    /// after the grace period. The regression was a clean MySQL shutdown that
+    /// still took fifteen seconds to be believed.
+    #[test]
+    fn a_child_that_exits_on_sigterm_is_reaped_at_once() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        assert!(terminate_child(
+            &mut child,
+            std::time::Duration::from_secs(10)
+        ));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert!(child.try_wait().unwrap().is_some(), "reaped, not a zombie");
+    }
+
+    /// One that ignores SIGTERM is killed when the grace period runs out.
+    #[test]
+    fn a_child_that_ignores_sigterm_is_killed_after_the_grace() {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "trap '' TERM; sleep 30"])
+            .spawn()
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(!terminate_child(
+            &mut child,
+            std::time::Duration::from_millis(300)
+        ));
+        assert!(child.try_wait().unwrap().is_some());
     }
 }

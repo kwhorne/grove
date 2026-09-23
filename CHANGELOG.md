@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Databases that run only while something is connected.**
+  `grove service on-demand mysql on` hands the port to the daemon. The server
+  does not run until the first connection arrives, starts behind that
+  connection, and stops cleanly once nothing has been connected for the idle
+  period (default 10 minutes, `--idle 30m`). Measured here, an idle MySQL that
+  sat at 517 MB went to nothing. The first connection after it stopped was
+  answered in 0.35 s including the server start, and every later query ran as
+  before. Twenty clients hitting an idle server at the same moment got twenty
+  answers from one start. The mode survives a daemon restart. Autostart leaves
+  on-demand servers alone and the port is held from the moment the daemon is
+  up. Works for MySQL, PostgreSQL, ElyraSQL and Redis. `grove service list`
+  shows `idle` for a stopped on-demand server and the mode in a new column.
+
+  Every client goes through the daemon, which is what makes the idle decision
+  sound: its count of open connections is the count of clients. For the same
+  reason the server's unix socket moves to a private name in this mode and
+  none is advertised. A client on the socket would go uncounted and be cut off
+  when the server went idle. None of the 90 projects on the machine this was
+  built on connect that way. Grove's own snapshots, restores and
+  branch-database switches go through the same port, so they start the server
+  when they need it. An idle server is stopped with `SIGTERM` and fifteen
+  seconds to finish, not `SIGKILL`, so MySQL shuts down clean and does not
+  replay its redo log on the next start. `grove service on-demand mysql off`
+  gives the port back and runs the server all the time again.
+
 - **A database per git branch.** `grove db branches on` in a project, and
   checking out a branch swaps in that branch's database: a feature branch's
   migrations no longer land in `main`'s tables, and going back to `main` brings

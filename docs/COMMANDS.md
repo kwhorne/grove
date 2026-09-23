@@ -235,6 +235,7 @@ signature over `SHASUMS256.txt` — and Grove does not check that yet.
 | `grove service install <key>` | Download + initialise a service (`postgres`, `mysql`, `elyrasql`, `redis`). |
 | `grove service start\|stop\|restart <key>` | Control a service. |
 | `grove service port <key> <port>` | Override a service's listen port. |
+| `grove service on-demand <key> on\|off [--idle 10m]` | Run a service only while something is connected: Grove holds the port, starts the server on the first connection and stops it after the idle period. |
 | `grove env [site]` | Print a `.env` snippet for the bundled services. |
 
 ## Reproducible environments (`grove.toml`)
