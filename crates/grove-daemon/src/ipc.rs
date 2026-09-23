@@ -3,10 +3,15 @@
 //!
 //! # Who is allowed to talk to the daemon
 //!
-//! The daemon usually runs as **root** (it binds 80/443/53), and its request
-//! surface is not advisory: `PhpInstall`, `ServiceInstall`, `DbDumpFile` and
-//! `RestartDaemon` all make root do work on the caller's behalf. So the socket
-//! is an authorization boundary, and it is enforced twice:
+//! This used to be a privilege boundary. The daemon ran as **root**, and
+//! `PhpInstall`, `ServiceInstall`, `DbDumpFile` and `RestartDaemon` all made
+//! root do work on the caller's behalf, so getting the socket wrong meant
+//! handing local code a root-privileged command surface.
+//!
+//! Since 1.8.0 the daemon runs as the login user, so crossing this socket
+//! gains that user nothing they did not already have. What it still does is
+//! keep *other* local users out — a shared machine, another account's runaway
+//! script — and that is worth keeping, so it is still enforced twice:
 //!
 //! 1. **File mode.** The socket is `0660`, owned by the user Grove serves — not
 //!    the `0777` it used to be. The kernel turns away everyone else before a
@@ -18,9 +23,8 @@
 //!    with a different umask, and they say nothing on a filesystem mounted
 //!    without permission support.
 //!
-//! Being on the same machine is not authorization. Without this, any local
-//! process — a compromised `npm`/`composer` postinstall hook, or a served PHP
-//! app itself — could hand a root daemon arbitrary work.
+//! Being on the same machine is not authorization: another user's process has
+//! no business restarting your daemon or dumping your databases.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -475,7 +479,7 @@ mod tests {
         // A policy that trusts nobody but root. As root there is no
         // unauthorized peer to be — root is always permitted, by design — so
         // under a root test run (a container) this proves nothing and skips.
-        if grove_core::privdrop::running_as_root() {
+        if grove_core::ownership::running_as_root() {
             eprintln!("skipped: runs as root, and root is always authorized");
             return;
         }

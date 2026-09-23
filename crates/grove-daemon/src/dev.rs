@@ -79,7 +79,6 @@ impl DevManager {
             anyhow::bail!("{} has no local project directory", site.name);
         }
 
-        let ids = drop_ids();
         let is_laravel = site.path.join("artisan").is_file();
         let node = resolve_node(paths, site.node.as_deref());
         // Only resolve (and possibly download) a PHP CLI for projects that can
@@ -97,9 +96,8 @@ impl DevManager {
                 let php_bin = php_bin.clone();
                 let project = site.path.clone();
                 let node_bin = node.as_ref().map(|(_, dir)| dir.clone());
-                let ids = ids.clone();
                 tokio::task::spawn_blocking(move || {
-                    discover_dev_specs(&project, &php_bin, node_bin.as_deref(), ids)
+                    discover_dev_specs(&project, &php_bin, node_bin.as_deref())
                 })
                 .await
                 .ok()
@@ -110,9 +108,9 @@ impl DevManager {
 
         let procs = match declared {
             Some(specs) if !specs.is_empty() => {
-                spawn_declared(specs, site, paths, node.as_ref(), php.as_deref(), &ids)?
+                spawn_declared(specs, site, paths, node.as_ref(), php.as_deref())?
             }
-            _ => spawn_builtin(site, paths, node.as_ref(), php.as_deref(), &ids)?,
+            _ => spawn_builtin(site, paths, node.as_ref(), php.as_deref())?,
         };
 
         if procs.is_empty() {
@@ -268,12 +266,7 @@ fn is_node_runner(bin: &str) -> bool {
 /// fails to boot, or the output isn't parseable — callers then fall back to
 /// Grove's own heuristic. `stdin` is null, so `dev:list` can never block on a
 /// prompt, and it emits JSON for non-interactive input regardless of `--json`.
-fn discover_dev_specs(
-    project: &Path,
-    php: &Path,
-    node_bin: Option<&Path>,
-    ids: Option<(u32, u32, String)>,
-) -> Option<Vec<DevSpec>> {
+fn discover_dev_specs(project: &Path, php: &Path, node_bin: Option<&Path>) -> Option<Vec<DevSpec>> {
     let mut cmd = Command::new(php);
     cmd.args([
         "artisan",
@@ -291,9 +284,7 @@ fn discover_dev_specs(
     if let Some(dir) = node_bin {
         prepend_path(&mut cmd, dir);
     }
-    // Run as the invoking user: booting artisan as root would leave root-owned
-    // files in bootstrap/cache and storage/logs.
-    apply_env(&mut cmd, ids);
+    apply_env(&mut cmd);
 
     let out = cmd.output().ok()?;
     if !out.status.success() {
@@ -335,7 +326,6 @@ fn spawn_declared(
     paths: &GrovePaths,
     node: Option<&(PathBuf, PathBuf)>,
     php: Option<&Path>,
-    ids: &Option<(u32, u32, String)>,
 ) -> anyhow::Result<Vec<DevProc>> {
     let mut procs = Vec::new();
 
@@ -386,14 +376,14 @@ fn spawn_declared(
             prepend_path(&mut cmd, bin_dir);
         }
         if node_runner && site.secure {
-            if let Some((crt, key)) = ensure_vite_tls(paths, &site.hostname, ids) {
+            if let Some((crt, key)) = ensure_vite_tls(paths, &site.hostname) {
                 cmd.env("VITE_DEV_SERVER_CERT", &crt);
                 cmd.env("VITE_DEV_SERVER_KEY", &key);
             }
         }
         set_logs(&mut cmd, &log)?;
         new_process_group(&mut cmd);
-        apply_env(&mut cmd, ids.clone());
+        apply_env(&mut cmd);
         procs.push(DevProc {
             name: spec.name,
             child: cmd.spawn()?,
@@ -410,7 +400,6 @@ fn spawn_builtin(
     paths: &GrovePaths,
     node: Option<&(PathBuf, PathBuf)>,
     php: Option<&Path>,
-    ids: &Option<(u32, u32, String)>,
 ) -> anyhow::Result<Vec<DevProc>> {
     let mut procs = Vec::new();
 
@@ -426,14 +415,14 @@ fn spawn_builtin(
                 // Laravel/Herd/Valet vite configs look, so Vite serves HTTPS
                 // (no mixed-content) with a browser-trusted cert.
                 if site.secure {
-                    if let Some((crt, key)) = ensure_vite_tls(paths, &site.hostname, ids) {
+                    if let Some((crt, key)) = ensure_vite_tls(paths, &site.hostname) {
                         cmd.env("VITE_DEV_SERVER_CERT", &crt);
                         cmd.env("VITE_DEV_SERVER_KEY", &key);
                     }
                 }
                 set_logs(&mut cmd, &log)?;
                 new_process_group(&mut cmd);
-                apply_env(&mut cmd, ids.clone());
+                apply_env(&mut cmd);
                 procs.push(DevProc {
                     name: "vite".into(),
                     child: cmd.spawn()?,
@@ -457,7 +446,7 @@ fn spawn_builtin(
                 .current_dir(&site.path);
             set_logs(&mut cmd, &log)?;
             new_process_group(&mut cmd);
-            apply_env(&mut cmd, ids.clone());
+            apply_env(&mut cmd);
             procs.push(DevProc {
                 name: "queue".into(),
                 child: cmd.spawn()?,
@@ -569,39 +558,25 @@ fn resolve_php_cli(paths: &GrovePaths, version: &str) -> Option<PathBuf> {
 /// (cert, key) paths. Fed to Vite via the standard `VITE_DEV_SERVER_CERT` /
 /// `VITE_DEV_SERVER_KEY` env vars that `laravel-vite-plugin` reads natively —
 /// no Herd/Valet involvement.
-fn ensure_vite_tls(
-    paths: &GrovePaths,
-    hostname: &str,
-    ids: &Option<(u32, u32, String)>,
-) -> Option<(String, String)> {
+fn ensure_vite_tls(paths: &GrovePaths, hostname: &str) -> Option<(String, String)> {
     let ca = grove_tls::CertificateAuthority::load_or_create(paths).ok()?;
     let (cert_pem, key_pem) = ca.issue_leaf(&[hostname.to_string()]).ok()?;
     let dir = paths.certs_dir().join("dev");
     std::fs::create_dir_all(&dir).ok()?;
     let crt = dir.join(format!("{hostname}.crt"));
     let key = dir.join(format!("{hostname}.key"));
-    // These went out at the process umask with no `chmod` at all, so a root
-    // daemon left a TLS private key world-readable. `write_private` gives it
-    // 0600 from creation and refuses to write through a symlink.
+    // These went out at the process umask with no `chmod` at all, which left a
+    // TLS private key world-readable. `write_private` gives it 0600 from
+    // creation and refuses to write through a symlink.
     grove_core::securefs::write_public(&crt, &cert_pem).ok()?;
     grove_core::securefs::write_private(&key, &key_pem).ok()?;
-    // The Vite process runs as the invoking user; let it read the files. 0600
-    // plus this chown means only that user can, which is the point.
-    chown_path(&crt, ids);
-    chown_path(&key, ids);
+    // 0600 and owned by us, which is the user Vite will run as — the daemon
+    // and the dev process are the same person now, so there is nobody to hand
+    // them to.
     Some((
         crt.to_string_lossy().into_owned(),
         key.to_string_lossy().into_owned(),
     ))
-}
-
-fn chown_path(path: &Path, ids: &Option<(u32, u32, String)>) {
-    if let Some((_, _, user)) = ids {
-        let _ = std::process::Command::new("chown")
-            .arg(user)
-            .arg(path)
-            .status();
-    }
 }
 
 fn set_logs(cmd: &mut Command, log: &Path) -> std::io::Result<()> {
@@ -682,23 +657,36 @@ fn prepend_path(cmd: &mut Command, dir: &Path) {
     cmd.env("PATH", format!("{}:{base}", dir.display()));
 }
 
-// ---- run as the invoking user (the daemon may be root) --------------------
+// ---- environment for spawned dev processes --------------------------------
 
-fn running_as_root() -> bool {
-    #[cfg(unix)]
-    {
-        extern "C" {
-            #[link_name = "geteuid"]
-            fn geteuid() -> u32;
-        }
-        unsafe { geteuid() == 0 }
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
+/// Point `HOME` and `USER` at the person the daemon serves, so npm and PHP
+/// caches land in their home rather than wherever the service manager started
+/// us from.
+///
+/// This used to do a great deal more. The daemon was root, so every dev
+/// process — Vite, a queue worker, `php artisan` — had to `setgroups`,
+/// `setgid` and `setuid` down before `exec`, and this file held the third
+/// hand-rolled copy of that sequence. Since 1.8.0 the daemon is the login user
+/// and refuses to start as root, so the identity is already right and only the
+/// environment needs saying.
+fn apply_env(cmd: &mut Command) {
+    let Some(user) = run_user() else {
+        return;
+    };
+    let home = if cfg!(target_os = "macos") {
+        format!("/Users/{user}")
+    } else {
+        format!("/home/{user}")
+    };
+    cmd.env("HOME", home).env("USER", &user);
 }
 
+/// The person the daemon serves, for `HOME` and `USER`.
+///
+/// `GROVE_RUN_USER` is written into the service unit by `grove install`;
+/// `SUDO_USER` covers a daemon started by hand from a `sudo` shell. Falling
+/// back to the process's own `USER` would be wrong in neither case and right
+/// in neither, so it does not.
 fn run_user() -> Option<String> {
     for var in ["GROVE_RUN_USER", "SUDO_USER"] {
         if let Ok(u) = std::env::var(var) {
@@ -708,46 +696,6 @@ fn run_user() -> Option<String> {
         }
     }
     None
-}
-
-fn drop_ids() -> Option<(u32, u32, String)> {
-    if !running_as_root() {
-        return None;
-    }
-    let user = run_user()?;
-    let uid = id_of(&["-u", &user])?;
-    let gid = id_of(&["-g", &user])?;
-    Some((uid, gid, user))
-}
-
-fn id_of(args: &[&str]) -> Option<u32> {
-    let out = std::process::Command::new("id").args(args).output().ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).trim().parse().ok())
-        .flatten()
-}
-
-/// Drop to the run user and point HOME at their home, so npm/php caches land in
-/// the right place. No-op when not root.
-///
-/// The drop itself is `grove_core::privdrop`, which is where the third copy of
-/// this `setgroups`/`setgid`/`setuid` sequence used to live. All three ignored
-/// whether `setgroups` succeeded, so a failure left the child holding root's
-/// supplementary groups after its uid and gid had come down. The username is
-/// still resolved here because only this caller needs it — for `HOME`, not for
-/// the drop.
-fn apply_env(cmd: &mut Command, ids: Option<(u32, u32, String)>) {
-    let Some((uid, gid, user)) = ids else {
-        return;
-    };
-    let home = if cfg!(target_os = "macos") {
-        format!("/Users/{user}")
-    } else {
-        format!("/home/{user}")
-    };
-    cmd.env("HOME", home).env("USER", &user);
-    grove_core::privdrop::apply(cmd, Some(grove_core::privdrop::RunAs { uid, gid }));
 }
 
 #[cfg(test)]
@@ -894,10 +842,11 @@ mod tests {
         assert!(!is_php_binary("node"));
     }
 
-    /// `new_process_group` and `apply_env` both register a `pre_exec` closure.
-    /// The root code path relies on std running *both*, in order, after fork —
-    /// so verify the chaining itself, which is the part that could silently drop
-    /// the `setpgid` call.
+    /// `new_process_group` registers a `pre_exec` closure, and it must survive
+    /// another one being registered after it: std runs them in order after
+    /// fork, and a second hook that replaced rather than followed the first
+    /// would silently lose the `setpgid` call and with it the ability to stop a
+    /// whole dev process tree.
     #[test]
     #[cfg(unix)]
     fn process_group_survives_a_second_pre_exec_hook() {
@@ -920,7 +869,7 @@ mod tests {
         cmd.args(["-c", report]);
         cmd.stdout(std::process::Stdio::piped());
         new_process_group(&mut cmd);
-        // Stand in for `apply_env`'s hook, registered after ours.
+        // A second hook, registered after ours.
         let flag = Arc::clone(&ran_second);
         unsafe {
             cmd.pre_exec(move || {

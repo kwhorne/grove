@@ -33,7 +33,7 @@ static ENV: Mutex<()> = Mutex::new(());
 const NOBODY: u32 = 65534;
 
 fn is_root() -> bool {
-    grove_core::privdrop::running_as_root()
+    grove_core::ownership::running_as_root()
 }
 
 fn scratch(name: &str) -> GrovePaths {
@@ -54,7 +54,7 @@ fn with_run_user<T>(ids: Option<(u32, u32)>, body: impl FnOnce() -> T) -> T {
             std::env::remove_var("GROVE_RUN_GROUP_ID");
         }
     }
-    // `privdrop::named_from_env` falls back to these, which would defeat the
+    // `ownership::named_from_env` falls back to these, which would defeat the
     // "nothing recorded" case on a machine where they happen to be set.
     std::env::remove_var("GROVE_RUN_USER");
     std::env::remove_var("SUDO_USER");

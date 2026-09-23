@@ -10,7 +10,6 @@ use std::process::Child;
 use std::sync::Mutex;
 
 use grove_core::paths::GrovePaths;
-use grove_core::privdrop;
 use grove_proxy::fastcgi::FpmAddr;
 use grove_proxy::FpmLocator;
 
@@ -186,24 +185,18 @@ impl FpmManager {
             .ok_or_else(|| FpmError::UnknownVersion(version.to_string()))?;
 
         self.paths.ensure()?;
-        // Who the pool will run as, decided once so the config, the paths and
-        // the spawn cannot disagree.
-        let run_as = privdrop::target();
 
         let socket = self.socket_path(version);
         std::fs::create_dir_all(self.fpm_run_dir())?;
         let _ = std::fs::remove_file(&socket);
         let log = self.paths.logs_dir().join(format!("php-fpm-{version}.log"));
-        // A dropped master still has to write its socket, pid file and error
-        // log, all of which live in directories the root daemon created. Hand it
-        // the pieces it owns; without this the drop turns into a pool that
-        // cannot start, which looks like a bug rather than a permission.
-        privdrop::own_path(&self.fpm_run_dir(), run_as);
+        // The pool's socket, pid file and error log all live in directories
+        // this process created and owns, because this process is the user the
+        // pool will run as. There is nothing to hand over any more.
         if let Ok(f) = grove_core::securefs::create_public(&log) {
             drop(f);
-            privdrop::own_path(&log, run_as);
         }
-        let conf = self.write_pool_config(version, &socket, &log, run_as)?;
+        let conf = self.write_pool_config(version, &socket, &log)?;
 
         tracing::info!(version, binary = %build.fpm_binary.display(), "spawning PHP-FPM pool");
         // When debug mode is on, load Xdebug via `-d` INI overrides (Zend
@@ -237,22 +230,11 @@ impl FpmManager {
         let mut cmd = std::process::Command::new(&build.fpm_binary);
         cmd.arg("--nodaemonize").arg("--fpm-config").arg(&conf);
         xdebug::apply_dargs(&mut cmd, &xdebug_entries);
-        if run_as.is_some() {
-            // The master drops with the workers, so it never execs
-            // `build.fpm_binary` as root — and that path comes from
-            // `php-builds.json` in a user-writable tree, which is the whole
-            // point. `--allow-to-run-as-root` is then unnecessary.
-            privdrop::apply(&mut cmd, run_as);
-        } else if privdrop::running_as_root() {
-            // We are root but cannot tell who to become. Keep the old
-            // behaviour rather than refusing to serve: php-fpm will not start as
-            // root without this, and the pool config drops the workers.
-            tracing::warn!(
-                "running the PHP-FPM master as root: no run user is known \
-                 (re-run `sudo grove install` to record one)"
-            );
-            cmd.arg("--allow-to-run-as-root");
-        }
+        // No `--allow-to-run-as-root`, and nothing to drop: the daemon is the
+        // login user and refuses to start as root, so the master php-fpm
+        // inherits an unprivileged identity. `build.fpm_binary` comes from
+        // `php-builds.json` in a tree that same user can write, which was
+        // exactly why exec'ing it as root had to be prevented.
         let child = cmd.spawn()?;
 
         // Give FPM a moment to create its listen socket.
@@ -279,7 +261,6 @@ impl FpmManager {
         version: &str,
         socket: &std::path::Path,
         log: &std::path::Path,
-        run_as: Option<privdrop::RunAs>,
     ) -> Result<PathBuf, FpmError> {
         let conf_path = self
             .paths
@@ -288,15 +269,9 @@ impl FpmManager {
         let pid = self
             .fpm_run_dir()
             .join(format!("php-fpm-{}.pid", version.replace('.', "_")));
-        // `user`/`listen.owner` only mean anything to a master running as root.
-        // When the master itself drops they are ignored, and php-fpm says so in
-        // a NOTICE on every pool start — so only emit them for the fallback
-        // path, where the master really is root and the workers still need to
-        // come down.
-        let user_directives = match (run_as, privdrop::running_as_root(), target_user()) {
-            (None, true, Some(user)) => format!("user = {user}\nlisten.owner = {user}\n"),
-            _ => String::new(),
-        };
+        // No `user` / `listen.owner`: those only mean anything to a master
+        // running as root, and php-fpm emits a NOTICE on every pool start when
+        // it is given them and cannot use them. The master is the login user.
         let body = format!(
             r#"[global]
 pid = {pid}
@@ -307,7 +282,7 @@ log_limit = 8192
 [grove]
 listen = {socket}
 listen.mode = 0660
-{user_directives}pm = ondemand
+pm = ondemand
 pm.max_children = 16
 pm.process_idle_timeout = 10s
 pm.max_requests = 500
@@ -328,24 +303,10 @@ php_value[max_execution_time] = 300
             pid = pid.display(),
             log = log.display(),
             socket = socket.display(),
-            user_directives = user_directives,
         );
         std::fs::write(&conf_path, body)?;
         Ok(conf_path)
     }
-}
-
-/// The real user to run PHP workers as when the daemon is root. Prefers an
-/// explicit `GROVE_RUN_USER` (set by the service installer), else `SUDO_USER`.
-fn target_user() -> Option<String> {
-    for var in ["GROVE_RUN_USER", "SUDO_USER"] {
-        if let Ok(u) = std::env::var(var) {
-            if !u.is_empty() && u != "root" {
-                return Some(u);
-            }
-        }
-    }
-    None
 }
 
 impl FpmLocator for FpmManager {
