@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-09-23
+
+Two things Grove can do because it runs your databases, not just points at
+them. Each git branch can have its own database, swapped in when you check the
+branch out. A database can also run only while something is connected: an idle
+MySQL that sat at 500–700 MB costs nothing until the next query, and that query
+waits a third of a second. Around those, the root code path that 1.8.0 made
+unnecessary is gone, and three places that reported success for something that
+had not happened now report what did.
+
+### Upgrade notes
+
+- **The daemon now refuses to run as root.** 1.8.0 moved it to your user; 1.9.0
+  deletes the machinery that let a root daemon run safely, so a root daemon
+  would start PHP-FPM and your databases as root out of a directory you can
+  write. If you updated to 1.8.0 and ran `sudo grove install` afterwards,
+  nothing changes. If you did not — including coming straight from 1.7.x — the
+  daemon stops at startup with:
+
+  ```text
+  Error: the Grove daemon will not run as root.
+  … Run `sudo grove install` to rewrite the service so it starts as you.
+  ```
+
+  Run `sudo grove install` once and it starts. Nothing else needs doing: your
+  sites, databases and certificates are where they were.
+- **On-demand and branch databases are opt-in.** Nothing about an existing
+  service or database changes until you run `grove service on-demand <key> on`
+  or `grove db branches on`.
+
 ### Added
 
 - **Databases that run only while something is connected.**
@@ -85,6 +115,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Dependencies:** rustls 0.23.45 with rustls-webpki 0.103.15, the verifier
+  the CA name-constraint tests run against, which passed on the new version.
+  hickory-dns 0.26.3 fixes regressions from 0.26.2 in DNSSEC validation and
+  delegation. Also vite 8.3.0 in the app's frontend and clap 4.6.7.
 - **The daemon refuses to start as root**, naming `sudo grove install` as the
   fix, and exits non-zero so the service manager does not treat it as a
   successful start. It has no use for privilege — launchd and systemd hand it
