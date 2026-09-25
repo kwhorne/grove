@@ -147,6 +147,38 @@ So you can safely ask: *"Add the migration for the `invoices` table and apply it
 *"Backfill `users.status` to 'active' where it's null — but roll back so I can
 review first."*
 
+### Sandboxes: a whole running copy to work in
+
+The snapshot tools protect *your* database while an agent changes it. A sandbox
+goes further: the agent never touches your checkout or your database at all.
+
+| Tool | What it does |
+| --- | --- |
+| `grove_sandbox_open` | Makes a **new branch** from the site's current commit (or checks out an existing one with `existing: true`) in a separate git worktree, gives it its **own copy of the database**, runs `composer install` and the migrations, and serves it at its own HTTPS URL. |
+| `grove_sandbox_close` | Removes the sandbox's site, database copy and worktree. The **branch and its commits stay** for you to review. Refuses, listing the files, while there is uncommitted work, unless `force: true`. |
+| `grove_sandbox_list` | Lists what is running (read-only, available without `--allow-write`). |
+
+`grove_sandbox_open` returns the sandbox's own `site` name, and every other
+tool takes it: `grove_db_query`, `grove_requests`, `grove_request_chain`,
+`grove_logs`, `grove_migrate_sandboxed`. So the agent edits files under the
+returned `path`, runs its migrations through Grove, and then looks at what the
+running app actually did against its own data, not just at its diff:
+
+```json
+{
+  "site": "myapp--agent-add-notes",
+  "branch": "agent/add-notes",
+  "url": "https://myapp--agent-add-notes.test",
+  "path": "~/.grove/try/myapp/agent-add-notes",
+  "database": {"engine": "mysql", "name": "myapp__gt_929546f2"}
+}
+```
+
+Nothing reaches your checkout until you merge the branch. A sandbox is the same
+thing as `grove try`, so `grove try --list` shows the agent's sandboxes too, and
+`grove try --done <branch>` closes one by hand. Opening and closing are logged
+to `mcp-writes.log` like every other write.
+
 ## Safety
 
 - **Read-only by default.** Write tools appear only with `grove mcp

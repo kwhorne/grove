@@ -299,22 +299,26 @@ async fn unwind(socket: &Path, made: &Made) {
     }
 }
 
-/// `grove try <branch>`.
-pub async fn start(
+/// Make a try of `branch`, reporting each step to `progress`, and return it —
+/// or the one already running for that branch, with `true`.
+///
+/// Writes nothing to stdout: the MCP server calls this, and its stdout is the
+/// protocol. `new_branch` makes a fresh branch from the checkout's current
+/// commit instead of checking out one that exists — what an agent that is
+/// about to work needs, where a reviewer wants an existing one.
+pub async fn create(
     paths: &GrovePaths,
-    site: String,
-    branch: String,
-    json: bool,
-) -> anyhow::Result<()> {
+    site: &str,
+    branch: &str,
+    new_branch: bool,
+    progress: &(dyn Fn(&str) + Sync),
+) -> anyhow::Result<(TryRecord, bool)> {
+    let (site, branch) = (site.to_string(), branch.to_string());
     let socket = paths.ipc_socket();
     let mut state = load(paths);
     let name = try_name(&site, &branch);
     if let Some(existing) = state.tries.get(&name) {
-        crate::output::print_message(
-            &format!("{branch} is already running as a try: {}", existing.url),
-            json,
-        );
-        return Ok(());
+        return Ok((existing.clone(), true));
     }
 
     let ResponseData::Sites(sites) = call(&socket, Request::ListSites).await? else {
@@ -341,15 +345,16 @@ pub async fn start(
 
     let mut made = Made::default();
     let result: anyhow::Result<TryRecord> = async {
-        step(
-            json,
-            &format!("checking out {branch} into {}", path.display()),
-        );
+        progress(&format!("checking out {branch} into {}", path.display()));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        grove_core::git::worktree_add(&project, &path, &branch)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        if new_branch {
+            grove_core::git::worktree_add_new(&project, &path, &branch)
+        } else {
+            grove_core::git::worktree_add(&project, &path, &branch)
+        }
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         made.worktree = Some((project.clone(), path.clone()));
 
         // `.env` is gitignored, so the worktree has none: start from yours,
@@ -374,16 +379,13 @@ pub async fn start(
                 }
             }
             grove_core::securefs::write_private(&path.join(".env"), &text)?;
-            step(
-                json,
-                &format!(
-                    ".env copied, {moved} mention(s) of {} moved to {new_host}",
-                    main.hostname
-                ),
-            );
+            progress(&format!(
+                ".env copied, {moved} mention(s) of {} moved to {new_host}",
+                main.hostname
+            ));
         }
 
-        step(json, "copying the database");
+        progress("copying the database");
         let ResponseData::TryDatabase { engine, database } = call(
             &socket,
             Request::TryDatabaseCreate {
@@ -404,22 +406,16 @@ pub async fn start(
             let text = std::fs::read_to_string(&env)?;
             grove_core::securefs::write_private(&env, set_env(&text, "DB_DATABASE", &database))?;
         }
-        step(json, &format!("database: {engine} {database}"));
+        progress(&format!("database: {engine} {database}"));
 
-        step(
-            json,
-            "cloning vendor/, node_modules/ and public/build/ from your checkout",
-        );
+        progress("cloning vendor/, node_modules/ and public/build/ from your checkout");
         for dir in ["vendor", "node_modules", "public/build"] {
             clone_dir(&project.join(dir), &path.join(dir))?;
         }
 
         let php = crate::mcp::resolve_php_cli(paths, &main.php)?;
         if path.join("composer.json").exists() {
-            step(
-                json,
-                "composer install (catching up with the branch's lock file)",
-            );
+            progress("composer install (catching up with the branch's lock file)");
             let composer = grove_runtime::scaffold::ensure_composer(paths)
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
             let composer = composer.to_string_lossy().into_owned();
@@ -437,7 +433,7 @@ pub async fn start(
             )?;
         }
         if path.join("artisan").exists() && engine != "none" {
-            step(json, "running the branch's migrations");
+            progress("running the branch's migrations");
             run(
                 &path,
                 &php,
@@ -446,7 +442,7 @@ pub async fn start(
             )?;
         }
 
-        step(json, &format!("linking {new_host}"));
+        progress(&format!("linking {new_host}"));
         call(
             &socket,
             Request::Link {
@@ -490,23 +486,39 @@ pub async fn start(
         Ok(record) => {
             state.tries.insert(name, record.clone());
             save(paths, &state)?;
-            crate::output::print_message(
-                &format!(
-                    "{branch} is running at {url}\n  code:     {}\n  database: {} {}\n  done:     grove try --done {branch}",
-                    record.path.display(),
-                    record.engine,
-                    record.database
-                ),
-                json,
-            );
-            Ok(())
+            Ok((record, false))
         }
         Err(e) => {
-            step(json, "undoing what was set up");
+            progress("undoing what was set up");
             unwind(&socket, &made).await;
             Err(e)
         }
     }
+}
+
+/// `grove try <branch>`.
+pub async fn start(
+    paths: &GrovePaths,
+    site: String,
+    branch: String,
+    new_branch: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    let report = |msg: &str| step(json, msg);
+    let (record, existed) = create(paths, &site, &branch, new_branch, &report).await?;
+    let msg = if existed {
+        format!("{branch} is already running as a try: {}", record.url)
+    } else {
+        format!(
+            "{branch} is running at {}\n  code:     {}\n  database: {} {}\n  done:     grove try --done {branch}",
+            record.url,
+            record.path.display(),
+            record.engine,
+            record.database
+        )
+    };
+    crate::output::print_message(&msg, json);
+    Ok(())
 }
 
 /// `grove try --list`.
@@ -530,6 +542,11 @@ pub fn list(paths: &GrovePaths, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every try that is recorded.
+pub fn all(paths: &GrovePaths) -> Vec<TryRecord> {
+    load(paths).tries.into_values().collect()
+}
+
 /// `grove try --done <branch>`.
 pub async fn done(
     paths: &GrovePaths,
@@ -538,6 +555,23 @@ pub async fn done(
     force: bool,
     json: bool,
 ) -> anyhow::Result<()> {
+    remove(paths, &site, &branch, force).await?;
+    crate::output::print_message(
+        &format!("{branch}'s try is gone: site, database and worktree"),
+        json,
+    );
+    Ok(())
+}
+
+/// Take a try down and return what it was. The branch itself — and any
+/// commits on it — stays in the repository.
+pub async fn remove(
+    paths: &GrovePaths,
+    site: &str,
+    branch: &str,
+    force: bool,
+) -> anyhow::Result<TryRecord> {
+    let (site, branch) = (site.to_string(), branch.to_string());
     let socket = paths.ipc_socket();
     let mut state = load(paths);
     let name = try_name(&site, &branch);
@@ -580,11 +614,7 @@ pub async fn done(
     }
     state.tries.remove(&name);
     save(paths, &state)?;
-    crate::output::print_message(
-        &format!("{branch}'s try is gone: site, database and worktree"),
-        json,
-    );
-    Ok(())
+    Ok(t)
 }
 
 #[cfg(test)]

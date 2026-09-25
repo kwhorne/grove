@@ -182,6 +182,42 @@ pub fn worktree_add(repo: &Path, path: &Path, branch: &str) -> Result<(), GitErr
     git(repo, &["worktree", "add", &path, branch]).map(|_| ())
 }
 
+/// Make a new branch `branch` from the checkout's current commit, and check it
+/// out into a new worktree at `path`. For a sandbox someone is about to work
+/// in, rather than a branch that already exists. An existing branch of that
+/// name is an error, not reused: the caller asked for a fresh one.
+pub fn worktree_add_new(repo: &Path, path: &Path, branch: &str) -> Result<(), GitError> {
+    if git(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok()
+    {
+        return Err(GitError(format!("a branch named {branch} already exists")));
+    }
+    let path = path.to_string_lossy();
+    git(repo, &["worktree", "add", "-b", branch, &path, "HEAD"]).map(|_| ())
+}
+
+/// Does a local branch `branch` exist in `repo`?
+pub fn has_local_branch(repo: &Path, branch: &str) -> bool {
+    git(
+        repo,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok()
+}
+
 /// Remove the worktree at `path`. Git refuses one with uncommitted changes
 /// unless `force` — and that refusal is passed on, not overridden.
 pub fn worktree_remove(repo: &Path, path: &Path, force: bool) -> Result<(), GitError> {
@@ -243,6 +279,18 @@ mod tests {
 
         let err = worktree_add(&repo, &root.join("nope"), "does-not-exist").unwrap_err();
         assert!(err.0.contains("does-not-exist"), "{err}");
+
+        // A fresh branch from HEAD, and a refusal to reuse a name.
+        let fresh = root.join("fresh");
+        worktree_add_new(&repo, &fresh, "agent/one").unwrap();
+        assert_eq!(head(&fresh), Head::Branch("agent/one".into()));
+        assert!(has_local_branch(&repo, "agent/one"));
+        assert!(worktree_add_new(&repo, &root.join("again"), "agent/one").is_err());
+        worktree_remove(&repo, &fresh, false).unwrap();
+        assert!(
+            has_local_branch(&repo, "agent/one"),
+            "removing a worktree keeps its branch"
+        );
 
         std::fs::write(wt.join("dirty.txt"), "x").unwrap();
         assert!(
