@@ -14,6 +14,7 @@ pub mod qlog;
 pub mod snapshot;
 pub mod store;
 
+pub use branches::{is_try_schema, mysql_clone_database, mysql_drop_try, sqlite_copy, try_schema};
 pub use branches::{BranchError, BranchStore, ParkedSize};
 pub use catalog::{ServiceKind, ServiceSpec, CATALOG};
 pub use convert::{convert as convert_database, DbConnSpec};

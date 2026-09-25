@@ -24,6 +24,7 @@ clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 tar = "0.4"
 flate2 = "1"
 # Database schema/query tools for the MCP server (shared engine from `e`).

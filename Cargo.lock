@@ -2331,6 +2331,7 @@ dependencies = [
  "grove-secrets",
  "grove-tls",
  "grove-tunnel",
+ "serde",
  "serde_json",
  "tar",
  "tokio",
