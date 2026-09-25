@@ -378,7 +378,17 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             _ => Request::SqlCaptureStatus,
         },
         Command::Explain { id } => Request::ExplainRequest { id },
-        Command::Replay { id } => Request::ReplayRequest { id },
+        Command::Replay {
+            id,
+            same_data,
+            forget,
+        } => {
+            if same_data || forget {
+                Request::ReplaySameData { id, forget }
+            } else {
+                Request::ReplayRequest { id }
+            }
+        }
         Command::Request { id, format } => Request::RequestToTest { id, format },
         Command::Hooks { limit, action } => match action {
             None => Request::HookList { limit },

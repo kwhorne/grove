@@ -318,6 +318,13 @@ pub enum Command {
     Replay {
         /// Request id from `grove requests`.
         id: u64,
+        /// Start every run from the same data: the first replay snapshots the
+        /// site's database, each later one puts it back before sending.
+        #[arg(long)]
+        same_data: bool,
+        /// Drop the request's `--same-data` baseline instead of replaying.
+        #[arg(long, conflicts_with = "same_data")]
+        forget: bool,
     },
 
     /// Generate a curl command, .http file, or Pest test from a captured request.

@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`grove replay <id> --same-data`: replay against the same data every
+  time.** A request that writes finds what it wrote last time when you replay
+  it: the order exists, the email is taken, the webhook was already applied.
+  With `--same-data` the first replay snapshots the site's database and every
+  later one puts it back before it sends, so you can change the code and try
+  the same request again from the same starting point as often as you need.
+
+  ```text
+  $ grove replay 1 --same-data
+  baseline taken of MySQL `shop`; later --same-data replays start from it
+  replayed → 200 in 1ms (see it in `grove requests`)
+  $ grove replay 1 --same-data
+  MySQL `shop` put back to the baseline first
+  replayed → 200 in 1ms (see it in `grove requests`)
+  ```
+
+  MySQL on Grove's own server uses the ordinary snapshot store (it shows in
+  `grove db list`), and SQLite gets a copy of the file with its `-wal` and
+  `-shm`. `grove replay <id> --forget` drops the baseline. The starting point
+  is the data as it is at that first `--same-data` replay, not as it was when
+  the request was first made. A failed request that rolled back left nothing
+  behind, so for a failure the two are the same. If the original request did
+  write something, undo that before the first `--same-data`. Baselines are
+  keyed by request id and held in memory like the request log, so a daemon
+  restart forgets both and deletes the files at startup. Verified live on
+  MySQL and SQLite with a POST that inserts a row: three `--same-data` replays
+  left one row more than the baseline, not three.
+
 - **`grove bisect`: which commit broke this request?** Give it a commit where
   a request worked and one of the requests Grove recorded (`grove requests`).
   It checks each commit out beside your checkout at `<site>--bisect.test`,

@@ -495,6 +495,22 @@ checkout, so `composer install` only fetches what the branch changed.
 and lists the files, while the worktree holds uncommitted work, unless you pass
 `--force`.
 
+### Replaying a request against the same data
+
+`grove replay <id>` sends a recorded request again. A request that writes then
+finds its own work from last time, so the second run is not the first run
+again. `--same-data` holds the database still:
+
+```bash
+grove replay 812 --same-data    # first time: snapshot the site's database, then replay
+grove replay 812 --same-data    # every later time: put it back, then replay
+grove replay 812 --forget       # done: drop the snapshot
+```
+
+The starting point is the data as it is at the first `--same-data`, so if the
+original request wrote something, undo that first. It works for MySQL on
+Grove's own server and for SQLite. Baselines last until the daemon restarts.
+
 ### Finding the commit that broke a request
 
 Grove records every request it proxies (`grove requests`). When one that used

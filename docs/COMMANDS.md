@@ -349,6 +349,8 @@ in the desktop app's **Requests** panel.
 | `grove requests <site>` | Filter to one site. |
 | `grove requests --limit <n>` | Cap the number of entries. |
 | `grove replay <id>` | Re-issue a captured request through Grove (id from `grove requests`). |
+| `grove replay <id> --same-data` | Replay against the same data every time: the first run snapshots the site's database (MySQL or SQLite), each later run restores it first. |
+| `grove replay <id> --forget` | Drop the request's `--same-data` baseline. |
 | `grove request <id> --as <fmt>` | Print the request as `curl`, `http`, or `pest`. |
 | `grove explain <id>` | Curate a debugging bundle (request + causal chain + error log) for an AI assistant. |
 | `grove sql-capture on\|off\|status` | Correlate SQL queries with the timeline (MySQL). |

@@ -13,6 +13,7 @@ pub mod ipc;
 pub mod license;
 pub mod logs;
 pub mod ondemand;
+pub mod replay;
 pub mod state;
 pub mod tunnels;
 pub mod warm;
@@ -54,6 +55,9 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     // Find them by pid file and stop them before any request spawns a new one
     // on the same socket path.
     fpm.reap_orphans();
+    // `grove replay --same-data` baselines are keyed by request ids, which
+    // do not outlive a daemon.
+    replay::sweep(&paths);
     // Restore the persisted Xdebug setting so pools spawn correctly after a
     // daemon restart.
     fpm.set_xdebug(general.xdebug, general.xdebug_port);
