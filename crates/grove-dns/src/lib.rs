@@ -41,17 +41,33 @@ const RECORD_TTL: u32 = 300;
 /// a single resolver; it is a bound on memory per connection, not a target.
 const RESPONSE_BUFFER_SIZE: usize = 8 * 1024;
 
+/// Called with the hostname of every lookup Grove answers.
+///
+/// A browser resolves `myapp.test` before it connects, and often while the
+/// address is still being typed; that is the earliest sign a site is about to
+/// be used. The daemon uses it to start an idle on-demand database ahead of
+/// the request. It must return at once — it runs on the resolver's path.
+pub type LookupHook = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Handler that maps every name ending in `.<tld>` to loopback.
 #[derive(Clone)]
 pub struct GroveResolver {
     tld: String,
+    on_lookup: Option<LookupHook>,
 }
 
 impl GroveResolver {
     pub fn new(tld: impl Into<String>) -> Self {
         Self {
             tld: into_label(tld),
+            on_lookup: None,
         }
+    }
+
+    /// Tell `hook` about every name answered.
+    pub fn with_lookup_hook(mut self, hook: LookupHook) -> Self {
+        self.on_lookup = Some(hook);
+        self
     }
 
     fn owns(&self, name: &Name) -> bool {
@@ -103,6 +119,11 @@ impl RequestHandler for GroveResolver {
             || !self.owns(&fqdn)
         {
             return refuse(request, &mut response_handle).await;
+        }
+
+        if let Some(hook) = &self.on_lookup {
+            let lower = fqdn.to_lowercase().to_utf8();
+            hook(lower.trim_end_matches('.'));
         }
 
         let records: Vec<Record> = match query_type {
@@ -176,7 +197,15 @@ pub async fn bind(addr: SocketAddr) -> Result<(UdpSocket, TcpListener), DnsError
 /// or systemd, which is how the daemon serves port 53 without ever having been
 /// root. Nothing here can tell the difference, and nothing here should.
 pub fn serve_on(tld: &str, udp: UdpSocket, tcp: TcpListener) -> Server<GroveResolver> {
-    let handler = GroveResolver::new(tld);
+    serve_with(GroveResolver::new(tld), udp, tcp)
+}
+
+/// [`serve_on`] with a resolver already configured — a lookup hook, say.
+pub fn serve_with(
+    handler: GroveResolver,
+    udp: UdpSocket,
+    tcp: TcpListener,
+) -> Server<GroveResolver> {
     let mut server = Server::new(handler);
     server.register_socket(udp);
     server.register_listener(tcp, Duration::from_secs(5), RESPONSE_BUFFER_SIZE);

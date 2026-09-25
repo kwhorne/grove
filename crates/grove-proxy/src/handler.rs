@@ -562,6 +562,10 @@ pub async fn handle(
         ));
     }
 
+    if let Some(hook) = state.site_hook.get() {
+        hook(&site.name);
+    }
+
     if let Some(reason) = state.pause_reason(&site.name) {
         state.log.record(Record {
             site: &site.name,
