@@ -152,6 +152,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--list` shows what is running. The try's database is refused, not shared,
   for anything but MySQL on Grove's own server or SQLite.
 
+- **An idle on-demand database starts when its site is looked up.** Two
+  earlier signals than PHP's first connection now start it. One is the DNS
+  lookup of the site's name: a browser resolves `myapp.test` before it
+  connects, and often while the address is still being typed. The other is
+  the request itself. Either maps the site to the bundled services its `.env`
+  uses, matching loopback and Grove's own ports and counting Redis only when
+  cache, sessions or queues use it, and starts the idle ones in the background
+  through the same gate a connection takes. Neither DNS nor the request waits
+  for it. Measured on a page that spends 40 ms before its first query, about
+  what Laravel does on the sites this was built against:
+
+  | first request after MySQL went idle | |
+  |---|---|
+  | before | 354 ms |
+  | the request alone as the signal | 302 ms |
+  | a lookup 0.4 s ahead | 43 ms, the same as with MySQL already up |
+
+  How much lead a lookup gives depends on the browser. Typing the address can
+  give plenty, and a plain reload gives a few milliseconds, which is then worth
+  the same ~50 ms as the request. Grove's answers have a five-minute TTL,
+  shorter than the default ten-minute idle period, so the lookup reaches Grove
+  in exactly the case where the database has stopped.
+
 ## [1.9.0] — 2026-09-23
 
 Two things Grove can do because it runs your databases, not just points at

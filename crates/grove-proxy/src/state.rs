@@ -8,6 +8,9 @@ use tokio::sync::RwLock;
 use grove_core::registry::{KnownHosts, SiteRegistry};
 use grove_core::RequestLog;
 
+/// Called with the name of the site each request is for; see `site_hook`.
+pub type SiteHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// The registry is swapped wholesale on `reload`, so requests in flight keep
 /// using a consistent snapshot.
 #[derive(Clone)]
@@ -41,6 +44,11 @@ pub struct SharedState {
     /// A synchronous lock for the same reason as `known_hosts`: it is read on
     /// every request and written a few times a day.
     pub paused: Arc<std::sync::RwLock<HashMap<String, String>>>,
+    /// Told the name of the site every request is for, once it is resolved.
+    ///
+    /// Set once, after construction: the daemon's hook needs the service
+    /// manager, which is built after this state. It must return at once.
+    pub site_hook: Arc<std::sync::OnceLock<SiteHook>>,
 }
 
 impl SharedState {
@@ -54,6 +62,7 @@ impl SharedState {
             hooks: Arc::new(RequestLog::new(200)),
             https_port: 443,
             paused: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            site_hook: Arc::new(std::sync::OnceLock::new()),
         }
     }
 
