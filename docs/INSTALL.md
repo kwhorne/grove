@@ -441,7 +441,10 @@ Redis        Cache & Queue  yes        yes       6379   on demand, stops after 3
 
 `idle` means the port answers and the server is not running. The first
 connection waits the fraction of a second the server takes to start, about
-0.35 s for MySQL, and is then served normally. Nothing in `.env` changes, since
+0.35 s for MySQL, and is then served normally. Grove starts the server as soon as
+the site's name is looked up or its first request arrives, so the wait is
+often shorter than that, and hidden entirely when the browser resolves the
+name while you type it. Nothing in `.env` changes, since
 the host and port stay the same. A queue worker or an open database client
 keeps the server up for as long as it stays connected.
 
