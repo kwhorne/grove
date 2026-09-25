@@ -229,6 +229,21 @@ async fn build_explain(
     }
 }
 
+/// A site named by its hostname (`shop.test`) as well as its name.
+async fn site_name(state: &DaemonState, site: Option<String>) -> Option<String> {
+    let site = site?;
+    if !site.contains('.') {
+        return Some(site);
+    }
+    let registry = state.shared.registry.read().await;
+    Some(
+        registry
+            .by_hostname(&site)
+            .map(|s| s.name.clone())
+            .unwrap_or(site),
+    )
+}
+
 fn sql_capture_state(on: bool) -> grove_ipc::protocol::SqlCaptureState {
     grove_ipc::protocol::SqlCaptureState {
         enabled: on,
@@ -1101,6 +1116,29 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
             let limit = if limit == 0 { 100 } else { limit.min(500) };
             let entries = state.shared.log.snapshot(site.as_deref(), limit);
             Ok(Response::ok(ResponseData::Requests(entries)))
+        }
+        Request::Routes {
+            site,
+            slower_only,
+            limit,
+        } => {
+            let site = site_name(state, site).await;
+            let mut routes = state.shared.routes.summaries(site.as_deref());
+            if slower_only {
+                routes.retain(|r| r.slower.is_some());
+            }
+            if limit > 0 {
+                routes.truncate(limit);
+            }
+            Ok(Response::ok(ResponseData::Routes(routes)))
+        }
+        Request::RoutesReset { site, route } => {
+            let site = site_name(state, site).await;
+            let n = state.shared.routes.reset(site.as_deref(), route.as_deref());
+            Ok(Response::ok(ResponseData::Message(format!(
+                "forgot {n} route{}; the next request starts a fresh baseline",
+                if n == 1 { "" } else { "s" }
+            ))))
         }
         Request::RequestDetail { id } => Ok(Response::ok(ResponseData::RequestDetail(
             state.shared.log.detail(id),

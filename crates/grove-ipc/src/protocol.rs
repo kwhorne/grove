@@ -219,6 +219,20 @@ pub enum Request {
     ReplayRequest {
         id: u64,
     },
+    /// How long each route usually takes, and which got slower.
+    Routes {
+        site: Option<String>,
+        #[serde(default)]
+        slower_only: bool,
+        /// At most this many; 0 is all.
+        #[serde(default)]
+        limit: usize,
+    },
+    /// Forget route timings: every route, one site's, or one route.
+    RoutesReset {
+        site: Option<String>,
+        route: Option<String>,
+    },
     /// Replay captured request `id` against the same data every time: the
     /// first call takes a snapshot of the site's database, every later call
     /// restores it first. `forget` drops the snapshot instead of replaying.
@@ -489,6 +503,7 @@ pub enum ResponseData {
         status: u16,
         duration_ms: u64,
     },
+    Routes(Vec<grove_core::routes::RouteSummary>),
     /// A replay against a fixed starting point: `data` says whether the
     /// baseline was just taken or restored.
     ReplayedSameData {

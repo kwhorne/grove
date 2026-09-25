@@ -349,6 +349,9 @@ in the desktop app's **Requests** panel.
 | `grove requests <site>` | Filter to one site. |
 | `grove requests --limit <n>` | Cap the number of entries. |
 | `grove replay <id>` | Re-issue a captured request through Grove (id from `grove requests`). |
+| `grove routes [site]` | How long each route usually takes (median of its last 50 requests) against its last five; routes that got at least twice as slow are flagged, with a request id. |
+| `grove routes --slower` | Only the flagged routes. |
+| `grove routes <site> --reset [--route '<route>']` | Forget timings and start a fresh baseline, e.g. to accept a route's new speed. |
 | `grove replay <id> --same-data` | Replay against the same data every time: the first run snapshots the site's database (MySQL or SQLite), each later run restores it first. |
 | `grove replay <id> --forget` | Drop the request's `--same-data` baseline. |
 | `grove request <id> --as <fmt>` | Print the request as `curl`, `http`, or `pest`. |

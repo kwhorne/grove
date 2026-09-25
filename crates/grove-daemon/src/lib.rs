@@ -65,7 +65,10 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     // Build the site registry and shared proxy state.
     let registry = grove_core::SiteRegistry::build(&config);
     tracing::info!(sites = registry.len(), tld = %general.tld, "registry built");
-    let shared = SharedState::new(registry).with_https_port(general.https_port);
+    let routes_file = paths.base().join("routes.json");
+    let shared = SharedState::new(registry)
+        .with_https_port(general.https_port)
+        .with_routes(grove_core::routes::RouteStats::load(&routes_file));
 
     // Local CA + SNI resolver for HTTPS.
     let ca = Arc::new(CertificateAuthority::load_or_create(&paths)?);
@@ -161,6 +164,20 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     // top of it.
     branches::reconcile(&daemon).await;
     let branch_task = tokio::spawn(branches::follow(daemon.clone()));
+    // Route timings are worth keeping across a restart — a regression often
+    // lands with the same `git pull` that comes with a Grove upgrade — but
+    // not worth a write per request.
+    let routes = daemon.shared.routes.clone();
+    let routes_path = routes_file.clone();
+    let routes_task = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            if let Err(e) = routes.save_if_changed(&routes_path) {
+                tracing::warn!(error = %e, "could not save route timings");
+            }
+        }
+    });
 
     // Spawn network listeners. A failure to bind a privileged port does not
     // abort the others, so e.g. DNS can still work without root — but it is
@@ -301,6 +318,11 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         t.abort();
     }
     branch_task.abort();
+    routes_task.abort();
+    let _ = daemon_for_shutdown
+        .shared
+        .routes
+        .save_if_changed(&routes_file);
     // Stop accepting. In-flight requests run on their own tasks, so aborting
     // the accept loops does not cut them off; give them a moment to finish
     // before the runtime is torn down. A real drain would track them — this

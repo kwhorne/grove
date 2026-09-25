@@ -372,6 +372,23 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
             },
         },
         Command::Requests { site, limit } => Request::RequestLog { site, limit },
+        Command::Routes {
+            site,
+            slower,
+            reset,
+            route,
+            limit,
+        } => {
+            if reset {
+                Request::RoutesReset { site, route }
+            } else {
+                Request::Routes {
+                    site,
+                    slower_only: slower,
+                    limit,
+                }
+            }
+        }
         Command::SqlCapture { action } => match action.as_str() {
             "on" => Request::SqlCaptureSet { on: true },
             "off" => Request::SqlCaptureSet { on: false },
@@ -566,6 +583,14 @@ mod mcp {
                 "inputSchema": {"type": "object", "properties": {
                     "site": {"type": "string", "description": "Site name to filter by"},
                     "limit": {"type": "integer", "description": "Max entries (default 40)"}
+                }}
+            },
+            {
+                "name": "grove_routes",
+                "description": "How long each route usually takes and which got slower, per site. Grove times every request PHP or an upstream answers, grouped by route (`GET /orders/{id}`). `typical_ms` is the median of the route's baseline, `recent_ms` the median of its last five requests; `slower` is set when recent is at least twice typical and 50 ms more, with a `request_id` to pass to grove_request_chain. Check it after a change to see whether the change made a route slower.",
+                "inputSchema": {"type": "object", "properties": {
+                    "site": {"type": "string", "description": "Site name to filter by"},
+                    "slower_only": {"type": "boolean", "description": "Only routes flagged slower"}
                 }}
             },
             {
@@ -803,6 +828,22 @@ mod mcp {
                     _ => anyhow::bail!("unexpected response"),
                 }
             }
+            "grove_routes" => match call(
+                socket,
+                Request::Routes {
+                    site: s("site"),
+                    slower_only: args
+                        .get("slower_only")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                    limit: 100,
+                },
+            )
+            .await?
+            {
+                ResponseData::Routes(r) => Ok(serde_json::to_string_pretty(&r)?),
+                _ => anyhow::bail!("unexpected response"),
+            },
             "grove_request" => {
                 let id = n("id").ok_or_else(|| anyhow::anyhow!("id is required"))?;
                 match call(socket, Request::RequestDetail { id }).await? {

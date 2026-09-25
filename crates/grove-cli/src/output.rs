@@ -230,6 +230,43 @@ pub fn print_response(resp: &Response, json: bool) {
                 println!("\nreplay any of these with: grove replay <id>");
             }
         }
+        Some(ResponseData::Routes(routes)) => {
+            if routes.is_empty() {
+                println!(
+                    "no route timings yet — Grove times each request PHP or an upstream answers"
+                );
+            } else {
+                let ms = |v: Option<u64>| v.map(|v| format!("{v}ms")).unwrap_or_else(|| "—".into());
+                println!(
+                    "{:<16} {:<44} {:>6} {:>8} {:>8}",
+                    "SITE", "ROUTE", "SEEN", "TYPICAL", "RECENT"
+                );
+                for r in routes {
+                    let flag = match &r.slower {
+                        Some(s) => format!(
+                            "  slower {}× for {}, e.g. request #{}",
+                            ratio(r.recent_ms, Some(s.typical_ms)),
+                            ago(s.since_ms),
+                            s.request_id
+                        ),
+                        None => String::new(),
+                    };
+                    println!(
+                        "{:<16} {:<44} {:>6} {:>8} {:>8}{flag}",
+                        truncate(&r.site, 16),
+                        truncate(&r.route, 44),
+                        r.requests,
+                        ms(r.typical_ms),
+                        ms(r.recent_ms),
+                    );
+                }
+                if routes.iter().any(|r| r.slower.is_some()) {
+                    println!(
+                        "\nlook at a slow one with: grove explain <id>  ·  accept a new speed: grove routes <site> --reset --route '<route>'"
+                    );
+                }
+            }
+        }
         Some(ResponseData::RequestDetail(_)) => {} // GUI-only detail view
         Some(ResponseData::RequestChain(_)) => {}  // surfaced via --json / MCP
         Some(ResponseData::WindowChain(_)) => {}   // folded into sandbox tool results
@@ -605,5 +642,28 @@ fn idle_text(secs: u64) -> String {
         s if s >= 3600 && s % 3600 == 0 => format!("{}h idle", s / 3600),
         s if s >= 60 && s % 60 == 0 => format!("{}m idle", s / 60),
         s => format!("{s}s idle"),
+    }
+}
+
+/// `recent / typical`, to one decimal.
+fn ratio(recent: Option<u64>, typical: Option<u64>) -> String {
+    match (recent, typical) {
+        (Some(r), Some(t)) => format!("{:.1}", r as f64 / t.max(1) as f64),
+        _ => "?".into(),
+    }
+}
+
+/// How long ago a unix time in ms was, roughly: `40s`, `12m`, `3h`, `2d`.
+fn ago(epoch_ms: u128) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let s = (now.saturating_sub(epoch_ms) / 1000) as u64;
+    match s {
+        0..=59 => format!("{s}s"),
+        60..=3599 => format!("{}m", s / 60),
+        3600..=86399 => format!("{}h", s / 3600),
+        _ => format!("{}d", s / 86400),
     }
 }
