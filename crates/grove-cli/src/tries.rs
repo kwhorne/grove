@@ -171,7 +171,7 @@ pub fn set_env(text: &str, key: &str, value: &str) -> String {
 }
 
 /// The value of `key` in a `.env`'s text, unquoted.
-fn get_env(text: &str, key: &str) -> Option<String> {
+pub(crate) fn get_env(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|line| {
         let bare = line
             .trim_start()
@@ -184,7 +184,7 @@ fn get_env(text: &str, key: &str) -> Option<String> {
 
 /// Clone `from` to `to`: copy-on-write where the filesystem can (APFS on
 /// macOS, btrfs/XFS on Linux), a plain copy where it cannot.
-fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     if !from.exists() || to.exists() {
         return Ok(());
     }
@@ -223,7 +223,7 @@ fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-async fn call(socket: &Path, req: Request) -> anyhow::Result<ResponseData> {
+pub(crate) async fn call(socket: &Path, req: Request) -> anyhow::Result<ResponseData> {
     let resp = client::send(socket, &req)
         .await
         .context("talking to the Grove daemon (is it running? `grove start`)")?;
@@ -234,14 +234,14 @@ async fn call(socket: &Path, req: Request) -> anyhow::Result<ResponseData> {
         .ok_or_else(|| anyhow::anyhow!("no data in response"))
 }
 
-fn step(json: bool, msg: &str) {
+pub(crate) fn step(json: bool, msg: &str) {
     if !json {
         eprintln!("  {msg}");
     }
 }
 
 /// Run a command in `dir`, and fail with the tail of what it printed.
-fn run(dir: &Path, program: &Path, args: &[&str], what: &str) -> anyhow::Result<()> {
+pub(crate) fn run(dir: &Path, program: &Path, args: &[&str], what: &str) -> anyhow::Result<()> {
     let out = std::process::Command::new(program)
         .args(args)
         .current_dir(dir)
@@ -267,7 +267,7 @@ fn run(dir: &Path, program: &Path, args: &[&str], what: &str) -> anyhow::Result<
     Ok(())
 }
 
-fn try_root() -> anyhow::Result<PathBuf> {
+pub(crate) fn try_root() -> anyhow::Result<PathBuf> {
     let home = std::env::var_os("HOME").ok_or_else(|| anyhow::anyhow!("HOME is not set"))?;
     Ok(PathBuf::from(home).join(".grove").join("try"))
 }

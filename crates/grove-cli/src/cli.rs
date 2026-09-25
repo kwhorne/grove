@@ -238,6 +238,29 @@ pub enum Command {
         site: Option<String>,
     },
 
+    /// Find the commit that broke a request. Grove checks each commit out
+    /// beside your checkout, gives it a fresh copy of your database migrated to
+    /// that commit, replays the captured request (see `grove requests`), and
+    /// lets `git bisect` narrow it down. Your checkout never moves.
+    Bisect {
+        /// A commit where the request worked.
+        #[arg(long)]
+        good: String,
+        /// A commit where it fails (default: HEAD).
+        #[arg(long, default_value = "HEAD")]
+        bad: String,
+        /// The captured request to replay, by id from `grove requests`.
+        #[arg(long)]
+        request: u64,
+        /// Count a commit as good only when it answers exactly this status.
+        /// Without it, anything below 500 is good.
+        #[arg(long = "expect-status")]
+        expect_status: Option<u16>,
+        /// The site. Defaults to the project in the current directory.
+        #[arg(long)]
+        site: Option<String>,
+    },
+
     /// Package or restore a whole project environment (grove.toml + .env + database)
     /// as one shareable file — reproducible dev environments without Docker.
     Bundle {

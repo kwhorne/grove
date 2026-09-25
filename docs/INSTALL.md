@@ -495,6 +495,21 @@ checkout, so `composer install` only fetches what the branch changed.
 and lists the files, while the worktree holds uncommitted work, unless you pass
 `--force`.
 
+### Finding the commit that broke a request
+
+Grove records every request it proxies (`grove requests`). When one that used
+to work now fails, give `grove bisect` a commit where it worked:
+
+```bash
+grove requests myapp            # find the failing request's id
+grove bisect --good v2.3.0 --request 812
+```
+
+Each commit is checked out beside your checkout, not in it, and gets a fresh
+copy of your database migrated to that commit. The request is replayed exactly
+as it was sent, and `git bisect` does the rest. A commit counts as good when it
+answers below 500, or `--expect-status 200` when you want an exact code.
+
 ### A database per git branch
 
 Checking out a branch changes the code in a second and leaves the database

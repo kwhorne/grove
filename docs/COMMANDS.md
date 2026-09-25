@@ -410,6 +410,7 @@ risky migration and roll back in one command. Stored as SQL under
 | `grove db restore <id>` | Restore a snapshot by id. |
 | `grove db rm <id>` | Delete a snapshot. |
 | `grove try <branch> [--site NAME]` | Run another branch beside yours: a git worktree under `~/.grove/try/`, its own copy of the database, migrated, at `<site>--<branch>.test`. Your checkout and database are not touched. |
+| `grove bisect --good <ref> [--bad HEAD] --request <id> [--expect-status N]` | Find the commit that broke a recorded request: each commit is checked out beside yours with a fresh, migrated copy of your database, and the request replayed. |
 | `grove try --list` | List the tries that are running. |
 | `grove try --done <branch> [--force]` | Remove a try: its site, its database and its worktree. Refuses while the worktree has uncommitted work unless `--force`. |
 | `grove db branches [--site NAME]` | Show which branch's data is live and which branches have parked copies. Without a site, lists every site that follows its branch. |

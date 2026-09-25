@@ -204,6 +204,18 @@ pub fn worktree_add_new(repo: &Path, path: &Path, branch: &str) -> Result<(), Gi
     git(repo, &["worktree", "add", "-b", branch, &path, "HEAD"]).map(|_| ())
 }
 
+/// Check commit `rev` out, detached, into a new worktree at `path`.
+pub fn worktree_add_detached(repo: &Path, path: &Path, rev: &str) -> Result<(), GitError> {
+    let path = path.to_string_lossy();
+    git(repo, &["worktree", "add", "--detach", &path, rev]).map(|_| ())
+}
+
+/// Run any git command in `repo` and return its stdout — for the commands
+/// `grove bisect` drives step by step.
+pub fn run(repo: &Path, args: &[&str]) -> Result<String, GitError> {
+    git(repo, args)
+}
+
 /// Does a local branch `branch` exist in `repo`?
 pub fn has_local_branch(repo: &Path, branch: &str) -> bool {
     git(
