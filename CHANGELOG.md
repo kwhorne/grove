@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sandboxes for coding agents.** `grove mcp --allow-write` offers
+  `grove_sandbox_open` and `grove_sandbox_close`, plus `grove_sandbox_list`
+  without the flag. An agent gets a complete running copy of a site to work
+  in: a new branch from the site's current commit in its own worktree, its own
+  copy of the database, migrated, at its own HTTPS URL. Your checkout and your
+  database are never involved. Every existing tool takes the sandbox's site
+  name, so the agent can run its migrations through Grove and query what the
+  running app did against its own data. Closing removes the site, the database
+  copy and the worktree and keeps the branch with the agent's commits. It
+  refuses, naming the files, while anything is uncommitted. Built on
+  `grove try`, which gained `--new` for the same thing by hand. Verified over a
+  real MCP session: opened in 0.8 s, a migration and a query in the sandbox,
+  the branch and its commit still there after closing, and the user's
+  database and checkout unchanged.
+
 - **`grove try <branch>`: another branch running beside yours.** Reviewing a
   colleague's branch no longer means stashing, checking out and migrating your
   own database into their schema. A try is a second checkout, and your checkout

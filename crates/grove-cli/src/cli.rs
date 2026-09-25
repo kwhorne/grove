@@ -229,6 +229,10 @@ pub enum Command {
         /// With --done: remove the worktree even if it holds uncommitted work.
         #[arg(long)]
         force: bool,
+        /// Make BRANCH as a new branch from your checkout's current commit,
+        /// instead of trying one that exists.
+        #[arg(long = "new")]
+        new_branch: bool,
         /// The site to try a branch of. Defaults to the project in the current directory.
         #[arg(long)]
         site: Option<String>,

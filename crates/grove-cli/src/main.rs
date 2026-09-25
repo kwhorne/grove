@@ -132,6 +132,7 @@ async fn main() -> anyhow::Result<()> {
             list,
             done,
             force,
+            new_branch,
             site,
         } => {
             if list {
@@ -143,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
             };
             match (done, branch) {
                 (Some(b), _) => tries::done(&paths, site, b, force, args.json).await,
-                (None, Some(b)) => tries::start(&paths, site, b, args.json).await,
+                (None, Some(b)) => tries::start(&paths, site, b, new_branch, args.json).await,
                 (None, None) => anyhow::bail!(
                     "which branch? `grove try <branch>`, `grove try --list`, or `grove try --done <branch>`"
                 ),
@@ -530,6 +531,11 @@ mod mcp {
                 "inputSchema": {"type": "object", "properties": {}}
             },
             {
+                "name": "grove_sandbox_list",
+                "description": "List the sandboxes (and `grove try` checkouts) that are running: for each, the site name to pass to other grove tools, its URL, the directory holding its code, its branch, and its own database.",
+                "inputSchema": {"type": "object", "properties": {}}
+            },
+            {
                 "name": "grove_requests",
                 "description": "Recent HTTP requests Grove proxied (framework-agnostic), newest first. Optionally filter by site.",
                 "inputSchema": {"type": "object", "properties": {
@@ -603,6 +609,24 @@ mod mcp {
                     "command": {"type": "string", "description": "Artisan command to run (default: 'migrate --force'). Examples: 'migrate --force', 'migrate:fresh --force', 'migrate:rollback --force'."},
                     "roll_back": {"type": "boolean", "description": "Always roll back afterwards, even on success — a pure dry run (default false)."}
                 }, "required": ["site"]}
+            }));
+            tools.push(json!({
+                "name": "grove_sandbox_open",
+                "description": "Open a sandbox: a complete, running copy of a site to work in without touching the user's own checkout or database. Grove makes a NEW git branch from the site's current commit (or checks out an existing one with existing=true) in a separate worktree, gives it its own copy of the database, runs composer install and the migrations, and serves it at its own https URL. Edit files under the returned `path`, commit on the branch to keep the work, and pass the returned `site` to grove_db_query, grove_requests, grove_request_chain, grove_logs and grove_migrate_sandboxed to see what the running app did. Nothing reaches the user's checkout until they merge the branch. Close it with grove_sandbox_close. Takes a few seconds (longer if composer has to download packages).",
+                "inputSchema": {"type": "object", "properties": {
+                    "site": {"type": "string", "description": "The site to make a sandbox of (see grove_sites)"},
+                    "branch": {"type": "string", "description": "Branch name for the work, e.g. 'agent/fix-invoice-totals'. Created from the site's current commit unless existing=true."},
+                    "existing": {"type": "boolean", "description": "Check out an existing branch instead of creating one (default false)."}
+                }, "required": ["site", "branch"]}
+            }));
+            tools.push(json!({
+                "name": "grove_sandbox_close",
+                "description": "Close a sandbox: remove its site, its database copy and its worktree. The branch and its commits stay in the repository for the user to review. Refuses while the worktree holds uncommitted changes (listing them) unless force=true — commit first to keep the work.",
+                "inputSchema": {"type": "object", "properties": {
+                    "site": {"type": "string", "description": "The site the sandbox was made from"},
+                    "branch": {"type": "string", "description": "The sandbox's branch"},
+                    "force": {"type": "boolean", "description": "Discard uncommitted changes (default false)."}
+                }, "required": ["site", "branch"]}
             }));
             tools.push(json!({
                 "name": "grove_sql_sandboxed",
@@ -685,6 +709,38 @@ mod mcp {
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 sql_sandboxed(paths, socket, &site, &sql, roll_back).await
+            }
+            "grove_sandbox_list" => {
+                let list: Vec<Value> = crate::tries::all(paths).iter().map(sandbox_json).collect();
+                Ok(serde_json::to_string_pretty(&list)?)
+            }
+            "grove_sandbox_open" | "grove_sandbox_close" if !allow_write => anyhow::bail!(
+                "write tools are disabled; start the server with `grove mcp --allow-write` to open sandboxes"
+            ),
+            "grove_sandbox_open" => {
+                let site = s("site").ok_or_else(|| anyhow::anyhow!("site is required"))?;
+                let branch = s("branch").ok_or_else(|| anyhow::anyhow!("branch is required"))?;
+                let existing = args.get("existing").and_then(Value::as_bool).unwrap_or(false);
+                // Progress goes to stderr: stdout is this protocol.
+                let report = |msg: &str| eprintln!("grove sandbox: {msg}");
+                let (record, already) =
+                    crate::tries::create(paths, &site, &branch, !existing, &report).await?;
+                let mut out = sandbox_json(&record);
+                out["already_open"] = json!(already);
+                audit_log(paths, &json!({"tool": "grove_sandbox_open", "site": site, "branch": branch, "path": out["path"], "database": out["database"]}));
+                Ok(serde_json::to_string_pretty(&out)?)
+            }
+            "grove_sandbox_close" => {
+                let site = s("site").ok_or_else(|| anyhow::anyhow!("site is required"))?;
+                let branch = s("branch").ok_or_else(|| anyhow::anyhow!("branch is required"))?;
+                let force = args.get("force").and_then(Value::as_bool).unwrap_or(false);
+                let record = crate::tries::remove(paths, &site, &branch, force).await?;
+                audit_log(paths, &json!({"tool": "grove_sandbox_close", "site": site, "branch": branch, "force": force}));
+                Ok(serde_json::to_string_pretty(&json!({
+                    "closed": crate::tries::try_name(&record.site, &record.branch),
+                    "branch_kept": record.branch,
+                    "note": "the branch and its commits are still in the repository"
+                }))?)
             }
             "grove_sites" => match call(socket, Request::ListSites).await? {
                 ResponseData::Sites(sites) => {
@@ -826,6 +882,18 @@ mod mcp {
     type Schema = std::collections::BTreeMap<String, Vec<String>>;
 
     /// Resolve a site's project path and its pinned PHP version.
+    /// What an agent needs to know about a sandbox to use it.
+    fn sandbox_json(t: &crate::tries::TryRecord) -> Value {
+        json!({
+            "site": crate::tries::try_name(&t.site, &t.branch),
+            "made_from": t.site,
+            "branch": t.branch,
+            "url": t.url,
+            "path": t.path,
+            "database": {"engine": t.engine, "name": t.database},
+        })
+    }
+
     async fn site_info(socket: &Path, name: &str) -> anyhow::Result<(PathBuf, String)> {
         match call(socket, Request::ListSites).await? {
             ResponseData::Sites(sites) => sites
