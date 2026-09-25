@@ -32,7 +32,22 @@ use tokio::task::JoinHandle;
 /// The public listener for every service in on-demand mode.
 #[derive(Default)]
 pub struct Fronts {
-    open: Mutex<HashMap<String, JoinHandle<()>>>,
+    open: Mutex<HashMap<String, Front>>,
+    /// Checked on every warm-up nudge without taking the async lock above.
+    warm: std::sync::RwLock<HashMap<String, Warm>>,
+}
+
+struct Front {
+    task: JoinHandle<()>,
+}
+
+/// What a warm-up needs from a front: the same gate a connection takes, the
+/// idle clock it resets, and whether a warm-up is already under way.
+#[derive(Clone)]
+struct Warm {
+    gate: Arc<Mutex<()>>,
+    last_seen: Arc<std::sync::Mutex<Instant>>,
+    warming: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Fronts {
@@ -62,19 +77,73 @@ impl Fronts {
             port,
             "on demand: holding the port; the server starts on first connection"
         );
-        let task = tokio::spawn(serve(services, key.to_string(), listener));
-        open.insert(key.to_string(), task);
+        let warm = Warm {
+            gate: Arc::new(Mutex::new(())),
+            last_seen: Arc::new(std::sync::Mutex::new(Instant::now())),
+            warming: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let task = tokio::spawn(serve(services, key.to_string(), listener, warm.clone()));
+        if let Ok(mut w) = self.warm.write() {
+            w.insert(key.to_string(), warm);
+        }
+        open.insert(key.to_string(), Front { task });
         Ok(port)
+    }
+
+    /// Start `key`'s server in the background, if it is idle, because a
+    /// request that will need it is on its way.
+    ///
+    /// Returns at once and never makes the caller wait: it runs on the DNS
+    /// and request paths. The start itself goes through the same gate a
+    /// connection takes, so a warm-up and a real connection arriving together
+    /// start one server between them; and it resets the idle clock, so a
+    /// server started for a request does not stop before the request comes.
+    pub fn warm(&self, services: &Arc<ServiceManager>, key: &str) {
+        if services.upstream_port(key).is_some() {
+            return;
+        }
+        let Some(w) = self.warm.read().ok().and_then(|m| m.get(key).cloned()) else {
+            return;
+        };
+        if w.warming.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let (services, key) = (services.clone(), key.to_string());
+        tokio::spawn(async move {
+            let _held = w.gate.lock().await;
+            touch(&w.last_seen);
+            if services.upstream_port(&key).is_none() {
+                let started = Instant::now();
+                let (s, k) = (services.clone(), key.clone());
+                match tokio::task::spawn_blocking(move || s.start(&k)).await {
+                    Ok(Ok(())) => tracing::info!(
+                        service = %key,
+                        ms = started.elapsed().as_millis() as u64,
+                        "on demand: started ahead of a request"
+                    ),
+                    Ok(Err(e)) => {
+                        tracing::warn!(service = %key, error = %e, "on demand: warm-up failed")
+                    }
+                    Err(e) => {
+                        tracing::warn!(service = %key, error = %e, "on demand: warm-up task failed")
+                    }
+                }
+            }
+            w.warming.store(false, Ordering::SeqCst);
+        });
     }
 
     /// Give the port back. Connections already spliced through finish on
     /// their own; nothing new is accepted.
     pub async fn close(&self, key: &str) {
-        if let Some(task) = self.open.lock().await.remove(key) {
-            task.abort();
+        if let Ok(mut w) = self.warm.write() {
+            w.remove(key);
+        }
+        if let Some(front) = self.open.lock().await.remove(key) {
+            front.task.abort();
             // The listener is dropped with the task; wait for that, so a
             // caller about to bind the same port does not race it.
-            let _ = task.await;
+            let _ = front.task.await;
         }
     }
 
@@ -115,13 +184,13 @@ fn tick_for(idle: Duration) -> Duration {
 }
 
 /// Accept on the public port, and stop the server when it has sat idle.
-async fn serve(services: Arc<ServiceManager>, key: String, listener: TcpListener) {
+async fn serve(services: Arc<ServiceManager>, key: String, listener: TcpListener, warm: Warm) {
     let active = Arc::new(AtomicUsize::new(0));
-    let last_seen = Arc::new(std::sync::Mutex::new(Instant::now()));
-    // Held while a connection finds (or starts) the server and dials it, and
-    // while the idle check decides and stops. So a connection can never be
-    // handed a server that is being stopped under it.
-    let gate = Arc::new(Mutex::new(()));
+    let last_seen = warm.last_seen.clone();
+    // Held while a connection finds (or starts) the server and dials it, while
+    // a warm-up starts it, and while the idle check decides and stops. So a
+    // connection can never be handed a server that is being stopped under it.
+    let gate = warm.gate.clone();
 
     loop {
         let idle = services
