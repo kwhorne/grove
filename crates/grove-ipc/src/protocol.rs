@@ -156,6 +156,12 @@ pub enum Request {
     },
     /// List stored database snapshots.
     DbSnapshotList,
+    /// Replay captured request `id` against another host, keeping its method,
+    /// path, headers and body — `grove bisect` sends it to the bisect checkout.
+    ReplayRequestAt {
+        id: u64,
+        host: String,
+    },
     /// `grove try`: give a worktree its own copy of the main checkout's
     /// database. `project` is the main checkout, `worktree` the try, whose
     /// `.env` has already been copied in.

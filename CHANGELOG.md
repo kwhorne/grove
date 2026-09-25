@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`grove bisect`: which commit broke this request?** Give it a commit where
+  a request worked and one of the requests Grove recorded (`grove requests`).
+  It checks each commit out beside your checkout at `<site>--bisect.test`,
+  gives it a fresh copy of your database migrated to that commit, runs
+  `composer install` only when `composer.lock` changed, replays the request
+  with its method, path, headers and body, and lets `git bisect` narrow it
+  down. Your checkout never moves.
+
+  ```text
+  $ grove bisect --good 3f2a9c0 --request 1
+  COMMIT     STATUS       SUBJECT
+  59f8d721a3 500    bad   c8: notes
+  aba631d973 200    good  c4: more notes
+  fcb901b823 500    bad   c6: rename total to amount in the report
+  b540fc73ef 200    good  c5: report sums invoice totals
+
+  first bad commit: fcb901b823 c6: rename total to amount in the report
+  ```
+
+  A commit is good when the replay answers below 500, or exactly
+  `--expect-status` when given. One whose migrations or dependencies do not
+  install is skipped. It first checks that the request really fails at the bad
+  end and says so if it does not. Everything it set up is taken down at the
+  end, including when a step fails. Each step waits three seconds for OPcache
+  to notice the new files, because OPcache counts its two-second revalidation
+  window in whole seconds. At 2.1 s the previous commit's compiled code
+  answered, and a first version blamed a commit that only touched a text file.
+  Verified on an eight-commit history with a real bug in the sixth: found in
+  three of three runs, 13 s each.
+
 - **Sandboxes for coding agents.** `grove mcp --allow-write` offers
   `grove_sandbox_open` and `grove_sandbox_close`, plus `grove_sandbox_list`
   without the flag. An agent gets a complete running copy of a site to work

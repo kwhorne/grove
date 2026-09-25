@@ -1222,6 +1222,19 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 }
             }
         },
+        Request::ReplayRequestAt { id, host } => match state.shared.log.captured(id) {
+            None => Ok(Response::err(format!("no request with id {id}"))),
+            Some(cap) => {
+                let port = state.config.lock().await.general.http_port;
+                match grove_proxy::replay_to(port, &cap, &host, &cap.path, cap.https).await {
+                    Ok((status, duration_ms)) => Ok(Response::ok(ResponseData::Replayed {
+                        status,
+                        duration_ms,
+                    })),
+                    Err(e) => Ok(Response::err(format!("replay failed: {e}"))),
+                }
+            }
+        },
         Request::ReplayRequest { id } => match state.shared.log.captured(id) {
             None => Ok(Response::err(format!("no request with id {id}"))),
             Some(cap) => {

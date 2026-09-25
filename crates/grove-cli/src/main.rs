@@ -1,6 +1,7 @@
 //! `grove` — the CLI frontend. A thin client over the daemon for stateful
 //! actions, with a few local-only commands (CA trust, PHP discovery).
 
+mod bisect;
 mod cli;
 mod output;
 mod tries;
@@ -149,6 +150,19 @@ async fn main() -> anyhow::Result<()> {
                     "which branch? `grove try <branch>`, `grove try --list`, or `grove try --done <branch>`"
                 ),
             }
+        }
+        Command::Bisect {
+            good,
+            bad,
+            request,
+            expect_status,
+            site,
+        } => {
+            let site = match site {
+                Some(s) => s,
+                None => site_in_cwd()?,
+            };
+            bisect::bisect(&paths, site, good, bad, request, expect_status, args.json).await
         }
         Command::Bundle { action } => match action {
             BundleAction::Export { path, out, no_env } => {
@@ -415,6 +429,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Init { .. }
         | Command::Up { .. }
         | Command::Try { .. }
+        | Command::Bisect { .. }
         | Command::Bundle { .. }
         | Command::Mcp { .. }
         | Command::Share { .. }
