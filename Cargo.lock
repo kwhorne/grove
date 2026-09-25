@@ -2316,7 +2316,7 @@ dependencies = [
 
 [[package]]
 name = "grove-cli"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "grove-core"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "directories",
  "libc",
@@ -2358,7 +2358,7 @@ dependencies = [
 
 [[package]]
 name = "grove-daemon"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "anyhow",
  "e-db",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "grove-dns"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "async-trait",
  "grove-core",
@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "grove-gui"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "e-db",
  "grove-core",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "grove-ipc"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "grove-core",
  "grove-license",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "grove-license"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "base64 0.23.1",
  "ed25519-dalek",
@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "grove-os"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "grove-core",
  "thiserror 2.0.20",
@@ -2457,7 +2457,7 @@ dependencies = [
 
 [[package]]
 name = "grove-proxy"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "grove-runtime"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "flate2",
  "grove-core",
@@ -2496,7 +2496,7 @@ dependencies = [
 
 [[package]]
 name = "grove-secrets"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "age",
  "serde",
@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "grove-services"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "flate2",
  "grove-core",
@@ -2524,7 +2524,7 @@ dependencies = [
 
 [[package]]
 name = "grove-tls"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "grove-core",
  "rcgen",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "grove-tunnel"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "anyhow",
  "bytes",

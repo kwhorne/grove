@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-09-25
+
+Six things Grove can do because every request and every database goes through
+it. Another branch can run beside yours, with its own site and its own copy of
+your database. A coding agent can get the same thing as a sandbox over MCP.
+`grove bisect` finds the commit that broke a recorded request. A replay can
+start from the same data every time. `grove routes` notices when a route gets
+slower. And an idle on-demand database starts as soon as its site is looked up,
+before PHP asks for it.
+
+### Upgrade notes
+
+- **Nothing needs doing.** The daemon and CLI talk the same protocol as 1.9.0
+  plus new requests, so an older GUI or CLI keeps working against a new daemon.
+- **Grove now keeps route timings on disk.** It writes
+  `$GROVE_HOME/routes.json` (owner-only) every 30 seconds while anything
+  changed. The file holds each route's method, its path with ids folded to
+  placeholders, and recent durations, with no query strings, headers or
+  bodies. `grove routes --reset` empties it.
+- **`grove try` and `grove bisect` put worktrees in `~/.grove/try/`.** Try
+  databases are named `<db>__gt_<hash>`. Both commands take away what they
+  made, `grove try --done` when you are finished and `grove bisect` at the end
+  of every run.
+- **The sandbox tools exist only with `grove mcp --allow-write`.** A read-only
+  MCP server gains one tool, `grove_routes`.
+
 ### Added
 
 - **`grove routes`: which route got slower.** Grove times every request
@@ -1551,7 +1577,10 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
-[Unreleased]: https://github.com/kwhorne/grove/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/kwhorne/grove/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/kwhorne/grove/releases/tag/v1.10.0
+[1.9.0]: https://github.com/kwhorne/grove/releases/tag/v1.9.0
+[1.8.0]: https://github.com/kwhorne/grove/releases/tag/v1.8.0
 [1.7.1]: https://github.com/kwhorne/grove/releases/tag/v1.7.1
 [1.7.0]: https://github.com/kwhorne/grove/releases/tag/v1.7.0
 [1.6.0]: https://github.com/kwhorne/grove/releases/tag/v1.6.0
