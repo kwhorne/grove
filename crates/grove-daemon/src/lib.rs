@@ -16,6 +16,7 @@ pub mod ondemand;
 pub mod replay;
 pub mod state;
 pub mod tunnels;
+pub mod warm;
 
 use crate::state::ListenerHealth;
 
@@ -135,6 +136,25 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         }
     }
 
+    // Start an idle on-demand database as soon as a site that uses it is
+    // looked up or requested, instead of when PHP first connects.
+    let warmer = Arc::new(warm::Warmer::new(
+        daemon.services.clone(),
+        daemon.fronts.clone(),
+        daemon.shared.clone(),
+    ));
+    {
+        let w = warmer.clone();
+        let _ = daemon
+            .shared
+            .site_hook
+            .set(Arc::new(move |site: &str| w.site(site)));
+    }
+    let dns_hook: grove_dns::LookupHook = {
+        let w = warmer.clone();
+        Arc::new(move |host: &str| w.host(host))
+    };
+
     // Databases that follow their git branch. A switch a previous daemon was
     // killed in the middle of is finished or undone first — before anything
     // can serve the site, and before the poller could start a second one on
@@ -166,10 +186,13 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
         let listeners = daemon.listeners.clone();
         let handed = adopt_dns(&mut inherited, general.dns_port);
         tasks.push(tokio::spawn(async move {
-            match dns_sockets(handed, dns_addr)
-                .await
-                .map(|(udp, tcp)| grove_dns::serve_on(&tld, udp, tcp))
-            {
+            match dns_sockets(handed, dns_addr).await.map(|(udp, tcp)| {
+                grove_dns::serve_with(
+                    grove_dns::GroveResolver::new(&tld).with_lookup_hook(dns_hook),
+                    udp,
+                    tcp,
+                )
+            }) {
                 Ok(mut server) => {
                     listeners.set_dns(ListenerHealth::Up);
                     if let Err(e) = server.block_until_done().await {
