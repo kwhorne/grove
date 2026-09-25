@@ -184,7 +184,10 @@ fn store_for(
 /// uses is not a local-development decision; PostgreSQL and ElyraSQL are
 /// refused because they are not written yet, and saying so beats a switch that
 /// silently does nothing.
-fn resolve_database(project: &Path, services: &ServiceManager) -> anyhow::Result<(Engine, String)> {
+pub(crate) fn resolve_database(
+    project: &Path,
+    services: &ServiceManager,
+) -> anyhow::Result<(Engine, String)> {
     let Some(cfg) = e_db::from_env(project) else {
         anyhow::bail!(
             "{} has no database in its .env (DB_CONNECTION), so there is nothing to follow",

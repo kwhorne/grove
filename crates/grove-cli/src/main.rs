@@ -3,6 +3,7 @@
 
 mod cli;
 mod output;
+mod tries;
 
 use anyhow::Context;
 use clap::Parser;
@@ -126,6 +127,28 @@ async fn main() -> anyhow::Result<()> {
             write,
             no_dev,
         } => lifecycle::up(&paths, path, write, no_dev, args.json).await,
+        Command::Try {
+            branch,
+            list,
+            done,
+            force,
+            site,
+        } => {
+            if list {
+                return tries::list(&paths, args.json);
+            }
+            let site = match site {
+                Some(s) => s,
+                None => site_in_cwd()?,
+            };
+            match (done, branch) {
+                (Some(b), _) => tries::done(&paths, site, b, force, args.json).await,
+                (None, Some(b)) => tries::start(&paths, site, b, args.json).await,
+                (None, None) => anyhow::bail!(
+                    "which branch? `grove try <branch>`, `grove try --list`, or `grove try --done <branch>`"
+                ),
+            }
+        }
         Command::Bundle { action } => match action {
             BundleAction::Export { path, out, no_env } => {
                 bundle::export(&paths, path, out, no_env, args.json).await
@@ -390,6 +413,7 @@ fn to_request(cmd: Command, _paths: &GrovePaths) -> anyhow::Result<Request> {
         | Command::Import
         | Command::Init { .. }
         | Command::Up { .. }
+        | Command::Try { .. }
         | Command::Bundle { .. }
         | Command::Mcp { .. }
         | Command::Share { .. }
@@ -814,7 +838,7 @@ mod mcp {
     }
 
     /// The PHP CLI for `version`, downloading it if necessary.
-    fn resolve_php_cli(paths: &GrovePaths, version: &str) -> anyhow::Result<PathBuf> {
+    pub(crate) fn resolve_php_cli(paths: &GrovePaths, version: &str) -> anyhow::Result<PathBuf> {
         use grove_runtime::PhpRegistry;
         let reg = PhpRegistry::load(paths);
         if let Some(cli) = reg.get(version).and_then(|b| b.cli_binary.clone()) {

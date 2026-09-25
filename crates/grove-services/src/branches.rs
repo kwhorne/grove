@@ -95,12 +95,88 @@ pub fn parked_schema(database: &str, branch: &str) -> String {
 /// Is `name` a schema this module created? Checked before every `DROP`, so a
 /// bug elsewhere can never turn into dropping someone's real database.
 pub fn is_parked_schema(name: &str) -> bool {
-    match name.rsplit_once(PARKED_MARKER) {
+    has_marker(name, PARKED_MARKER)
+}
+
+const TRY_MARKER: &str = "__gt_";
+
+/// The database a `grove try` of `branch` gets: `<database>__gt_<id>`.
+///
+/// A different marker from a parked copy on purpose. A parked copy is a
+/// branch's data waiting to be swapped back under the real name; a try's copy
+/// is a second, independent database that a second checkout uses at the same
+/// time. Mixing them up would let `grove db branches` swap a try's data into
+/// the live database.
+pub fn try_schema(database: &str, branch: &str) -> String {
+    let suffix = format!("{TRY_MARKER}{}", branch_id(branch));
+    let keep = 64 - suffix.chars().count();
+    let base: String = database.chars().take(keep).collect();
+    format!("{base}{suffix}")
+}
+
+/// Is `name` a database `grove try` created? The guard on its `DROP`.
+pub fn is_try_schema(name: &str) -> bool {
+    has_marker(name, TRY_MARKER)
+}
+
+fn has_marker(name: &str, marker: &str) -> bool {
+    match name.rsplit_once(marker) {
         Some((base, id)) => {
             !base.is_empty() && id.len() == 8 && id.chars().all(|c| c.is_ascii_hexdigit())
         }
         None => false,
     }
+}
+
+/// Copy MySQL database `from` into a new database `to` on Grove's server, as
+/// a faithful copy: the same tables, rows, generated columns and foreign keys.
+///
+/// Refuses a `to` that already holds tables, and a `from` with views, triggers,
+/// routines or events, which a table-by-table copy would silently leave out.
+/// On failure the half-made `to` is removed, since this created it.
+pub async fn mysql_clone_database(port: u16, from: &str, to: &str) -> Result<()> {
+    let mut conn = mysql_connect(port).await?;
+    let blockers = mysql_blockers(&mut conn, from).await?;
+    if !blockers.is_empty() {
+        return Err(BranchError::Refused(format!(
+            "{from} has {}, which a copy would leave behind",
+            blockers.join(", ")
+        )));
+    }
+    let meta = mysql_schema(&mut conn, from)
+        .await?
+        .ok_or_else(|| BranchError::Refused(format!("there is no database {from} to copy")))?;
+    let created = mysql_prepare_parking(&mut conn, to, Some(meta)).await?;
+    let result = mysql_copy_tables(&mut conn, from, to).await;
+    if result.is_err() && created {
+        let _ = raw_sql(AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {}",
+            quote_ident(to)
+        )))
+        .execute(&mut conn)
+        .await;
+    }
+    let _ = conn.close().await;
+    result
+}
+
+/// Drop a database `grove try` made. Anything without the try marker is
+/// refused, whatever the caller asked for.
+pub async fn mysql_drop_try(port: u16, name: &str) -> Result<()> {
+    if !is_try_schema(name) {
+        return Err(BranchError::Refused(format!(
+            "{name} is not a database `grove try` created; refusing to drop it"
+        )));
+    }
+    let mut conn = mysql_connect(port).await?;
+    raw_sql(AssertSqlSafe(format!(
+        "DROP DATABASE IF EXISTS {}",
+        quote_ident(name)
+    )))
+    .execute(&mut conn)
+    .await?;
+    conn.close().await?;
+    Ok(())
 }
 
 /// A MySQL identifier, quoted: backticks around it, and any backtick inside
@@ -708,6 +784,30 @@ fn sqlite_park_copy(live: &Path, parked_dir: &Path, from: &str) -> Result<()> {
     Ok(())
 }
 
+/// Copy a SQLite database — the file and whichever of `-wal`/`-shm` exist —
+/// to `to`, which must not exist yet. For `grove try`, whose checkout needs a
+/// database of its own that starts from the main checkout's data.
+pub fn sqlite_copy(from: &Path, to: &Path) -> Result<()> {
+    if to.exists() {
+        return Err(BranchError::Refused(format!(
+            "{} already exists; not overwriting it",
+            to.display()
+        )));
+    }
+    if !from.exists() {
+        return Ok(());
+    }
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    for (src, dst) in sidecars(from).iter().zip(sidecars(to).iter()) {
+        if src.exists() {
+            std::fs::copy(src, dst)?;
+        }
+    }
+    Ok(())
+}
+
 /// Other processes with `file` open, from `lsof`, as `(pid, command)`.
 fn open_by_others(file: &Path) -> Vec<(u32, String)> {
     if !file.exists() {
@@ -770,6 +870,18 @@ mod tests {
                 "{real} must not look like a parked copy"
             );
         }
+    }
+
+    /// A try's database and a parked copy must never be mistaken for each
+    /// other: each guard accepts only its own.
+    #[test]
+    fn try_and_parked_names_are_told_apart() {
+        let t = try_schema("shop", "feature/x");
+        let p = parked_schema("shop", "feature/x");
+        assert!(is_try_schema(&t) && !is_parked_schema(&t), "{t}");
+        assert!(is_parked_schema(&p) && !is_try_schema(&p), "{p}");
+        assert!(try_schema(&"d".repeat(64), "b").chars().count() <= 64);
+        assert!(!is_try_schema("shop"));
     }
 
     #[test]

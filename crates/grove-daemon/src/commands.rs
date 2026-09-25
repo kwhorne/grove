@@ -937,6 +937,70 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 Err(e) => Ok(Response::err(e.to_string())),
             }
         }
+        Request::TryDatabaseCreate {
+            project,
+            worktree,
+            branch,
+        } => {
+            let project = std::path::PathBuf::from(project);
+            let worktree = std::path::PathBuf::from(worktree);
+            if e_db::from_env(&project).is_none() {
+                return Ok(Response::ok(ResponseData::TryDatabase {
+                    engine: "none".into(),
+                    database: String::new(),
+                }));
+            }
+            // The same gate as branch-following: only a database on Grove's
+            // own MySQL, or a SQLite file, is copied. Anything else would
+            // leave the try sharing the main checkout's database, which is the
+            // one outcome `grove try` exists to prevent.
+            let (engine, database) = crate::branches::resolve_database(&project, &state.services)?;
+            match engine {
+                crate::branches::Engine::Mysql => {
+                    let port = state
+                        .services
+                        .ready_port("mysql")
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                    let copy = grove_services::try_schema(&database, &branch);
+                    grove_services::mysql_clone_database(port, &database, &copy).await?;
+                    Ok(Response::ok(ResponseData::TryDatabase {
+                        engine: "mysql".into(),
+                        database: copy,
+                    }))
+                }
+                crate::branches::Engine::Sqlite => {
+                    let target = e_db::from_env(&worktree)
+                        .filter(|c| c.engine == "sqlite")
+                        .map(|c| std::path::PathBuf::from(c.path))
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("the try's .env does not name a SQLite database")
+                        })?;
+                    if target == std::path::Path::new(&database) {
+                        anyhow::bail!(
+                            "the try's .env points at the main checkout's own SQLite file \
+                             ({database}); it would share that database"
+                        );
+                    }
+                    grove_services::sqlite_copy(std::path::Path::new(&database), &target)?;
+                    Ok(Response::ok(ResponseData::TryDatabase {
+                        engine: "sqlite".into(),
+                        database: target.to_string_lossy().into_owned(),
+                    }))
+                }
+            }
+        }
+        Request::TryDatabaseDrop { engine, database } => {
+            if engine == "mysql" {
+                let port = state
+                    .services
+                    .ready_port("mysql")
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                grove_services::mysql_drop_try(port, &database).await?;
+            }
+            Ok(Response::ok(ResponseData::Message(format!(
+                "dropped the try database {database}"
+            ))))
+        }
         Request::DbBranches { site, action } => {
             use grove_ipc::protocol::DbBranchAction;
             let need_site = || {

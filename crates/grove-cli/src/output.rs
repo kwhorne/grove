@@ -299,6 +299,9 @@ pub fn print_response(resp: &Response, json: bool) {
         }) => {
             println!("replayed → {status} in {duration_ms}ms (see it in `grove requests`)");
         }
+        Some(ResponseData::TryDatabase { engine, database }) => {
+            println!("{engine} {database}");
+        }
         Some(ResponseData::DbBranches(followed)) => {
             if followed.is_empty() {
                 println!(

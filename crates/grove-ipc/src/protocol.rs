@@ -156,6 +156,20 @@ pub enum Request {
     },
     /// List stored database snapshots.
     DbSnapshotList,
+    /// `grove try`: give a worktree its own copy of the main checkout's
+    /// database. `project` is the main checkout, `worktree` the try, whose
+    /// `.env` has already been copied in.
+    TryDatabaseCreate {
+        project: String,
+        worktree: String,
+        branch: String,
+    },
+    /// Drop a database `grove try` made. Only names carrying the try marker
+    /// are accepted; SQLite copies live inside the worktree and go with it.
+    TryDatabaseDrop {
+        engine: String,
+        database: String,
+    },
     /// Databases that follow a project's git branch: see `grove db branches`.
     /// `site` is required for everything but `Status`, where omitting it lists
     /// every site that follows its branch.
@@ -445,6 +459,13 @@ pub enum ResponseData {
     Snapshots(Vec<Snapshot>),
     /// Sites whose database follows their git branch.
     DbBranches(Vec<FollowedDatabase>),
+    /// The database a `grove try` got: `engine` is `mysql` or `sqlite`, and
+    /// `database` the schema name or the file's path. `none` when the project
+    /// has no database.
+    TryDatabase {
+        engine: String,
+        database: String,
+    },
     /// Recent proxied requests, newest first.
     Requests(Vec<RequestEntry>),
     /// Full captured request for one entry (headers + body).

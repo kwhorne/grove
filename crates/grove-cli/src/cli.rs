@@ -214,6 +214,26 @@ pub enum Command {
         no_dev: bool,
     },
 
+    /// Run another branch of this project beside yours: its own git worktree,
+    /// its own copy of the database, migrated, at `<site>--<branch>.test`.
+    /// Your checkout and your database are not touched.
+    Try {
+        /// The branch to try (a local branch, or one on origin).
+        branch: Option<String>,
+        /// List the tries there are.
+        #[arg(long)]
+        list: bool,
+        /// Take the try of this branch down: its site, its database and its worktree.
+        #[arg(long, value_name = "BRANCH")]
+        done: Option<String>,
+        /// With --done: remove the worktree even if it holds uncommitted work.
+        #[arg(long)]
+        force: bool,
+        /// The site to try a branch of. Defaults to the project in the current directory.
+        #[arg(long)]
+        site: Option<String>,
+    },
+
     /// Package or restore a whole project environment (grove.toml + .env + database)
     /// as one shareable file — reproducible dev environments without Docker.
     Bundle {

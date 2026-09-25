@@ -474,6 +474,27 @@ databases) and PostgreSQL (`--engine postgres`) snapshots are plain SQL dumps;
 an ElyraSQL snapshot (`--engine elyrasql`) is a hot, consistent copy of its
 single database file, taken while it serves.
 
+### Trying another branch without leaving yours
+
+```bash
+cd ~/Code/myapp
+grove try feature/invoices      # a colleague's branch, fetched from origin if needed
+grove try --list
+grove try --done feature/invoices
+```
+
+A try is a second checkout, running at the same time as yours at
+`https://myapp--feature-invoices.test`. It has its own git worktree under
+`~/.grove/try/`, its own `.env` (a copy of yours with the hostname and
+`DB_DATABASE` moved), and its own copy of your database, which the branch's
+migrations then run against. Your checkout stays on its branch and your
+database is not touched. `vendor/` and `node_modules/` are cloned from your
+checkout, so `composer install` only fetches what the branch changed.
+
+`--done` takes the site, the database copy and the worktree away. It refuses,
+and lists the files, while the worktree holds uncommitted work, unless you pass
+`--force`.
+
 ### A database per git branch
 
 Checking out a branch changes the code in a second and leaves the database

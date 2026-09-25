@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`grove try <branch>`: another branch running beside yours.** Reviewing a
+  colleague's branch no longer means stashing, checking out and migrating your
+  own database into their schema. A try is a second checkout, and your checkout
+  and your database are never touched:
+
+  ```text
+  $ grove try feature/invoices
+  ✓ feature/invoices is running at https://myapp--feature-invoices.test
+    code:     ~/.grove/try/myapp/feature-invoices
+    database: mysql myapp__gt_f38b5863
+    done:     grove try --done feature/invoices
+  ```
+
+  It makes a git worktree, fetching the branch from `origin` if it is not
+  local. It copies your `.env` into it with the site's hostname moved
+  everywhere it appears (`APP_URL`, `SESSION_DOMAIN`, `SANCTUM_STATEFUL_DOMAINS`,
+  subdomains) and `DB_DATABASE` pointed at the try's own copy of your database.
+  That copy is a new schema on Grove's MySQL, or a copy of the SQLite file.
+  `vendor/`, `node_modules/` and `public/build/` are cloned from your checkout
+  (copy-on-write on APFS, so seconds and no disk). Then `composer install`
+  catches up with the branch's lock file, the branch's migrations run, and the
+  try is linked on the same PHP, secured if your site is. The name uses a
+  double hyphen and no dot, because every subdomain of a site routes to that
+  site. A try whose setup fails part-way is undone completely. `--done` removes
+  the site, the try's database and the worktree, and refuses while the
+  worktree holds uncommitted work, naming the files, unless `--force`.
+  `--list` shows what is running. The try's database is refused, not shared,
+  for anything but MySQL on Grove's own server or SQLite.
+
 - **An idle on-demand database starts when its site is looked up.** Two
   earlier signals than PHP's first connection now start it. One is the DNS
   lookup of the site's name: a browser resolves `myapp.test` before it
