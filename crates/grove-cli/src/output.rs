@@ -293,6 +293,14 @@ pub fn print_response(resp: &Response, json: bool) {
                 println!("\nre-deliver one with: grove hooks replay <id> --to https://<site>.test/<handler>");
             }
         }
+        Some(ResponseData::ReplayedSameData {
+            status,
+            duration_ms,
+            data,
+        }) => {
+            println!("{data}");
+            println!("replayed → {status} in {duration_ms}ms (see it in `grove requests`)");
+        }
         Some(ResponseData::Replayed {
             status,
             duration_ms,

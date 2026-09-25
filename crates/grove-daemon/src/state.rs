@@ -3,6 +3,7 @@
 //! the registry rebuilt atomically.
 
 use anyhow::Context;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, Notify};
@@ -119,6 +120,9 @@ pub struct DaemonState {
     pub branch_lock: tokio::sync::Mutex<()>,
     /// The listeners holding the public ports of services in on-demand mode.
     pub fronts: Arc<crate::ondemand::Fronts>,
+    /// Starting points for `grove replay --same-data`, by request id. In
+    /// memory, like the request log whose ids they are keyed by.
+    pub replay_baselines: tokio::sync::Mutex<HashMap<u64, crate::replay::Baseline>>,
 }
 
 impl DaemonState {
@@ -136,6 +140,7 @@ impl DaemonState {
             inherited_sockets,
             branch_lock: tokio::sync::Mutex::new(()),
             fronts: Arc::new(crate::ondemand::Fronts::new()),
+            replay_baselines: tokio::sync::Mutex::new(HashMap::new()),
             paths,
             listeners: Arc::new(Listeners::default()),
             config: Mutex::new(config),

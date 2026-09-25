@@ -1248,6 +1248,81 @@ async fn handle(state: &Arc<DaemonState>, req: Request) -> anyhow::Result<Respon
                 }
             }
         },
+        Request::ReplaySameData { id, forget } => {
+            // Held across restore and replay, so two runs cannot interleave
+            // their writes into one another's starting point.
+            let mut baselines = state.replay_baselines.lock().await;
+            if forget {
+                return Ok(match baselines.remove(&id) {
+                    Some(b) => {
+                        crate::replay::forget(&state.paths, &b);
+                        Response::ok(ResponseData::Message(format!(
+                            "forgot the baseline for request {id}"
+                        )))
+                    }
+                    None => Response::err(format!("request {id} has no baseline")),
+                });
+            }
+            let Some(cap) = state.shared.log.captured(id) else {
+                return Ok(Response::err(format!("no request with id {id}")));
+            };
+            let taken = !baselines.contains_key(&id);
+            if taken {
+                let host = cap.host.split(':').next().unwrap_or_default().to_string();
+                let project = state
+                    .shared
+                    .registry
+                    .read()
+                    .await
+                    .by_hostname(&host)
+                    .map(|s| s.path.clone())
+                    .filter(|p| !p.as_os_str().is_empty());
+                let Some(project) = project else {
+                    return Ok(Response::err(format!(
+                        "{host} is not a site Grove serves, so there is no database to hold still"
+                    )));
+                };
+                let (paths, services) = (state.paths.clone(), state.services.clone());
+                let made = tokio::task::spawn_blocking(move || {
+                    crate::replay::take(&paths, &services, &project, id)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("baseline task panicked: {e}"))?;
+                match made {
+                    Ok(b) => {
+                        baselines.insert(id, b);
+                    }
+                    Err(e) => {
+                        return Ok(Response::err(format!("could not take a baseline: {e:#}")))
+                    }
+                }
+            } else {
+                let baseline = baselines.remove(&id).expect("checked above");
+                let (paths, services) = (state.paths.clone(), state.services.clone());
+                let (baseline, res) = tokio::task::spawn_blocking(move || {
+                    let res = crate::replay::restore(&paths, &services, &baseline);
+                    (baseline, res)
+                })
+                .await
+                .map_err(|e| anyhow::anyhow!("restore task panicked: {e}"))?;
+                baselines.insert(id, baseline);
+                if let Err(e) = res {
+                    return Ok(Response::err(format!(
+                        "could not put the baseline back, so not replaying: {e:#}"
+                    )));
+                }
+            }
+            let data = crate::replay::said(&baselines[&id], taken);
+            let port = state.config.lock().await.general.http_port;
+            match grove_proxy::replay(port, &cap).await {
+                Ok((status, duration_ms)) => Ok(Response::ok(ResponseData::ReplayedSameData {
+                    status,
+                    duration_ms,
+                    data,
+                })),
+                Err(e) => Ok(Response::err(format!("replay failed: {e}"))),
+            }
+        }
         Request::LicenseActivate { key } => match crate::license::activate(&state.paths, &key) {
             Ok(claims) => Ok(Response::ok(ResponseData::License(Some(claims)))),
             Err(e) => Ok(Response::err(format!("could not activate license: {e}"))),

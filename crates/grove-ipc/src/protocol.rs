@@ -219,6 +219,14 @@ pub enum Request {
     ReplayRequest {
         id: u64,
     },
+    /// Replay captured request `id` against the same data every time: the
+    /// first call takes a snapshot of the site's database, every later call
+    /// restores it first. `forget` drops the snapshot instead of replaying.
+    ReplaySameData {
+        id: u64,
+        #[serde(default)]
+        forget: bool,
+    },
     /// Generate an artifact (curl / http / pest) from a captured request.
     RequestToTest {
         id: u64,
@@ -480,6 +488,13 @@ pub enum ResponseData {
     Replayed {
         status: u16,
         duration_ms: u64,
+    },
+    /// A replay against a fixed starting point: `data` says whether the
+    /// baseline was just taken or restored.
+    ReplayedSameData {
+        status: u16,
+        duration_ms: u64,
+        data: String,
     },
     /// Generated code (curl / http / pest) for a captured request.
     Generated(String),
