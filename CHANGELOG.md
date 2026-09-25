@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`grove routes`: which route got slower.** Grove times every request
+  that PHP or an upstream answers and keeps the times per route. A route is
+  the method plus the path, with ids, UUIDs, ULIDs and long hashes folded to
+  placeholders, so `/orders/17` and `/orders/18` count as one route. When a
+  change makes a route slower, the daemon logs it and `grove routes` shows it,
+  with a request id to pass to `grove explain`:
+
+  ```text
+  $ grove routes
+  SITE             ROUTE                                          SEEN  TYPICAL   RECENT
+  shop             GET /orders/{id}                                 26     21ms    222ms  slower 10.6× for 0s, e.g. request #66
+  shop             GET /                                            20     21ms     21ms
+  ```
+
+  *Typical* is the median of the route's last 50 requests, and *recent* is
+  the median of its last five. Because both are medians, a single slow
+  request (a database starting on demand, or OPcache recompiling a file)
+  moves nothing. A route is flagged when recent is at least twice typical
+  and at least 50 ms more. It is judged only after it has ten requests
+  behind it.
+
+  While a route is flagged, its baseline takes no new samples, so a
+  regression does not quietly become the new normal. The flag clears when
+  the route is fast again. `grove routes <site> --reset --route '<route>'`
+  accepts the new speed instead.
+
+  Only answers below 400 count, because an error's speed says nothing about
+  the route. Static files do not count either. The timings are saved to
+  `routes.json` every 30 seconds and at shutdown, so they survive a restart.
+  The MCP tool `grove_routes` gives an agent the same numbers, so it can check
+  whether its change slowed a route.
+
+  A slowdown that creeps in a few percent at a time is absorbed into the
+  baseline and never flagged. This catches a route that jumps, like an N+1
+  query or a dropped index.
+
+  Verified live with a route that went from 21 ms to 222 ms: it was flagged
+  on the third slow request. The baseline stayed at 21 ms through 50 more
+  slow requests, the flag cleared once the route was fast again, and the
+  baselines survived a restart.
+
 - **`grove replay <id> --same-data`: replay against the same data every
   time.** A request that writes finds what it wrote last time when you replay
   it: the order exists, the email is taken, the webhook was already applied.

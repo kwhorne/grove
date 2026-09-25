@@ -52,6 +52,7 @@ after editing its config.
 | --- | --- |
 | `grove_sites` | Every site Grove serves (host, driver, PHP/Node, HTTPS, path). |
 | `grove_requests` | Recent requests across sites — method, path, status, duration. |
+| `grove_routes` | Per-route timing: each route's typical and recent time, and the routes that got slower, with a request id to look at. |
 | `grove_request` | Full headers + body of one captured request, with credentials redacted (see below). |
 | `grove_request_chain` | The causal chain for one request — the SQL it issued (with `grove sql-capture on`) and mail it sent within its time window, plus derived metrics (duration, query count). |
 | `grove_explain` | A curated debugging bundle for one request — the request (headers + body), its causal chain, and matching error-log entries with stacktraces. Everything needed to explain a failing request. |

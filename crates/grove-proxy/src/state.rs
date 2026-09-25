@@ -21,6 +21,8 @@ pub struct SharedState {
     pub known_hosts: Arc<std::sync::RwLock<KnownHosts>>,
     /// Ring buffer of recent proxied requests (the request timeline).
     pub log: Arc<RequestLog>,
+    /// How long each route usually takes, and which got slower.
+    pub routes: Arc<grove_core::routes::RouteStats>,
     /// Captured inbound webhooks (requests to `/__grove/hooks/...`), reusing the
     /// same store so they get inspect + replay + copy-as-test for free.
     pub hooks: Arc<RequestLog>,
@@ -48,6 +50,7 @@ impl SharedState {
             registry: Arc::new(RwLock::new(registry)),
             known_hosts,
             log: Arc::new(RequestLog::new(500)),
+            routes: Arc::new(grove_core::routes::RouteStats::new()),
             hooks: Arc::new(RequestLog::new(200)),
             https_port: 443,
             paused: Arc::new(std::sync::RwLock::new(HashMap::new())),
@@ -77,6 +80,12 @@ impl SharedState {
     /// Where secured sites are redirected to when reached over plain HTTP.
     pub fn with_https_port(mut self, port: u16) -> Self {
         self.https_port = port;
+        self
+    }
+
+    /// Start from the route timings an earlier daemon saved.
+    pub fn with_routes(mut self, routes: grove_core::routes::RouteStats) -> Self {
+        self.routes = Arc::new(routes);
         self
     }
 

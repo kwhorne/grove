@@ -492,6 +492,22 @@ checkout, so `composer install` only fetches what the branch changed.
 and lists the files, while the worktree holds uncommitted work, unless you pass
 `--force`.
 
+### Noticing when a route gets slower
+
+Grove times every request that PHP or an upstream answers, per route, and
+says when one jumps:
+
+```bash
+grove routes            # every route: typical time, recent time
+grove routes --slower   # just the ones that got at least twice as slow
+```
+
+A flagged route carries the id of one of its slow requests. Pass it to
+`grove explain <id>` to see the queries it ran, with `grove sql-capture on`.
+When the new speed is the right one, for example because the page now does
+more, `grove routes myapp --reset --route 'GET /orders/{id}'` starts that
+route's baseline over.
+
 ### Replaying a request against the same data
 
 `grove replay <id>` sends a recorded request again. A request that writes then

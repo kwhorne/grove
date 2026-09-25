@@ -287,6 +287,29 @@ pub enum Command {
         limit: usize,
     },
 
+    /// How long each route usually takes, and which ones got slower.
+    ///
+    /// Grove times every request PHP or an upstream answers, per route
+    /// (`GET /orders/{id}`). A route is flagged when its last few requests are
+    /// at least twice its usual time and 50 ms slower.
+    Routes {
+        /// Only this site (name or hostname).
+        site: Option<String>,
+        /// Only routes that got slower.
+        #[arg(long)]
+        slower: bool,
+        /// Forget the timings (all, the site's, or one `--route`) and start a
+        /// fresh baseline, e.g. to accept a route's new speed.
+        #[arg(long)]
+        reset: bool,
+        /// With `--reset`: just this route, as `grove routes` prints it.
+        #[arg(long, requires = "reset")]
+        route: Option<String>,
+        /// Maximum routes to show.
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+    },
+
     /// Run a Model Context Protocol (MCP) server over stdio, exposing your local
     /// sites, requests, webhooks, logs, and database schema to AI tools like
     /// Claude and Cursor. Configure your client to launch `grove mcp`.

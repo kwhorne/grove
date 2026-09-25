@@ -19,6 +19,7 @@ pub mod project;
 pub mod redact;
 pub mod registry;
 pub mod reqlog;
+pub mod routes;
 pub mod securefs;
 pub mod site;
 

@@ -580,12 +580,18 @@ pub async fn handle(
 
     tracing::debug!(host, site = %site.name, driver = %site.driver, %peer, "dispatch");
 
+    // Whether the app answered — PHP or an upstream — rather than a file on
+    // disk. Only those have a speed worth keeping per route.
+    let mut dynamic = false;
     let result = if is_hidden_path(&sanitize_path(req.uri().path())) {
         // `.env`, `.git/config`, editor backups: never served, never executed.
         Ok(error_page(StatusCode::NOT_FOUND, "Not found", None))
     } else {
         match site.driver {
-            Driver::Proxy => serve_proxy(req, &site, body_len).await,
+            Driver::Proxy => {
+                dynamic = true;
+                serve_proxy(req, &site, body_len).await
+            }
             Driver::Static => serve_static(req, &site).await,
             d if d.is_php() => {
                 // try_files: serve an existing static file (e.g. built Vite assets
@@ -605,11 +611,13 @@ pub async fn handle(
                         // disclose source (`/index.php` leaked the front controller)
                         // and would break any app that addresses scripts directly,
                         // such as WordPress's wp-login.php and wp-admin/*.php.
+                        dynamic = true;
                         serve_php(req, &site, &fpm, https, Some(rel), body_len).await
                     } else {
                         serve_static(req, &site).await
                     }
                 } else {
+                    dynamic = true;
                     serve_php(req, &site, &fpm, https, None, body_len).await
                 }
             }
@@ -617,23 +625,73 @@ pub async fn handle(
         }
     };
 
+    let failed = result.is_err();
     let response = result.unwrap_or_else(|e| {
         tracing::error!(error = %e, site = %site.name, "request failed");
         upstream_error_page(&site, &e)
     });
-    state.log.record(Record {
+    let duration_ms = start.elapsed().as_millis() as u64;
+    let status = response.status().as_u16();
+    let id = state.log.record(Record {
         site: &site.name,
         host: &host,
         method: &method,
         path: &path,
-        status: response.status().as_u16(),
-        duration_ms: start.elapsed().as_millis() as u64,
+        status,
+        duration_ms,
         https,
         headers: req_headers,
         body: tap.take(),
         body_truncated: tap.truncated(),
     });
+    // An error's speed says nothing about the route's: a 500 can be quick
+    // (it threw early) or slow (it timed out).
+    if dynamic && !failed && status < 400 {
+        observe_route(&state, &site.name, &method, &path, duration_ms, id);
+    }
     Ok(response)
+}
+
+/// Count a request toward its route's speed, and say so when the route has
+/// got slower or come back.
+fn observe_route(
+    state: &SharedState,
+    site: &str,
+    method: &str,
+    path: &str,
+    duration_ms: u64,
+    id: u64,
+) {
+    use grove_core::routes::{route_of, Change};
+    let route = route_of(method, path);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    match state.routes.observe(site, &route, duration_ms, id, now) {
+        Some(Change::Slower {
+            recent_ms,
+            typical_ms,
+        }) => tracing::warn!(
+            site,
+            route = %route,
+            recent_ms,
+            typical_ms,
+            request = id,
+            "route got slower: {recent_ms} ms, typically {typical_ms} ms (grove routes {site})"
+        ),
+        Some(Change::Recovered {
+            recent_ms,
+            typical_ms,
+        }) => tracing::info!(
+            site,
+            route = %route,
+            recent_ms,
+            typical_ms,
+            "route is back to its usual speed"
+        ),
+        None => {}
+    }
 }
 
 /// Re-issue a captured request through Grove's own HTTP port so it flows through
