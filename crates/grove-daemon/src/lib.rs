@@ -89,6 +89,13 @@ pub async fn run(paths: GrovePaths) -> anyhow::Result<()> {
     // auto-start what is installed and was left running.
     services.reap_orphans();
     services.autostart_installed();
+    // A service whose pinned version moved since the last daemon is left
+    // uninstalled-looking by the move. Fetch the new patch build and start it
+    // as before — in the background, since it downloads.
+    {
+        let services = services.clone();
+        tokio::task::spawn_blocking(move || services.upgrade_patch_builds());
+    }
 
     let daemon = Arc::new(DaemonState::new(
         paths.clone(),

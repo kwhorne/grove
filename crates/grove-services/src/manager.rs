@@ -150,6 +150,18 @@ fn port_accepts(port: u16) -> bool {
 }
 
 /// The command and pid listening on `port`, if `lsof` can say.
+/// `1.11.4` as numbers, for ordering; anything unparsable counts as 0.
+fn version_key(v: &str) -> Vec<u64> {
+    v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
+}
+
+/// Whether two versions share major and minor, so one is a patch release of
+/// the other.
+fn same_minor(a: &str, b: &str) -> bool {
+    let (a, b) = (version_key(a), version_key(b));
+    a.len() >= 2 && b.len() >= 2 && a[..2] == b[..2]
+}
+
 fn port_holder(port: u16) -> Option<String> {
     let out = std::process::Command::new("lsof")
         .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"])
@@ -535,6 +547,80 @@ impl ServiceManager {
         progress(&format!("{} ready", spec.name));
         self.set_autostart(spec.key, true);
         Ok(())
+    }
+
+    /// The version of an older build of `spec` still on disk, when the
+    /// pinned one is not installed.
+    ///
+    /// Builds unpack to a directory named for their version, beside `data/`,
+    /// so moving the pin (ElyraSQL 1.11.3 → 1.11.4) leaves the service looking
+    /// uninstalled: autostart skips it without a word and `start` says "not
+    /// installed", while the old build and the data sit right there.
+    fn older_build(&self, spec: &ServiceSpec) -> Option<String> {
+        let current = catalog::archive_root(spec)?;
+        let bin = self.primary_binary(spec)?;
+        // Where the binary sits relative to the archive root.
+        let rel = bin.strip_prefix(self.base_dir(spec)?).ok()?.to_path_buf();
+        let prefix = current.split_once('-').map(|(p, _)| format!("{p}-"))?;
+        let mut found: Vec<String> = std::fs::read_dir(self.service_root(spec))
+            .ok()?
+            .flatten()
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| *n != current && n.starts_with(&prefix))
+            .filter(|n| self.service_root(spec).join(n).join(&rel).exists())
+            .filter_map(|n| n[prefix.len()..].split('-').next().map(str::to_string))
+            .collect();
+        found.sort_by_key(|v| version_key(v));
+        found.pop()
+    }
+
+    /// Bring services whose pin moved up to the pinned build, when the move is
+    /// a patch release of what is installed, then start them the way they ran
+    /// before. A minor or major move is left to the user: MySQL and
+    /// PostgreSQL data directories do not always carry across one, so Grove
+    /// says so and does nothing. Blocking — it downloads; call it off the
+    /// daemon's startup path.
+    pub fn upgrade_patch_builds(&self) {
+        for spec in catalog::CATALOG {
+            if self.is_installed(spec) {
+                continue;
+            }
+            let Some(old) = self.older_build(spec) else {
+                continue;
+            };
+            if !same_minor(&old, spec.version) {
+                tracing::warn!(
+                    service = spec.key,
+                    installed = %old,
+                    pinned = spec.version,
+                    "{} {old} is installed but Grove now uses {}; run `grove service install {}` \
+                     to move to it (your data stays where it is)",
+                    spec.name,
+                    spec.version,
+                    spec.key
+                );
+                continue;
+            }
+            let autostart = self.wants_autostart(spec.key);
+            tracing::info!(
+                service = spec.key,
+                from = %old,
+                to = spec.version,
+                "upgrading to the pinned patch release"
+            );
+            let done = self.install(spec.key, |m| tracing::info!(service = spec.key, "{m}"));
+            // `install` switches autostart on; an upgrade keeps what it was.
+            self.set_autostart(spec.key, autostart);
+            if let Err(e) = done {
+                tracing::warn!(service = spec.key, error = %e, "upgrade failed; the old build is untouched");
+                continue;
+            }
+            if autostart && !self.is_on_demand(spec.key) {
+                if let Err(e) = self.start(spec.key) {
+                    tracing::warn!(service = spec.key, error = %e, "start after upgrade failed");
+                }
+            }
+        }
     }
 
     /// Stop then start a service.
@@ -1775,5 +1861,59 @@ mod on_demand_tests {
         assert_eq!(sm.upstream_port("redis"), None);
         // Suspending something that is not running is a no-op, not an error.
         sm.suspend("redis").unwrap();
+    }
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    use super::*;
+
+    #[test]
+    fn patch_releases_are_told_from_minor_ones() {
+        assert!(same_minor("1.11.3", "1.11.4"));
+        assert!(same_minor("8.4.3", "8.4.10"));
+        assert!(!same_minor("1.10.9", "1.11.0"));
+        assert!(!same_minor("17.5", "18.4.0"));
+        assert!(!same_minor("garbage", "1.11.4"));
+        assert!(version_key("1.11.10") > version_key("1.11.9"));
+    }
+
+    /// The case that broke: the pin moved, the old build is still unpacked
+    /// beside `data/`. It is found, the newest of several wins, a directory
+    /// without the binary does not count, and nothing is found once the
+    /// pinned build is there.
+    #[test]
+    fn an_older_build_beside_the_data_is_found() {
+        let base = std::env::temp_dir().join(format!("grove-upg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let paths = GrovePaths::with_base(&base);
+        paths.ensure().unwrap();
+        let sm = ServiceManager::new(paths);
+        let spec = catalog::spec("elyrasql").unwrap();
+        let Some(current) = catalog::archive_root(spec) else {
+            return; // no ElyraSQL build for this platform
+        };
+        let root = sm.service_root(spec);
+        let slug = current.splitn(3, '-').nth(2).unwrap().to_string();
+        let unpack = |v: &str, with_binary: bool| {
+            let dir = root.join(format!("elyrasql-{v}-{slug}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            if with_binary {
+                std::fs::write(dir.join("elyrasql"), b"").unwrap();
+            }
+        };
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        assert_eq!(sm.older_build(spec), None);
+
+        unpack("1.11.2", true);
+        unpack("1.11.3", true);
+        unpack("1.11.9", false);
+        assert!(!sm.is_installed(spec));
+        assert_eq!(sm.older_build(spec).as_deref(), Some("1.11.3"));
+
+        std::fs::create_dir_all(root.join(&current)).unwrap();
+        std::fs::write(root.join(&current).join("elyrasql"), b"").unwrap();
+        assert!(sm.is_installed(spec));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
