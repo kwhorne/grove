@@ -323,14 +323,24 @@ jobs:
         shell: bash
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -uo pipefail
           [ -n "$APPLE_ID" ] || exit 0
           d=$(mktemp -d)
           tar -xzf "dist/grove-${VERSION}-${{ matrix.target }}.tar.gz" -C "$d"
+          # The log masks the identity (it is a secret), so check, not print.
           for b in grove grove-tunnel; do
-            codesign -dv --verbose=2 "$d/$b" 2>&1 | grep -E "^Authority=Developer ID Application|flags=.*runtime" \
-              | sed "s/^/$b: /"
+            info=$(codesign -dv --verbose=4 "$d/$b" 2>&1)
+            grep -q "^Authority=Developer ID Application:" <<<"$info" \
+              || { echo "::error::$b is not signed with a Developer ID Application certificate"; exit 1; }
+            grep -q "^CodeDirectory.*flags=.*runtime" <<<"$info" \
+              || { echo "::error::$b lacks the hardened runtime"; exit 1; }
+            grep -qx "TeamIdentifier=$APPLE_TEAM_ID" <<<"$info" \
+              || { echo "::error::$b is signed by another team"; exit 1; }
+            grep -q "^Timestamp=" <<<"$info" \
+              || { echo "::error::$b has no secure timestamp"; exit 1; }
+            echo "$b: Developer ID, hardened runtime, timestamped"
           done
           if ! spctl --status | grep -q enabled; then
             echo "::warning::Gatekeeper is disabled on this runner; the quarantine run proves nothing."
