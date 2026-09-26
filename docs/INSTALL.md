@@ -42,14 +42,16 @@ dnsmasq, nvm or anything else.
 
 ## 2. Install the app
 
-1. Download the latest `Grove_<version>_aarch64.dmg` (Apple Silicon) or
-   `…_x64.dmg` (Intel) from the
-   [releases page](https://github.com/kwhorne/grove/releases/latest).
+1. Download the latest `Grove_<version>_aarch64.dmg` (Apple Silicon) from the
+   [releases page](https://github.com/kwhorne/grove/releases/latest). Intel
+   Macs are not shipped a build; build from source there.
 2. Open the `.dmg` and drag **Grove** into **Applications**.
 3. Launch **Grove** from Applications.
 
-The app is **code-signed with a Developer ID and notarized by Apple**, so it
-opens normally — no Gatekeeper warning, no `xattr` workarounds.
+The app, the `.dmg` it comes in and the standalone CLI tarball
+(`grove-<version>-aarch64-apple-darwin.tar.gz`) are all **code-signed with a
+Developer ID and notarized by Apple**, so they open and run normally — no
+Gatekeeper warning, no `xattr` workarounds.
 
 ### Make the `grove` command available (recommended)
 

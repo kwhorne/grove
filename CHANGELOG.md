@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The standalone macOS CLI is signed and notarized.** The
+  `grove-<version>-aarch64-apple-darwin.tar.gz` download held ad hoc signed
+  `grove` and `grove-tunnel` binaries. Fetched with a browser, they are
+  quarantined, and Gatekeeper killed them on first run: 1.10.0's `grove
+  --version` exited 137 that way. The release now signs both with the
+  Developer ID and the hardened runtime and notarizes them. Before
+  publishing, it runs each binary quarantined, the way a browser download
+  would, and stops if Gatekeeper refuses. The CLI inside `Grove.app` was
+  already signed and notarized.
+- **The `.dmg` itself is notarized and stapled.** Tauri notarizes the app
+  inside it but not the disk image, which was Developer ID signed and
+  unnotarized, so `spctl` rejected it. The release now notarizes and
+  staples the DMG and checks it with `spctl` before uploading.
+- **The release workflow can be dry-run.** `workflow_dispatch` on any branch
+  runs the same build, signing and notarization, publishes nothing, and
+  attaches the results to the run.
+
 ### Security
 
 - **ElyraSQL is pinned to 1.11.4** (was 1.11.3), for RUSTSEC-2026-0285 in

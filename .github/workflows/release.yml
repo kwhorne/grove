@@ -3,12 +3,21 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A dry run: the same build, signing and notarization, on any branch, with
+  # nothing published. The results are attached to the run as artifacts, so a
+  # change to this file can be checked on a Mac before it meets a real tag.
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  # Only a pushed v* tag publishes anything.
+  PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  # Names the CLI tarball: the tag, or `dev-<sha>` on a dry run (a branch name
+  # can hold a slash).
+  VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('dev-{0}', github.sha) }}
 
 jobs:
   release:
@@ -67,12 +76,78 @@ jobs:
       - name: Build CLI (grove) + tunnel server (grove-tunnel)
         run: cargo build --release -p grove-cli -p grove-tunnel --target ${{ matrix.target }}
 
+      # The CLI tarball is the one macOS download Tauri does not sign. Left
+      # ad hoc, a `grove` fetched with a browser is quarantined and Gatekeeper
+      # refuses to run it. Sign both binaries with the Developer ID and the
+      # hardened runtime, and notarize them. A bare binary cannot carry a
+      # stapled ticket; Gatekeeper looks the notarization up online instead.
+      - name: Sign and notarize the CLI (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_CERTIFICATE" ] || [ -z "$APPLE_ID" ]; then
+            if [ "$PUBLISH" = true ]; then
+              echo "::error::Apple signing secrets are missing; refusing to publish an unsigned CLI."
+              exit 1
+            fi
+            echo "No Apple signing secrets (a fork?) — the CLI stays ad hoc."
+            exit 0
+          fi
+          bin="target/${{ matrix.target }}/release"
+          # A keychain of our own, gone before Tauri imports the same identity
+          # into its own: two copies make `codesign --sign <name>` ambiguous.
+          kc="$RUNNER_TEMP/grove-cli.keychain-db"
+          kcpass=$(uuidgen)
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$kcpass" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kcpass" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpass" "$kc" >/dev/null
+          # bash 3.2 on the runner: no mapfile.
+          orig=()
+          while IFS= read -r k; do
+            k=${k//\"/}; k=${k#"${k%%[![:space:]]*}"}
+            [ -n "$k" ] && orig+=("$k")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$kc" "${orig[@]}"
+          rm -f "$RUNNER_TEMP/cert.p12"
+          for b in grove grove-tunnel; do
+            codesign --force --options runtime --timestamp --keychain "$kc" \
+              --sign "$APPLE_SIGNING_IDENTITY" "$bin/$b"
+            codesign --verify --strict --verbose=2 "$bin/$b"
+          done
+          security list-keychains -d user -s "${orig[@]}"
+          security delete-keychain "$kc"
+
+          mkdir -p "$RUNNER_TEMP/cli"
+          cp "$bin/grove" "$bin/grove-tunnel" "$RUNNER_TEMP/cli/"
+          ditto -c -k --keepParent "$RUNNER_TEMP/cli" "$RUNNER_TEMP/cli.zip"
+          out=$(xcrun notarytool submit "$RUNNER_TEMP/cli.zip" --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --timeout 30m 2>&1) || true
+          echo "$out"
+          if ! grep -q "status: Accepted" <<<"$out"; then
+            id=$(sed -n 's/^ *id: //p' <<<"$out" | head -1)
+            [ -n "$id" ] && xcrun notarytool log "$id" --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            echo "::error::Apple did not accept the CLI for notarization."
+            exit 1
+          fi
+
       - name: Package CLI
         shell: bash
         run: |
           mkdir -p dist
           tar -C "target/${{ matrix.target }}/release" -czf \
-            "dist/grove-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" grove grove-tunnel
+            "dist/grove-${VERSION}-${{ matrix.target }}.tar.gz" grove grove-tunnel
 
       - name: Stage CLI as a Tauri sidecar
         shell: bash
@@ -136,6 +211,7 @@ jobs:
       # (a fine-grained PAT with contents: write) when set, else the Actions
       # token, and fail here with the fix spelled out if neither may.
       - name: Ensure the GitHub Release exists
+        if: env.PUBLISH == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -176,8 +252,10 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           projectPath: crates/grove-gui
-          tagName: ${{ github.ref_name }}
-          releaseName: "Grove ${{ github.ref_name }}"
+          # Empty on a dry run, which makes tauri-action build without
+          # creating or uploading to a release.
+          tagName: ${{ env.PUBLISH == 'true' && github.ref_name || '' }}
+          releaseName: ${{ env.PUBLISH == 'true' && format('Grove {0}', github.ref_name) || '' }}
           releaseBody: |
             See the assets below to download. The macOS app is code-signed with a
             Developer ID and notarized by Apple, and auto-updates in place.
@@ -190,11 +268,109 @@ jobs:
           retryAttempts: 2
           args: --target ${{ matrix.target }}
 
+      # Tauri notarizes and staples the app inside the DMG, but not the DMG
+      # itself: it is Developer ID signed and unnotarized, which `spctl`
+      # rejects and which newer macOS can refuse to open from a browser
+      # download. Notarize and staple it, then check the result the way
+      # Gatekeeper will before anything is published.
+      - name: Notarize and staple the DMG (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_ID" ]; then
+            if [ "$PUBLISH" = true ]; then
+              echo "::error::Apple notarization secrets are missing."
+              exit 1
+            fi
+            echo "No Apple secrets (a fork?) — the DMG is not notarized."
+            exit 0
+          fi
+          shopt -s nullglob
+          dmgs=(target/${{ matrix.target }}/release/bundle/dmg/*.dmg)
+          [ ${#dmgs[@]} -eq 1 ] || { echo "::error::expected one DMG, found: ${dmgs[*]:-none}"; exit 1; }
+          dmg="${dmgs[0]}"
+          out=$(xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait --timeout 30m 2>&1) || true
+          echo "$out"
+          if ! grep -q "status: Accepted" <<<"$out"; then
+            id=$(sed -n 's/^ *id: //p' <<<"$out" | head -1)
+            [ -n "$id" ] && xcrun notarytool log "$id" --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+            echo "::error::Apple did not accept the DMG for notarization."
+            exit 1
+          fi
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+          if [ "$PUBLISH" = true ]; then
+            gh release upload "${{ github.ref_name }}" "$dmg" --clobber
+          fi
+          mkdir -p dist && cp "$dmg" dist/
+
+      # `spctl` cannot judge a bare binary: it answers "does not seem to be an
+      # app" for a notarized one too. What Gatekeeper actually does is look at
+      # a quarantined binary when it is run, so do that: mark each binary as
+      # downloaded by a browser and run it. 1.10.0's ad hoc `grove` was killed
+      # this way (exit 137); a notarized one prints its version.
+      - name: Run the CLI the way a browser download would (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -uo pipefail
+          [ -n "$APPLE_ID" ] || exit 0
+          d=$(mktemp -d)
+          tar -xzf "dist/grove-${VERSION}-${{ matrix.target }}.tar.gz" -C "$d"
+          # The log masks the identity (it is a secret), so check, not print.
+          for b in grove grove-tunnel; do
+            info=$(codesign -dv --verbose=4 "$d/$b" 2>&1)
+            grep -q "^Authority=Developer ID Application:" <<<"$info" \
+              || { echo "::error::$b is not signed with a Developer ID Application certificate"; exit 1; }
+            grep -q "^CodeDirectory.*flags=.*runtime" <<<"$info" \
+              || { echo "::error::$b lacks the hardened runtime"; exit 1; }
+            grep -qx "TeamIdentifier=$APPLE_TEAM_ID" <<<"$info" \
+              || { echo "::error::$b is signed by another team"; exit 1; }
+            grep -q "^Timestamp=" <<<"$info" \
+              || { echo "::error::$b has no secure timestamp"; exit 1; }
+            echo "$b: Developer ID, hardened runtime, timestamped"
+          done
+          if ! spctl --status | grep -q enabled; then
+            echo "::warning::Gatekeeper is disabled on this runner; the quarantine run proves nothing."
+            exit 0
+          fi
+          q="0081;$(printf %x "$(date +%s)");Safari;$(uuidgen)"
+          xattr -w com.apple.quarantine "$q" "$d/grove" "$d/grove-tunnel"
+          # A fresh notarization can take a moment to be served.
+          for attempt in 1 2 3 4 5 6; do
+            "$d/grove" --version && "$d/grove-tunnel" --help >/dev/null && exit 0
+            echo "attempt $attempt: Gatekeeper refused (exit $?); retrying in 20 s"
+            sleep 20
+          done
+          echo "::error::Gatekeeper will not run the quarantined CLI."
+          exit 1
+
       - name: Attach CLI tarball to the release
+        if: env.PUBLISH == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" dist/*.tar.gz --clobber
+
+      - name: Keep the dry run's results
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: grove-${{ env.VERSION }}-${{ matrix.target }}
+          path: dist/
+          retention-days: 7
 
   # tauri-action writes api.github.com asset URLs into latest.json, which the
   # updater downloads unauthenticated — and the GitHub API rate-limits those to
@@ -204,7 +380,7 @@ jobs:
   finalize-updater:
     name: Fix updater download URLs
     needs: release
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
