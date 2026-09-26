@@ -7,7 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.1] — 2026-09-26
+
+A security update for ElyraSQL, and the macOS downloads that 1.10.0 and
+earlier left unnotarized: the standalone CLI, which Gatekeeper killed when it
+came from a browser, and the disk image the app ships in.
+
+### Upgrade notes
+
+- **ElyraSQL moves to 1.11.4 on its own.** When the daemon starts, it sees
+  the 1.11.3 build beside your data, fetches 1.11.4 in the background, and
+  starts it if it was running before. Your database file is not touched.
+  The old build stays on disk until you remove
+  `services/elyrasql/elyrasql-1.11.3-*`.
+- **Nothing else needs doing.** The app updates itself as before.
+
 ### Fixed
+
+- **A service whose pinned version moves is upgraded instead of dropped.**
+  Service builds unpack to a directory named for their version, so moving
+  ElyraSQL's pin from 1.11.3 to 1.11.4 would have left it looking
+  uninstalled. Autostart would have skipped it silently, and `grove service
+  start` would have said "not installed", with the old build and the data
+  still in place. At startup the daemon now looks for an older build of each
+  service that is not installed.
+  - **A patch release of what you had:** it installs the pinned build in the
+    background and starts it the way it ran before. Autostart and on-demand
+    settings are kept.
+  - **A minor or major move:** it does nothing and logs the command to run.
+    MySQL and PostgreSQL data directories do not always carry across such a
+    move.
+
+  Verified by installing ElyraSQL 1.11.3 with the released 1.10.0 in a
+  scratch home, then starting this daemon on it. It fetched 1.11.4 and
+  started it from the new directory on the same port, and the same `.edb`
+  (same inode and size) and a marker file in `data/` were untouched.
 
 - **The standalone macOS CLI is signed and notarized.** The
   `grove-<version>-aarch64-apple-darwin.tar.gz` download held ad hoc signed
@@ -32,9 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rustls: its TLS 1.3 handshake accepted handshake messages across
   encryption-level boundaries. ElyraSQL terminates client TLS with rustls, and
   every release through 1.11.3 shipped an affected version. The archive
-  unpacks to a versioned directory beside the data directory, so
-  `grove service install elyrasql` fetches the new build and leaves an
-  existing database alone.
+  unpacks to a versioned directory beside the data directory, so the new
+  build leaves an existing database alone. The daemon fetches it itself; see
+  the upgrade notes.
 
 ## [1.10.0] — 2026-09-25
 
@@ -1606,7 +1640,8 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
-[Unreleased]: https://github.com/kwhorne/grove/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/kwhorne/grove/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/kwhorne/grove/releases/tag/v1.10.1
 [1.10.0]: https://github.com/kwhorne/grove/releases/tag/v1.10.0
 [1.9.0]: https://github.com/kwhorne/grove/releases/tag/v1.9.0
 [1.8.0]: https://github.com/kwhorne/grove/releases/tag/v1.8.0
