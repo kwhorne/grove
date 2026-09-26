@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **ElyraSQL is pinned to 1.11.4** (was 1.11.3), for RUSTSEC-2026-0285 in
+  rustls: its TLS 1.3 handshake accepted handshake messages across
+  encryption-level boundaries. ElyraSQL terminates client TLS with rustls, and
+  every release through 1.11.3 shipped an affected version. The archive
+  unpacks to a versioned directory beside the data directory, so
+  `grove service install elyrasql` fetches the new build and leaves an
+  existing database alone.
+
 ## [1.10.0] — 2026-09-25
 
 Six things Grove can do because every request and every database goes through
