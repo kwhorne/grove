@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **ElyraSQL is pinned to 1.12.0** (was 1.11.4). It fixes two ways around
+  column grants: a user granted some columns of a table could read the others
+  through `UNION` or copy them out with `INSERT ... SELECT`, and a replica did
+  not enforce grants or schema changes made on its primary after it started.
+  Grove runs ElyraSQL without accounts on loopback, so Grove itself was not
+  exposed; a project that created accounts in its ElyraSQL was. The daemon
+  fetches 1.12.0 beside the data and switches to it, as for 1.11.4; the
+  database file is not touched.
+
+### Changed
+
+- **ElyraSQL 1.12.0 behaves more like MySQL in two ways a project can see.**
+  `AVG` over an integer column returns `DECIMAL` rather than `DOUBLE`, so code
+  that decodes it strictly as a float (sqlx `f64`) must accept a decimal. And
+  an account made with `CREATE USER` starts with no privileges, as in MySQL,
+  instead of reading every table: grant it what it needs. It is also much
+  faster: point queries use less than half the CPU, and `LOAD DATA` is 2.4x
+  quicker.
+
 ## [1.10.1] — 2026-09-26
 
 A security update for ElyraSQL, and the macOS downloads that 1.10.0 and
