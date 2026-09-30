@@ -18,6 +18,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fetches 1.12.0 beside the data and switches to it, as for 1.11.4; the
   database file is not touched.
 
+### Fixed
+
+- **ElyraSQL moves to a new minor release by itself, not only a patch.**
+  1.10.1 upgraded a service at startup only when the pin moved to a patch
+  release of what was installed. For 1.11.4 → 1.12.0 it would have logged
+  the command to run and left ElyraSQL stopped. The rule is now per server:
+  - ElyraSQL moves within a major version, because it keeps a database in
+    one file that any release of that major opens.
+  - MySQL and PostgreSQL still take only patch releases by themselves,
+    because their data directories do not always carry across a minor.
+    Redis also stays at patch only, because it is built from source.
+  - Nothing moves backwards.
+
+  Verified with the released 1.10.1: it installed ElyraSQL 1.11.4 in a
+  scratch home and wrote three rows. This daemon then fetched 1.12.0 and
+  started it on the same `.edb` (same inode). It read the three rows back
+  unchanged and took a fourth.
+
 ### Changed
 
 - **ElyraSQL 1.12.0 behaves more like MySQL in two ways a project can see.**
