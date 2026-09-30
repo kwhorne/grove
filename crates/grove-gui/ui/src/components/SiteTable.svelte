@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { api } from "../lib/api";
   import type { ResolvedSite } from "../lib/types";
+  import { rememberPicked } from "../lib/sitesearch";
 
   let {
     sites,
@@ -95,7 +96,10 @@
   const toggleSecure = (s: ResolvedSite) => run(api.secure(s.name, !s.secure));
   const setPhp = (s: ResolvedSite, v: string) => run(api.isolate(s.name, v));
   const setNode = (s: ResolvedSite, v: string) => run(api.setNode(s.name, v === "" ? null : v));
-  const open = (s: ResolvedSite) => api.openUrl(url(s));
+  const open = (s: ResolvedSite) => {
+    rememberPicked(s.name);
+    api.openUrl(url(s));
+  };
   const reveal = (s: ResolvedSite) => api.openPath(s.path);
   async function copyShareUrl(host: string) {
     const u = shared[host];

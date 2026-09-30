@@ -367,6 +367,19 @@ Launch **Grove** from Applications for a dashboard over the same daemon:
 The status pill (top-right) shows **● Running** once it connects to the
 background service.
 
+### Finding a site among many
+
+- **Press ⌘K anywhere in the app** to open the site palette. With nothing
+  typed, it lists the ten projects you worked on last. A project counts from
+  the newest of three things: activity in its git repository (staging,
+  committing, checking out), the last request Grove served it, and the last
+  time you opened it from Grove.
+- **Type** to fuzzy-search every site: `abn` finds `abonnementsoversikt.test`.
+- **↑ / ↓ and ↵** focus the Sites list on that one project. **⌘↵** opens it
+  in the browser. **Esc** shows every site again.
+- **Filter the Sites list itself** with the box above it (`/` or ⌘F). Every
+  word must appear in the site's name, path, driver or PHP version.
+
 > The GUI is just a client. Don't use a "Start" button to launch a second
 > daemon — the installed background service already owns the ports. If the GUI
 > shows **Stopped** while sites clearly work, see
