@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-09-30
+
+With a hundred and more sites, the Grove app now finds the one you are
+working on. ⌘K opens a palette that lists the ten projects you touched last,
+ranked by their git activity, the requests Grove served them and what you
+opened, and searches every site as you type. The Sites list gets a filter
+too. ElyraSQL moves to 1.12.0, which closes two ways around column grants,
+and Grove moves an existing install there by itself.
+
+### Upgrade notes
+
+- **ElyraSQL moves to 1.12.0 on its own.** When the daemon starts, it sees
+  the 1.11.x build beside your data, fetches 1.12.0 in the background, and
+  starts it if it was running before. The database file is not touched, and
+  the old build stays on disk until you remove
+  `services/elyrasql/elyrasql-1.11.*`.
+- **Two things a project using ElyraSQL can notice.** `AVG` over an integer
+  column now returns `DECIMAL`. An account made with `CREATE USER` now starts
+  with no privileges, so grant it what it needs. Grove's own access runs
+  without accounts on loopback and is unaffected.
+- **Nothing else needs doing.** The app updates itself as before.
+
 ### Added
 
 - **⌘K: go to a site, starting with the ones you worked on last.** With 140
@@ -34,16 +56,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The palette kept what was typed through the four-second background
   refresh.
 
-### Security
+### Changed
 
-- **ElyraSQL is pinned to 1.12.0** (was 1.11.4). It fixes two ways around
-  column grants: a user granted some columns of a table could read the others
-  through `UNION` or copy them out with `INSERT ... SELECT`, and a replica did
-  not enforce grants or schema changes made on its primary after it started.
-  Grove runs ElyraSQL without accounts on loopback, so Grove itself was not
-  exposed; a project that created accounts in its ElyraSQL was. The daemon
-  fetches 1.12.0 beside the data and switches to it, as for 1.11.4; the
-  database file is not touched.
+- **ElyraSQL 1.12.0 behaves more like MySQL in two ways a project can see.**
+  `AVG` over an integer column returns `DECIMAL` rather than `DOUBLE`, so code
+  that decodes it strictly as a float (sqlx `f64`) must accept a decimal. And
+  an account made with `CREATE USER` starts with no privileges, as in MySQL,
+  instead of reading every table: grant it what it needs. It is also much
+  faster: point queries use less than half the CPU, and `LOAD DATA` is 2.4x
+  quicker.
+- **Dependencies:** Tauri 2.11.6, the updater plugin 2.12 (Rust and
+  JavaScript sides together), Svelte 5.57.1 and Vite 8.3.1. The release
+  workflow uses `actions/upload-artifact` v7 for its dry runs. A dry run
+  on the merged main built, signed and notarized both platforms with it.
 
 ### Fixed
 
@@ -63,15 +88,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   started it on the same `.edb` (same inode). It read the three rows back
   unchanged and took a fourth.
 
-### Changed
+### Security
 
-- **ElyraSQL 1.12.0 behaves more like MySQL in two ways a project can see.**
-  `AVG` over an integer column returns `DECIMAL` rather than `DOUBLE`, so code
-  that decodes it strictly as a float (sqlx `f64`) must accept a decimal. And
-  an account made with `CREATE USER` starts with no privileges, as in MySQL,
-  instead of reading every table: grant it what it needs. It is also much
-  faster: point queries use less than half the CPU, and `LOAD DATA` is 2.4x
-  quicker.
+- **ElyraSQL is pinned to 1.12.0** (was 1.11.4). It fixes two ways around
+  column grants: a user granted some columns of a table could read the others
+  through `UNION` or copy them out with `INSERT ... SELECT`, and a replica did
+  not enforce grants or schema changes made on its primary after it started.
+  Grove runs ElyraSQL without accounts on loopback, so Grove itself was not
+  exposed; a project that created accounts in its ElyraSQL was. The daemon
+  fetches 1.12.0 beside the data and switches to it, as for 1.11.4; the
+  database file is not touched.
 
 ## [1.10.1] — 2026-09-26
 
@@ -1706,7 +1732,8 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
-[Unreleased]: https://github.com/kwhorne/grove/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/kwhorne/grove/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/kwhorne/grove/releases/tag/v1.11.0
 [1.10.1]: https://github.com/kwhorne/grove/releases/tag/v1.10.1
 [1.10.0]: https://github.com/kwhorne/grove/releases/tag/v1.10.0
 [1.9.0]: https://github.com/kwhorne/grove/releases/tag/v1.9.0
