@@ -78,6 +78,7 @@ Grove takes a different path: **one Rust codebase, three platforms, and nothing 
 - 🛡 **Built to stay up** — a panic in one request stays in that request, the accept loop backs off instead of spinning a core when file descriptors run out, and silent connections are timed out rather than held forever.
 - 🌱 **Create / import sites** — scaffold a new Laravel or static project, or link existing ones.
 - 🖥️ **GUI + CLI in parity** — both are thin clients over the same daemon, plus a macOS menu-bar icon.
+- ⌘ **⌘K to any site** — the app's palette lists the ten projects you worked on last (by git activity, requests and what you opened) and fuzzy-searches the rest; the Sites list has a filter too.
 - 🔌 **Zero external dependencies** — DNS, proxy, FastCGI and TLS are all built in.
 
 ## Zero external dependencies
