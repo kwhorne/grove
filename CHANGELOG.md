@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **⌘K: go to a site, starting with the ones you worked on last.** With 140
+  sites the Sites list is a long scroll. ⌘K, anywhere in the app, opens a
+  palette.
+  - **Nothing typed:** it lists the ten projects worked on most recently. A
+    project counts from the newest of three signals, and the palette says
+    which one it was ("git 20m ago", "request 3m ago", "opened just now"):
+    - activity in its git repo: the mtimes of the index, `HEAD` and its log,
+      following a worktree's `.git` file, and leaving out `FETCH_HEAD`
+      because a background fetch is not you working;
+    - the last request Grove served it;
+    - the last time it was opened from Grove.
+  - **Typing:** it fuzzy-searches every site by hostname, then by path.
+  - **Keys:** ↑↓ choose, ↵ focuses the Sites list on that one project with a
+    chip to clear it, and ⌘↵ opens it in the browser.
+- **A filter above the Sites list.** Focus it with `/` or ⌘F. Every word must
+  appear in the site's name, path, driver or PHP version, and it shows
+  "N of M".
+
+  Checked in the app's own frontend, driven by keyboard in Chrome against 144
+  sites and the git repos of a scratch Grove. The recent list ranked two
+  sites with requests, a worktree and three repos worked on 23 minutes to six
+  days ago in the right order. `abn` found `abonnementsoversikt.test` first.
+  The palette kept what was typed through the four-second background
+  refresh.
+
 ### Security
 
 - **ElyraSQL is pinned to 1.12.0** (was 1.11.4). It fixes two ways around

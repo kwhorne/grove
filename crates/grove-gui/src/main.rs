@@ -72,6 +72,48 @@ async fn list_sites() -> CmdResult<Vec<ResolvedSite>> {
     }
 }
 
+/// When each project was last worked on in git, as unix ms, by site path.
+///
+/// The files git rewrites when you work — the index on staging, checkout and
+/// `git status`, `HEAD` and its log on commit, checkout and rebase — so the
+/// newest of their mtimes is when someone last did something in the repo.
+/// `FETCH_HEAD` is left out: a background fetch is not you working. A
+/// worktree's `.git` is a file naming its real git directory; that is
+/// followed. Projects that are not git repos are left out of the map.
+#[tauri::command]
+async fn site_activity(paths: Vec<String>) -> CmdResult<std::collections::HashMap<String, u64>> {
+    tokio::task::spawn_blocking(move || {
+        paths
+            .into_iter()
+            .filter_map(|p| git_activity(std::path::Path::new(&p)).map(|t| (p, t)))
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+fn git_activity(project: &std::path::Path) -> Option<u64> {
+    let dot = project.join(".git");
+    let dir = if dot.is_dir() {
+        dot
+    } else {
+        let text = std::fs::read_to_string(&dot).ok()?;
+        let target = text.strip_prefix("gitdir:")?.trim();
+        let target = std::path::Path::new(target);
+        if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            project.join(target)
+        }
+    };
+    ["index", "HEAD", "logs/HEAD"]
+        .iter()
+        .filter_map(|f| std::fs::metadata(dir.join(f)).ok()?.modified().ok())
+        .filter_map(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .max()
+}
+
 #[tauri::command]
 async fn doctor() -> CmdResult<Vec<DiagnosticEntry>> {
     match call(Request::Doctor).await? {
@@ -986,6 +1028,7 @@ fn main() {
             daemon_running,
             get_status,
             list_sites,
+            site_activity,
             doctor,
             mail_list,
             mail_get,
@@ -1062,4 +1105,34 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Grove GUI");
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use super::git_activity;
+
+    /// A plain repo, a worktree whose `.git` is a pointer file, and a folder
+    /// that is no repo at all.
+    #[test]
+    fn activity_follows_git_and_worktree_pointers() {
+        let base = std::env::temp_dir().join(format!("grove-activity-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let repo = base.join("repo");
+        std::fs::create_dir_all(repo.join(".git/logs")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert!(git_activity(&repo).is_some());
+
+        let wt_git = base.join("repo/.git/worktrees/feature");
+        std::fs::create_dir_all(&wt_git).unwrap();
+        std::fs::write(wt_git.join("index"), b"").unwrap();
+        let wt = base.join("feature");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", wt_git.display())).unwrap();
+        assert!(git_activity(&wt).is_some());
+
+        let plain = base.join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        assert_eq!(git_activity(&plain), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

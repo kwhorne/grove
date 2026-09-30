@@ -41,6 +41,8 @@ export const api = {
 
   status: (): Promise<DaemonStatus> => invoke("get_status"),
   listSites: (): Promise<ResolvedSite[]> => invoke("list_sites"),
+  siteActivity: (paths: string[]): Promise<Record<string, number>> =>
+    invoke("site_activity", { paths }),
 
   secure: (name: string, enable: boolean): Promise<string> =>
     invoke("secure_site", { name, enable }),

@@ -25,6 +25,8 @@
   import AboutModal from "./components/AboutModal.svelte";
   import SettingsModal from "./components/SettingsModal.svelte";
   import NewSiteModal from "./components/NewSiteModal.svelte";
+  import CommandPalette from "./components/CommandPalette.svelte";
+  import { matchesFilter, rememberPicked } from "./lib/sitesearch";
 
   type Tab = "sites" | "services" | "mail" | "php" | "node" | "tunnels" | "requests" | "webhooks" | "database" | "tools" | "logs" | "doctor";
 
@@ -40,6 +42,39 @@
   let aboutOpen = $state(false);
   let settingsOpen = $state(false);
   let newSiteOpen = $state(false);
+
+  // Finding a site among many. `filter` is what is typed above the table;
+  // `focused` is the one site chosen in the ⌘K palette, shown alone until
+  // it is cleared.
+  let paletteOpen = $state(false);
+  let filter = $state("");
+  let focused = $state<string | null>(null);
+  let filterInput = $state<HTMLInputElement | null>(null);
+  const visibleSites = $derived(
+    focused
+      ? sites.filter((s) => s.name === focused)
+      : sites.filter((s) => matchesFilter(s, filter)),
+  );
+  // A focused site that is gone (unlinked, renamed) stops hiding the rest.
+  $effect(() => {
+    if (focused && !loading && !sites.some((s) => s.name === focused)) focused = null;
+  });
+
+  function focusSite(s: ResolvedSite) {
+    rememberPicked(s.name);
+    filter = "";
+    focused = s.name;
+    tab = "sites";
+  }
+  function openSite(s: ResolvedSite) {
+    rememberPicked(s.name);
+    api.openUrl(`${s.secure ? "https" : "http"}://${s.hostname}`);
+  }
+  function clearFocus() {
+    focused = null;
+    filter = "";
+    filterInput?.focus();
+  }
 
   // The app's own version, to compare with the daemon's. An app that updated
   // itself relaunches new while the daemon — a separate root process under
@@ -169,14 +204,39 @@
     return () => clearInterval(id);
   });
 
-  // Cmd/Ctrl+, opens Settings, matching the macOS convention.
+  // Cmd/Ctrl+, opens Settings, matching the macOS convention. Cmd/Ctrl+K
+  // opens the site palette from anywhere; on Sites, Cmd/Ctrl+F or `/` go to
+  // the filter.
   $effect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key === ",") {
         e.preventDefault();
         settingsOpen = true;
       }
+      if (mod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        paletteOpen = !paletteOpen;
+        return;
+      }
+      const typing =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement;
+      if (
+        tab === "sites" &&
+        !paletteOpen &&
+        ((mod && e.key.toLowerCase() === "f") || (e.key === "/" && !typing))
+      ) {
+        e.preventDefault();
+        focused = null;
+        filterInput?.focus();
+        filterInput?.select();
+      }
       if (e.key === "Escape") {
+        if (tab === "sites" && focused && !paletteOpen && !settingsOpen && !aboutOpen) {
+          focused = null;
+        }
         settingsOpen = false;
         aboutOpen = false;
       }
@@ -324,11 +384,45 @@
             <p class="subtitle">Everything Grove is serving on .{status?.tld ?? "test"}</p>
           </div>
           <div class="head-actions">
+            <button class="btn" title="Go to a site (⌘K)" onclick={() => (paletteOpen = true)}>⌘K Go to site</button>
             <button class="btn" onclick={parkFolder}>Park folder…</button>
             <button class="btn primary" onclick={() => (newSiteOpen = true)}>+ New site</button>
           </div>
         </div>
-        <SiteTable {sites} {phpVersions} {nodeVersions} {notify} onchange={refresh} />
+        <div class="site-filter">
+          {#if focused}
+            <span class="focus-chip">
+              Focused: <b>{visibleSites[0]?.hostname ?? focused}</b>
+              <button class="chip-x" title="Show all sites (esc)" aria-label="Show all sites" onclick={clearFocus}>×</button>
+            </span>
+            <span class="count">1 of {sites.length}</span>
+          {:else}
+            <input
+              bind:this={filterInput}
+              bind:value={filter}
+              class="filter-input"
+              placeholder="Filter by name, path, driver or PHP…   /  or  ⌘F"
+              spellcheck="false"
+              autocomplete="off"
+              onkeydown={(e) => {
+                if (e.key === "Escape") {
+                  filter = "";
+                  (e.currentTarget as HTMLInputElement).blur();
+                }
+              }}
+            />
+            {#if filter}
+              <span class="count">{visibleSites.length} of {sites.length}</span>
+            {/if}
+          {/if}
+        </div>
+        {#if visibleSites.length === 0 && sites.length > 0}
+          <div class="empty">
+            No site matches “{filter}”. <button class="btn" onclick={clearFocus}>Clear</button>
+          </div>
+        {:else}
+          <SiteTable sites={visibleSites} {phpVersions} {nodeVersions} {notify} onchange={refresh} />
+        {/if}
       {:else if tab === "services"}
         <h2>Services</h2>
         <p class="subtitle">Local services managed by Grove</p>
@@ -381,6 +475,13 @@
     <div class="toast">{toast}</div>
   {/if}
 
+  <CommandPalette
+    open={paletteOpen && running}
+    {sites}
+    onclose={() => (paletteOpen = false)}
+    onfocus={focusSite}
+    onopen={openSite}
+  />
   <AboutModal open={aboutOpen} onclose={() => (aboutOpen = false)} />
   <SettingsModal open={settingsOpen} onclose={() => (settingsOpen = false)} {notify} />
   <NewSiteModal
