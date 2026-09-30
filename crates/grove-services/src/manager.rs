@@ -149,19 +149,31 @@ fn port_accepts(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(200)).is_ok()
 }
 
-/// The command and pid listening on `port`, if `lsof` can say.
 /// `1.11.4` as numbers, for ordering; anything unparsable counts as 0.
 fn version_key(v: &str) -> Vec<u64> {
     v.split('.').map(|p| p.parse().unwrap_or(0)).collect()
 }
 
-/// Whether two versions share major and minor, so one is a patch release of
-/// the other.
-fn same_minor(a: &str, b: &str) -> bool {
-    let (a, b) = (version_key(a), version_key(b));
-    a.len() >= 2 && b.len() >= 2 && a[..2] == b[..2]
+/// Whether Grove may move `kind` from the installed `from` build to the
+/// pinned `to` build by itself, keeping the data it has.
+///
+/// ElyraSQL keeps a database in one file that any release of the same major
+/// version opens, so it moves within a major. MySQL and PostgreSQL data
+/// directories do not always carry across a minor release, and Redis is
+/// built from source, so those move only to a patch release of what is
+/// installed. Never backwards.
+fn upgrades_by_itself(kind: ServiceKind, from: &str, to: &str) -> bool {
+    let (a, b) = (version_key(from), version_key(to));
+    if a.len() < 2 || b.len() < 2 || b <= a {
+        return false;
+    }
+    match kind {
+        ServiceKind::ElyraSql => a[0] == b[0],
+        ServiceKind::Mysql | ServiceKind::Postgres | ServiceKind::Redis => a[..2] == b[..2],
+    }
 }
 
+/// The command and pid listening on `port`, if `lsof` can say.
 fn port_holder(port: u16) -> Option<String> {
     let out = std::process::Command::new("lsof")
         .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"])
@@ -574,13 +586,12 @@ impl ServiceManager {
         found.pop()
     }
 
-    /// Bring services whose pin moved up to the pinned build, when the move is
-    /// a patch release of what is installed, then start them the way they ran
-    /// before. A minor or major move is left to the user: MySQL and
-    /// PostgreSQL data directories do not always carry across one, so Grove
+    /// Bring services whose pin moved up to the pinned build, then start them
+    /// the way they ran before — when the move is one the data survives (see
+    /// [`upgrades_by_itself`]). Any other move is left to the user, and Grove
     /// says so and does nothing. Blocking — it downloads; call it off the
     /// daemon's startup path.
-    pub fn upgrade_patch_builds(&self) {
+    pub fn upgrade_moved_pins(&self) {
         for spec in catalog::CATALOG {
             if self.is_installed(spec) {
                 continue;
@@ -588,7 +599,7 @@ impl ServiceManager {
             let Some(old) = self.older_build(spec) else {
                 continue;
             };
-            if !same_minor(&old, spec.version) {
+            if !upgrades_by_itself(spec.kind, &old, spec.version) {
                 tracing::warn!(
                     service = spec.key,
                     installed = %old,
@@ -606,7 +617,7 @@ impl ServiceManager {
                 service = spec.key,
                 from = %old,
                 to = spec.version,
-                "upgrading to the pinned patch release"
+                "upgrading to the pinned release"
             );
             let done = self.install(spec.key, |m| tracing::info!(service = spec.key, "{m}"));
             // `install` switches autostart on; an upgrade keeps what it was.
@@ -1868,13 +1879,22 @@ mod on_demand_tests {
 mod upgrade_tests {
     use super::*;
 
+    /// ElyraSQL moves within a major; the servers whose data directories do
+    /// not always survive a minor move only take patch releases; nothing
+    /// moves backwards or on a version it cannot read.
     #[test]
-    fn patch_releases_are_told_from_minor_ones() {
-        assert!(same_minor("1.11.3", "1.11.4"));
-        assert!(same_minor("8.4.3", "8.4.10"));
-        assert!(!same_minor("1.10.9", "1.11.0"));
-        assert!(!same_minor("17.5", "18.4.0"));
-        assert!(!same_minor("garbage", "1.11.4"));
+    fn what_moves_by_itself_depends_on_the_server() {
+        use ServiceKind::*;
+        assert!(upgrades_by_itself(ElyraSql, "1.11.3", "1.11.4"));
+        assert!(upgrades_by_itself(ElyraSql, "1.11.4", "1.12.0"));
+        assert!(!upgrades_by_itself(ElyraSql, "1.12.0", "2.0.0"));
+        assert!(!upgrades_by_itself(ElyraSql, "1.12.0", "1.11.4"));
+        assert!(upgrades_by_itself(Mysql, "8.4.3", "8.4.10"));
+        assert!(!upgrades_by_itself(Mysql, "8.4.3", "9.0.1"));
+        assert!(!upgrades_by_itself(Postgres, "17.5", "18.4.0"));
+        assert!(!upgrades_by_itself(Postgres, "18.3.0", "18.4.0"));
+        assert!(!upgrades_by_itself(Redis, "7.4.2", "7.4.2"));
+        assert!(!upgrades_by_itself(ElyraSql, "garbage", "1.11.4"));
         assert!(version_key("1.11.10") > version_key("1.11.9"));
     }
 
