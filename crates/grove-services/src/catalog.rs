@@ -60,7 +60,7 @@ pub const CATALOG: &[ServiceSpec] = &[
         kind: ServiceKind::ElyraSql,
         // Upstream's own default, and clear of MySQL's 3306 so both can run.
         default_port: 3307,
-        version: "1.12.2",
+        version: "1.12.3",
     },
     ServiceSpec {
         key: "redis",

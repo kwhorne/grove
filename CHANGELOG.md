@@ -9,14 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **ElyraSQL is pinned to 1.12.2** (was 1.12.0), which fixes four things a
-  project can see. `START TRANSACTION READ ONLY` now refuses writes, as MySQL
-  does; it used to accept them. `SELECT ... INTO @var` now sets the variable
-  instead of returning the row, also for locals in stored procedures. `CALL`
-  now returns the rows of each `SELECT` in the procedure as its own result
-  set; they used to be dropped. And `DROP DATABASE` on a name that holds
-  nothing reports that it does not exist. The daemon fetches 1.12.2 beside the
-  data and switches to it, as for 1.12.0; the database file is not touched.
+- **ElyraSQL is pinned to 1.12.3** (was 1.12.0), which brings it closer to
+  MySQL in ways a project can see. DDL (`CREATE`, `ALTER`, `DROP`, ...) now
+  commits an open transaction first, as MySQL does, so a `ROLLBACK` after it
+  no longer undoes earlier writes. `START TRANSACTION READ ONLY` refuses
+  writes. `SELECT ... INTO @var` sets the variable, also for locals in stored
+  procedures. `CALL` returns each `SELECT` in the procedure as a result set.
+  `LIKE 'a\_b'` matches a literal underscore, so escaped searches no longer
+  match too much. `SHOW TABLES LIKE` filters and lists views. The daemon
+  fetches 1.12.3 beside the data and switches to it, as for 1.12.0; the
+  database file is not touched.
 
 ## [1.11.0] — 2026-09-30
 
