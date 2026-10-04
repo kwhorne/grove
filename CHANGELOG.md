@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **ElyraSQL is pinned to 1.12.1** (was 1.12.0), which fixes three things a
+  project can see. `START TRANSACTION READ ONLY` now refuses writes, as MySQL
+  does; it used to accept them. `SELECT ... INTO @var` now sets the variable
+  instead of returning the row, also for locals in stored procedures. And
+  `DROP DATABASE` on a name that holds nothing reports that it does not
+  exist. The daemon fetches 1.12.1 beside the data and switches to it, as for
+  1.12.0; the database file is not touched.
+
 ## [1.11.0] — 2026-09-30
 
 With a hundred and more sites, the Grove app now finds the one you are
