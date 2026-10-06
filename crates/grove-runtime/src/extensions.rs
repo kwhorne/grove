@@ -442,6 +442,28 @@ pub const BUILD_SET: &[&str] = &[
     "zlib",
 ];
 
+/// Optional libraries the extensions above need asking for by name.
+///
+/// static-php-cli builds an extension's `lib-depends` and nothing else. `gd` depends on
+/// `zlib` and `libpng` alone, and lists `libjpeg`, `freetype`, `libwebp` and `libavif` as
+/// *suggestions* — so a build that names only `gd` produces a GD that cannot read or
+/// write a JPEG. Nothing says so: `php -m` lists `gd`, `grove php ext` reports nothing
+/// missing, and `imagejpeg()` is simply not a function.
+///
+/// Found from a Laravel suite where thirteen tests failed on
+/// `imagejpeg function is not defined`, against a PHP whose `phpinfo()` cheerfully said
+/// "GD Support => enabled". The extension audit cannot catch this class of gap, because
+/// the module is present — it is the inside of the module that is short.
+const BUILD_LIBS: &[&str] = &[
+    // The three image formats a web application actually receives. A photograph from a
+    // phone is a JPEG; a screenshot pasted into an issue is a PNG; everything that cares
+    // about bytes over the wire is a WebP.
+    "libjpeg",
+    "libwebp",
+    // Text drawn into an image — thumbnails with labels, generated avatars, captchas.
+    "freetype",
+];
+
 /// A static-php-cli `craft.yml` that builds [`BUILD_SET`] for `php_version`.
 ///
 /// Generated rather than committed so the extension list has exactly one home:
@@ -453,8 +475,12 @@ pub fn craft_yml(php_version: &str) -> String {
          # Grove's PHP: the union of static-php-cli's `common` and `bulk` sets,\n\
          # because neither one has both the PDO SQLite/PostgreSQL drivers and\n\
          # intl/mysqli/sodium/readline/apcu/xsl.\n\
+         #\n\
+         # `libs` is separate on purpose: spc builds an extension's lib-depends and not\n\
+         # its lib-suggests, so gd without this line is a gd that cannot read a JPEG.\n\
          php-version: {php_version}\n\
          extensions: {extensions}\n\
+         libs: {libs}\n\
          sapi: cli,fpm\n\
          debug: true\n\
          download-options:\n\
@@ -466,6 +492,7 @@ pub fn craft_yml(php_version: &str) -> String {
         \x20 build: true\n",
         php_version = php_version,
         extensions = BUILD_SET.join(","),
+        libs = BUILD_LIBS.join(","),
     )
 }
 
@@ -936,6 +963,23 @@ mod tests {
         let listed: Vec<&str> = line["extensions: ".len()..].split(',').collect();
         assert_eq!(listed, BUILD_SET);
         assert!(yml.contains("sapi: cli,fpm"));
+
+        /*
+         * The libs line, and `libjpeg` by name.
+         *
+         * Without it spc builds gd from its lib-depends alone — zlib and libpng — and
+         * the result is a PHP where `imagejpeg()` does not exist while `php -m` lists
+         * `gd` and the extension audit reports nothing missing. Thirteen tests in a
+         * Laravel suite failed on it before anybody worked out that the module being
+         * present said nothing about what was inside it.
+         */
+        let libs = yml
+            .lines()
+            .find(|l| l.starts_with("libs: "))
+            .expect("libs line");
+        let listed: Vec<&str> = libs["libs: ".len()..].split(',').collect();
+        assert_eq!(listed, BUILD_LIBS);
+        assert!(listed.contains(&"libjpeg"), "gd without libjpeg cannot write a JPEG");
         // Nested keys must be indented, or spc reads a flat mapping.
         assert!(yml.contains("\n  prefer-pre-built: true\n"), "{yml}");
         assert!(yml.contains("\n  doctor: true\n"), "{yml}");
