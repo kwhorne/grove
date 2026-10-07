@@ -146,6 +146,30 @@ pub enum InstallError {
     NoMatch { req: String, plat: String },
     #[error("http error: {0}")]
     Http(String),
+    /// The listing for the variant could not be read at all.
+    ///
+    /// Distinct from `NoMatch`, which means the listing *was* read and holds
+    /// nothing for this version. The two used to be one error, and falling back
+    /// on either is how a rate-limited API quietly installed a different PHP.
+    #[error(
+        "could not read the `{variant}` build listing: {reason}\n\n\
+         Not falling back to an upstream build: that would install a PHP with a \
+         different extension set — no mysqli, or no intl, or no PDO SQLite driver \
+         — under the version you asked for, and the only sign would be a line you \
+         had already scrolled past.\n\n\
+         GitHub's unauthenticated API budget is 60 requests an hour per IP and \
+         Grove reads this listing without a token, so this is usually that, and \
+         usually over within the hour. `curl -s https://api.github.com/rate_limit` \
+         says when it resets.\n\n\
+         To install an upstream set deliberately: `grove php install {req} \
+         --variant common` (or `bulk`), and `grove php ext` shows what each is \
+         missing."
+    )]
+    ListingUnreadable {
+        variant: String,
+        req: String,
+        reason: String,
+    },
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -419,21 +443,45 @@ fn resolve_with_fallback(
     // and "what digest", and GitHub's unauthenticated budget is 60 requests an
     // hour for the whole IP. Asking twice per archive spent four of them on a
     // single `grove php install`.
-    let listing = http_get_string(&variant.listing_url());
-    let first = listing
-        .as_ref()
-        .map_err(|e| InstallError::Http(e.to_string()))
-        .and_then(|l| resolve_from_listing(l, version_req, suffix));
-    if let Ok(resolved) = first {
-        return Ok((variant, resolved, listing.unwrap_or_default()));
+    /*
+     * Two different failures, and only one of them may fall back.
+     *
+     * This used to treat them as one: any error reaching or parsing the listing
+     * dropped to the upstream variant. So an exhausted API budget -- sixty
+     * requests an hour, shared by everything on the IP -- was indistinguishable
+     * from "Grove does not build that version", and the installer answered it by
+     * fetching a different PHP. The result was a build missing mysqli and intl,
+     * installed under the version that was asked for, announced by one "no grove
+     * build for 8.5 yet" line that was not even true: the build existed, the
+     * listing just could not be read.
+     *
+     * So: a listing that cannot be *fetched* is now fatal and says why. A listing
+     * that was read and holds nothing for this version is the case the fallback
+     * was written for, and still falls back.
+     */
+    let listing =
+        http_get_string(&variant.listing_url()).map_err(|e| InstallError::ListingUnreadable {
+            variant: variant.slug().to_string(),
+            req: version_req.to_string(),
+            reason: e.to_string(),
+        })?;
+
+    if let Ok(resolved) = resolve_from_listing(&listing, version_req, suffix) {
+        return Ok((variant, resolved, listing));
     }
+
     let Some(alt) = variant.fallback() else {
-        return Err(first.err().unwrap_or(InstallError::NoMatch {
+        return Err(InstallError::NoMatch {
             req: version_req.to_string(),
             plat: suffix.to_string(),
-        }));
+        });
     };
-    let alt_listing = http_get_string(&alt.listing_url())?;
+    let alt_listing =
+        http_get_string(&alt.listing_url()).map_err(|e| InstallError::ListingUnreadable {
+            variant: alt.slug().to_string(),
+            req: version_req.to_string(),
+            reason: e.to_string(),
+        })?;
     let resolved = resolve_from_listing(&alt_listing, version_req, suffix)?;
     progress(&format!(
         "no {} build for {version_req} yet — using upstream `{}` instead (`grove php ext` shows what it's missing)",
@@ -497,6 +545,24 @@ fn latest_minor(matches: &[SemVer], minor_prefix: &str) -> Option<SemVer> {
 }
 
 /// Extract the single `php-fpm` entry from the gzipped tar into `dest`.
+///
+/// Written beside the target and renamed into place, for the reason the CLI path
+/// beside this one already gives — and for one more that cost an afternoon.
+///
+/// `File::create(dest)` truncates and rewrites the *existing inode*. macOS caches a
+/// binary's code signature against that inode, so a php-fpm replaced in place is a
+/// file whose cached signature no longer describes its bytes, and the kernel answers
+/// by killing it: `php-fpm -v` exits 137 with no output and every site on the daemon
+/// answers 502. Nothing diagnoses it. `codesign -v` reports "valid on disk" and
+/// "satisfies its Designated Requirement", because the signature *is* valid — it is
+/// the kernel's memory of the old one that is not.
+///
+/// Proved rather than guessed: the same bytes copied to a path that did not exist
+/// before run fine, and at the replaced path exit 137. `rename` gives the destination
+/// a new inode, which is what makes that difference.
+///
+/// The CLI half of the installer has always done this. The FPM half did not, and only
+/// the FPM half is the thing the daemon execs.
 fn extract_fpm(gz_bytes: &[u8], dest: &PathBuf) -> Result<()> {
     let decoder = flate2::read::GzDecoder::new(gz_bytes);
     let mut archive = tar::Archive::new(decoder);
@@ -505,8 +571,12 @@ fn extract_fpm(gz_bytes: &[u8], dest: &PathBuf) -> Result<()> {
         let path = entry.path()?.to_path_buf();
         let is_fpm = path.file_name().map(|n| n == "php-fpm").unwrap_or(false);
         if is_fpm {
-            let mut out = std::fs::File::create(dest)?;
+            let tmp = dest.with_extension("part");
+            let mut out = std::fs::File::create(&tmp)?;
             std::io::copy(&mut entry, &mut out)?;
+            drop(out);
+            make_executable(&tmp)?;
+            std::fs::rename(&tmp, dest)?;
             return Ok(());
         }
     }
@@ -552,6 +622,223 @@ fn http_get_string(url: &str) -> Result<String> {
 mod tests {
     use super::*;
 
+    /// An unreadable listing is fatal, and says so rather than installing something else.
+    ///
+    /// The regression this guards: a rate-limited GitHub API used to be handled by
+    /// quietly fetching the upstream variant, so `grove php install 8.5` returned a PHP
+    /// without mysqli or intl under the version that was asked for. The only clue was a
+    /// line claiming "no grove build for 8.5 yet", which was false — the build was there,
+    /// the listing was not readable.
+    #[test]
+    fn an_unreadable_listing_is_fatal_and_explains_itself() {
+        let err = InstallError::ListingUnreadable {
+            variant: "grove".into(),
+            req: "8.5".into(),
+            reason: "403 rate limit exceeded".into(),
+        };
+
+        let msg = err.to_string();
+
+        // What failed, and what it refused to do about it.
+        assert!(
+            msg.contains("could not read the `grove` build listing"),
+            "{msg}"
+        );
+        assert!(msg.contains("403 rate limit exceeded"), "{msg}");
+        assert!(msg.contains("Not falling back"), "{msg}");
+
+        // The three extensions whose absence is the actual damage, so the message
+        // explains the cost rather than only the symptom.
+        assert!(msg.contains("mysqli"), "{msg}");
+        assert!(msg.contains("intl"), "{msg}");
+
+        // And a way out: the likely cause, how to check it, and the deliberate opt-in.
+        assert!(msg.contains("60 requests an hour"), "{msg}");
+        assert!(msg.contains("rate_limit"), "{msg}");
+        assert!(msg.contains("--variant common"), "{msg}");
+    }
+
+    /// Replacing a php-fpm must not write into the inode the old one occupied.
+    ///
+    /// macOS caches a binary's code signature against its inode, so truncating and
+    /// rewriting one leaves the kernel holding a signature that no longer describes the
+    /// bytes — and it answers by killing the process. `php-fpm -v` exits 137 with no
+    /// output, every site answers 502, and `codesign -v` says "valid on disk" the whole
+    /// time, because the signature is valid; the kernel's memory of the old one is not.
+    ///
+    /// Asserted on the inode rather than on behaviour, because the behaviour is a kernel
+    /// policy this test cannot provoke on another platform — and the inode is the thing
+    /// the fix is actually about.
+    #[test]
+    fn replacing_an_fpm_binary_gives_it_a_new_inode() {
+        use std::io::Write;
+
+        let dir = std::env::temp_dir().join(format!("grove-fpm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let dest = dir.join("php-fpm");
+
+        // Something already there, as there is on every upgrade.
+        std::fs::File::create(&dest)
+            .expect("seed")
+            .write_all(b"the previous build")
+            .expect("seed write");
+
+        #[cfg(unix)]
+        let before = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&dest).expect("stat").ino()
+        };
+
+        extract_fpm(&tar_gz_containing_fpm(b"the new build"), &dest).expect("extract");
+
+        assert_eq!(
+            std::fs::read(&dest).expect("read"),
+            b"the new build",
+            "the new bytes have to land at the destination"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let after = std::fs::metadata(&dest).expect("stat").ino();
+            assert_ne!(
+                before, after,
+                "php-fpm was rewritten in place; macOS kills a binary whose inode kept \
+                 the old signature"
+            );
+        }
+
+        // And nothing left behind for the next run to trip over.
+        assert!(
+            !dest.with_extension("part").exists(),
+            "the temporary file must be renamed, not left beside the binary"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The smallest gzipped tar holding one `php-fpm` entry.
+    fn tar_gz_containing_fpm(contents: &[u8]) -> Vec<u8> {
+        let mut tar = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append_data(&mut header, "php-fpm", contents)
+            .expect("append");
+        let tarred = tar.into_inner().expect("tar");
+
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        use std::io::Write;
+        gz.write_all(&tarred).expect("gz");
+        gz.finish().expect("gz finish")
+    }
+
+    /// A one-shot HTTP server: `/grove/` refuses, `/common/` answers with a listing.
+    ///
+    /// Enough to tell the two failures apart, which is the whole point. Reaching for
+    /// `GROVE_PHP_MIRROR` rather than a mocking crate because the seam already exists —
+    /// it is how a team points Grove at its own bucket — so the test drives the same
+    /// path a user would.
+    fn mirror_that_refuses_grove() -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("addr"));
+
+        let handle = std::thread::spawn(move || {
+            // Two requests at most: the grove listing, then the fallback's.
+            for _ in 0..2 {
+                let Ok((mut sock, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buf = [0u8; 1024];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+
+                let body = r#"{"assets":[{"name":"php-8.5.11-fpm-macos-aarch64.tar.gz"}]}"#;
+
+                let resp = if req.contains("/grove/") {
+                    // What a spent API budget looks like from here.
+                    "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".to_string()
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                };
+
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        (base, handle)
+    }
+
+    /// The regression, driven rather than asserted on a hand-built error.
+    ///
+    /// The first version of this test checked only the message text and passed with the
+    /// bug put back — it never called the function that chooses. This one does: with the
+    /// grove listing refusing, resolution must fail rather than return `Common`.
+    #[test]
+    fn a_refused_listing_does_not_become_a_different_variant() {
+        let (base, _server) = mirror_that_refuses_grove();
+
+        // Serialised: `GROVE_PHP_MIRROR` is process-wide.
+        let _guard = env_lock();
+        unsafe { std::env::set_var("GROVE_PHP_MIRROR", &base) };
+
+        let got = resolve_with_fallback(
+            Variant::Grove,
+            "8.5",
+            "-fpm-macos-aarch64.tar.gz",
+            &|_: &str| {},
+        );
+
+        unsafe { std::env::remove_var("GROVE_PHP_MIRROR") };
+
+        match got {
+            Err(InstallError::ListingUnreadable { variant, .. }) => {
+                assert_eq!(
+                    variant, "grove",
+                    "the error must name the listing that failed"
+                );
+            }
+            Ok((v, ..)) => panic!(
+                "a refused grove listing silently resolved to `{}` — this is the bug",
+                v.slug()
+            ),
+            Err(e) => panic!("expected ListingUnreadable, got {e:?}"),
+        }
+    }
+
+    /// `GROVE_PHP_MIRROR` is process-wide, so the tests that set it take a turn each.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The fallback the code was written for is still there.
+    ///
+    /// Asserted so that tightening the error above does not quietly turn into "never
+    /// fall back": a version Grove genuinely does not build should still resolve to an
+    /// upstream set, with the line that says so.
+    #[test]
+    fn a_listing_without_the_version_is_not_an_unreadable_listing() {
+        let listing = r#"{"assets":[{"name":"php-8.4.22-fpm-macos-aarch64.tar.gz"}]}"#;
+
+        // Present: resolves.
+        assert!(resolve_from_listing(listing, "8.4", "-fpm-macos-aarch64.tar.gz").is_ok());
+
+        // Absent: a NoMatch, which is what the fallback keys on — not a transport error.
+        let missing = resolve_from_listing(listing, "8.9", "-fpm-macos-aarch64.tar.gz");
+        assert!(
+            matches!(missing, Err(InstallError::NoMatch { .. })),
+            "a readable listing without the version must be NoMatch, got {missing:?}"
+        );
+    }
+
     #[test]
     fn semver_parse_and_order() {
         assert_eq!(SemVer::parse("8.4.22"), Some(SemVer(8, 4, 22)));
@@ -573,6 +860,12 @@ mod tests {
 
     #[test]
     fn variant_urls_point_at_distinct_extension_sets() {
+        // `GROVE_PHP_MIRROR` rewrites every one of these URLs, and the test that sets it
+        // runs in parallel with this one. Taking the same lock is what keeps this from
+        // failing roughly one run in three -- which it did, once, before the lock
+        // reached here.
+        let _guard = env_lock();
+
         // Guard against the variants collapsing onto one URL: they have
         // genuinely different extensions, and installing the wrong one silently
         // costs you either intl/mysqli or pdo_sqlite/pdo_pgsql.
@@ -591,6 +884,9 @@ mod tests {
     /// URLs, so those two must not be assumed equal the way they are upstream.
     #[test]
     fn grove_variant_lists_and_downloads_from_different_hosts() {
+        // As above: the mirror override would make both of these the same directory.
+        let _guard = env_lock();
+
         assert_ne!(Variant::Grove.listing_url(), Variant::Grove.download_base());
         assert!(Variant::Grove.listing_url().contains("api.github.com"));
         assert!(Variant::Grove.download_base().ends_with('/'));

@@ -549,6 +549,28 @@ pub fn print_php_extensions(builds: &[PhpBuild], show_present: bool, json: bool)
             continue;
         }
 
+        /*
+         * Hollow modules first, above the missing ones.
+         *
+         * A module that is absent is a thing somebody can look up and install. A module
+         * that is present and cannot do its job is the one nobody finds, because every
+         * other tool agrees it is there -- `php -m` lists it, `phpinfo()` calls it
+         * enabled, and this audit used to say "nothing missing" over the top of it. It
+         * leads for the same reason a silent failure beats a loud one to the top of a
+         * bug list.
+         */
+        if !audit.hollow.is_empty() {
+            println!("\n  Present but not working:");
+            for c in &audit.hollow {
+                println!("    ✗ {:<14} {} — {}", c.ext, c.name, c.cost);
+            }
+            println!(
+                "\n  These modules are loaded. They were built without the library each \
+                 one needs,\n  so the functions simply do not exist — `php -m` and \
+                 `phpinfo()` both report them fine."
+            );
+        }
+
         // Optional gaps are a long tail (Swoole, MongoDB, tidy…) that would bury
         // the two or three lines actually worth acting on, so they wait for
         // `--all`.
@@ -568,8 +590,8 @@ pub fn print_php_extensions(builds: &[PhpBuild], show_present: bool, json: bool)
             }
         }
 
-        if audit.missing.is_empty() {
-            println!("  Every extension Grove looks for is present.");
+        if audit.missing.is_empty() && audit.hollow.is_empty() {
+            println!("  Every extension Grove looks for is present, and works.");
         } else if !show_present {
             let optional = audit.missing_at(Tier::Optional).len();
             if optional > 0 {
