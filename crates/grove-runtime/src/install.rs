@@ -546,6 +546,24 @@ fn latest_minor(matches: &[SemVer], minor_prefix: &str) -> Option<SemVer> {
 }
 
 /// Extract the single `php-fpm` entry from the gzipped tar into `dest`.
+///
+/// Written beside the target and renamed into place, for the reason the CLI path
+/// beside this one already gives — and for one more that cost an afternoon.
+///
+/// `File::create(dest)` truncates and rewrites the *existing inode*. macOS caches a
+/// binary's code signature against that inode, so a php-fpm replaced in place is a
+/// file whose cached signature no longer describes its bytes, and the kernel answers
+/// by killing it: `php-fpm -v` exits 137 with no output and every site on the daemon
+/// answers 502. Nothing diagnoses it. `codesign -v` reports "valid on disk" and
+/// "satisfies its Designated Requirement", because the signature *is* valid — it is
+/// the kernel's memory of the old one that is not.
+///
+/// Proved rather than guessed: the same bytes copied to a path that did not exist
+/// before run fine, and at the replaced path exit 137. `rename` gives the destination
+/// a new inode, which is what makes that difference.
+///
+/// The CLI half of the installer has always done this. The FPM half did not, and only
+/// the FPM half is the thing the daemon execs.
 fn extract_fpm(gz_bytes: &[u8], dest: &PathBuf) -> Result<()> {
     let decoder = flate2::read::GzDecoder::new(gz_bytes);
     let mut archive = tar::Archive::new(decoder);
@@ -554,8 +572,12 @@ fn extract_fpm(gz_bytes: &[u8], dest: &PathBuf) -> Result<()> {
         let path = entry.path()?.to_path_buf();
         let is_fpm = path.file_name().map(|n| n == "php-fpm").unwrap_or(false);
         if is_fpm {
-            let mut out = std::fs::File::create(dest)?;
+            let tmp = dest.with_extension("part");
+            let mut out = std::fs::File::create(&tmp)?;
             std::io::copy(&mut entry, &mut out)?;
+            drop(out);
+            make_executable(&tmp)?;
+            std::fs::rename(&tmp, dest)?;
             return Ok(());
         }
     }
@@ -632,6 +654,83 @@ mod tests {
         assert!(msg.contains("60 requests an hour"), "{msg}");
         assert!(msg.contains("rate_limit"), "{msg}");
         assert!(msg.contains("--variant common"), "{msg}");
+    }
+
+    /// Replacing a php-fpm must not write into the inode the old one occupied.
+    ///
+    /// macOS caches a binary's code signature against its inode, so truncating and
+    /// rewriting one leaves the kernel holding a signature that no longer describes the
+    /// bytes — and it answers by killing the process. `php-fpm -v` exits 137 with no
+    /// output, every site answers 502, and `codesign -v` says "valid on disk" the whole
+    /// time, because the signature is valid; the kernel's memory of the old one is not.
+    ///
+    /// Asserted on the inode rather than on behaviour, because the behaviour is a kernel
+    /// policy this test cannot provoke on another platform — and the inode is the thing
+    /// the fix is actually about.
+    #[test]
+    fn replacing_an_fpm_binary_gives_it_a_new_inode() {
+        use std::io::Write;
+
+        let dir = std::env::temp_dir().join(format!("grove-fpm-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let dest = dir.join("php-fpm");
+
+        // Something already there, as there is on every upgrade.
+        std::fs::File::create(&dest)
+            .expect("seed")
+            .write_all(b"the previous build")
+            .expect("seed write");
+
+        #[cfg(unix)]
+        let before = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&dest).expect("stat").ino()
+        };
+
+        extract_fpm(&tar_gz_containing_fpm(b"the new build"), &dest).expect("extract");
+
+        assert_eq!(
+            std::fs::read(&dest).expect("read"),
+            b"the new build",
+            "the new bytes have to land at the destination"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let after = std::fs::metadata(&dest).expect("stat").ino();
+            assert_ne!(
+                before, after,
+                "php-fpm was rewritten in place; macOS kills a binary whose inode kept \
+                 the old signature"
+            );
+        }
+
+        // And nothing left behind for the next run to trip over.
+        assert!(
+            !dest.with_extension("part").exists(),
+            "the temporary file must be renamed, not left beside the binary"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The smallest gzipped tar holding one `php-fpm` entry.
+    fn tar_gz_containing_fpm(contents: &[u8]) -> Vec<u8> {
+        let mut tar = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append_data(&mut header, "php-fpm", contents)
+            .expect("append");
+        let tarred = tar.into_inner().expect("tar");
+
+        let mut gz =
+            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        use std::io::Write;
+        gz.write_all(&tarred).expect("gz");
+        gz.finish().expect("gz finish")
     }
 
     /// A one-shot HTTP server: `/grove/` refuses, `/common/` answers with a listing.
