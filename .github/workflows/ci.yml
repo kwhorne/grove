@@ -84,6 +84,35 @@ jobs:
           cache: pnpm
           cache-dependency-path: crates/grove-gui/ui/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      # `tauri build` refuses to run when a Tauri npm package and its Rust
+      # crate differ in major.minor, and nothing else in CI runs `tauri
+      # build`: the GUI job builds with cargo. Dependabot bumps the two
+      # sides in separate PRs, so a mismatch got as far as a green PR and
+      # would have failed only at release time. Catch it here.
+      - name: Tauri npm packages match their Rust crates
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, re, sys
+          lock = pathlib.Path("../../../Cargo.lock").read_text()
+          rust = dict(re.findall(r'name = "([^"]+)"\nversion = "([^"]+)"', lock))
+          pairs = {
+              "tauri": "@tauri-apps/api",
+              "tauri-plugin-dialog": "@tauri-apps/plugin-dialog",
+              "tauri-plugin-updater": "@tauri-apps/plugin-updater",
+              "tauri-plugin-process": "@tauri-apps/plugin-process",
+          }
+          bad = []
+          for crate, pkg in pairs.items():
+              npm = json.loads(pathlib.Path(f"node_modules/{pkg}/package.json").read_text())["version"]
+              mm = lambda v: v.split(".")[:2]
+              ok = crate in rust and mm(rust[crate]) == mm(npm)
+              print(f"{'ok ' if ok else 'BAD'} {crate} {rust.get(crate, '(missing)')}  {pkg} {npm}")
+              if not ok:
+                  bad.append(crate)
+          if bad:
+              print("::error::Tauri npm packages and Rust crates differ in major.minor; `tauri build` will refuse. Bump both sides together.")
+              sys.exit(1)
+          PY
       - name: Type-check & build
         run: pnpm run build
 
