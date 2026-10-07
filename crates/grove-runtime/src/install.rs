@@ -854,6 +854,12 @@ mod tests {
 
     #[test]
     fn variant_urls_point_at_distinct_extension_sets() {
+        // `GROVE_PHP_MIRROR` rewrites every one of these URLs, and the test that sets it
+        // runs in parallel with this one. Taking the same lock is what keeps this from
+        // failing roughly one run in three -- which it did, once, before the lock
+        // reached here.
+        let _guard = env_lock();
+
         // Guard against the variants collapsing onto one URL: they have
         // genuinely different extensions, and installing the wrong one silently
         // costs you either intl/mysqli or pdo_sqlite/pdo_pgsql.
@@ -872,6 +878,9 @@ mod tests {
     /// URLs, so those two must not be assumed equal the way they are upstream.
     #[test]
     fn grove_variant_lists_and_downloads_from_different_hosts() {
+        // As above: the mirror override would make both of these the same directory.
+        let _guard = env_lock();
+
         assert_ne!(Variant::Grove.listing_url(), Variant::Grove.download_base());
         assert!(Variant::Grove.listing_url().contains("api.github.com"));
         assert!(Variant::Grove.download_base().ends_with('/'));

@@ -496,6 +496,175 @@ pub fn craft_yml(php_version: &str) -> String {
     )
 }
 
+/// Something a module is supposed to be able to do, and the PHP that proves it.
+///
+/// `php -m` answers "is the module loaded", which is a different question from "does
+/// the module work". An extension is compiled against optional libraries, and leaving
+/// one out produces a module that loads, registers, reports itself present, and cannot
+/// do the thing people installed it for.
+///
+/// That is not hypothetical. Grove's own PHP shipped a `gd` built without libjpeg for
+/// however long: `php -m` listed gd, `phpinfo()` said "GD Support => enabled", this
+/// audit said "60 modules, nothing missing", and `imagejpeg()` did not exist. The
+/// symptom reached the user as thirteen failing tests in an unrelated project on a
+/// machine where nobody had changed anything.
+///
+/// So the catalogue above says which modules should be here, and this one says what
+/// each should be able to do once it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Capability {
+    /// The module it belongs to, as [`CATALOGUE`] names it.
+    pub ext: &'static str,
+    /// What it is, in the words somebody would use to miss it.
+    pub name: &'static str,
+    /// A PHP expression that is truthy when the capability is there.
+    ///
+    /// Evaluated inside the build being audited, because that is the only place that
+    /// can answer. Written defensively: it runs against a PHP that may be missing the
+    /// very thing being asked about, so nothing here may fatal.
+    pub probe: &'static str,
+    /// What its absence costs, in the same register as `ExtInfo::why`.
+    pub cost: &'static str,
+}
+
+/// The capabilities worth probing.
+///
+/// Deliberately short. Every entry is a case where a module genuinely ships hollow —
+/// an optional library left out of the build — not a list of every function PHP has.
+/// A probe that can never fail is a probe that only costs time.
+pub const CAPABILITIES: &[Capability] = &[
+    // The one that started this. gd's lib-depends are zlib and libpng; everything
+    // below is a lib-suggests, which static builds leave out unless asked.
+    Capability {
+        ext: "gd",
+        name: "JPEG images",
+        probe: "function_exists('imagejpeg')",
+        cost: "the commonest upload there is — every photograph from a phone",
+    },
+    Capability {
+        ext: "gd",
+        name: "WebP images",
+        probe: "function_exists('imagewebp')",
+        cost: "the format thumbnails should be written in",
+    },
+    Capability {
+        ext: "gd",
+        name: "FreeType text",
+        probe: "function_exists('imagettftext')",
+        cost: "text drawn into an image — labelled thumbnails, generated avatars",
+    },
+    // A curl without TLS resolves and connects and cannot speak to anything https.
+    Capability {
+        ext: "curl",
+        name: "TLS",
+        probe: "(bool) (curl_version()['features'] & CURL_VERSION_SSL)",
+        cost: "every https request, which is all of them",
+    },
+    // PDO is the module; a driver is what talks to a database. The module is present
+    // either way, and `grove php ext` could not tell them apart.
+    Capability {
+        ext: "pdo",
+        name: "the SQLite driver",
+        probe: "in_array('sqlite', PDO::getAvailableDrivers(), true)",
+        cost: "Laravel's default test database",
+    },
+    Capability {
+        ext: "pdo",
+        name: "the MySQL driver",
+        probe: "in_array('mysql', PDO::getAvailableDrivers(), true)",
+        cost: "the database most of these applications actually run on",
+    },
+    // intl loads without ICU data and then formats nothing correctly.
+    Capability {
+        ext: "intl",
+        name: "ICU data",
+        probe: "class_exists('Collator') && Collator::create('en') !== null",
+        cost: "dates, numbers and sorting in every locale — silently wrong, not absent",
+    },
+];
+
+/// Which capabilities are worth asking this build about.
+///
+/// A separate function because the choosing is the part worth testing, and the asking
+/// needs a binary. Written inline first, where no test could reach it without one --
+/// and a fault injection that removed the filter altogether changed nothing anybody
+/// could see.
+pub fn capabilities_for(present: &[ExtInfo]) -> Vec<Capability> {
+    CAPABILITIES
+        .iter()
+        .copied()
+        .filter(|c| present.iter().any(|e| e.name == c.ext))
+        .collect()
+}
+
+/// Ask a build which of [`CAPABILITIES`] it is missing.
+///
+/// One `php -r` for the lot: a probe per capability would be seven processes to answer
+/// a question nobody asked out loud, and this already runs behind `grove php list`.
+///
+/// Only the modules the build actually has are probed. Asking a PHP without gd whether
+/// it can write a JPEG produces a second complaint about the same absence, and the
+/// module being missing is the more useful way to say it.
+pub fn probe_capabilities(build: &PhpBuild, present: &[ExtInfo]) -> Vec<Capability> {
+    let wanted = capabilities_for(present);
+
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+
+    let Some(cli) = build.cli_binary.as_ref().or(Some(&build.fpm_binary)) else {
+        return Vec::new();
+    };
+
+    /*
+     * Each probe in its own try/catch, printing one line.
+     *
+     * A single expression would stop at the first capability that throws rather than
+     * returning false -- and a build missing one of these is exactly the build whose
+     * probe is most likely to fatal rather than answer.
+     */
+    let mut script = String::new();
+    for (i, c) in wanted.iter().enumerate() {
+        script.push_str(&format!(
+            "try {{ echo {i}, ':', ({}) ? '1' : '0', \"\\n\"; }} catch (\\Throwable $e) {{ echo {i}, \":0\\n\"; }}\n",
+            c.probe,
+        ));
+    }
+
+    let Some(out) = crate::probe::output(cli, &["-r", &script]) else {
+        return Vec::new();
+    };
+
+    let answers = String::from_utf8_lossy(&out.stdout);
+
+    /*
+     * A probe that produced no answer is not a missing capability.
+     *
+     * The binary may be one that cannot run `-r` at all, and reporting seven holes
+     * because a process failed to start would be the same class of lie this whole
+     * module exists to stop telling.
+     */
+    let mut seen = std::collections::BTreeMap::new();
+    for line in answers.lines() {
+        if let Some((i, v)) = line.split_once(':') {
+            if let Ok(i) = i.trim().parse::<usize>() {
+                seen.insert(i, v.trim() == "1");
+            }
+        }
+    }
+
+    if seen.is_empty() {
+        return Vec::new();
+    }
+
+    wanted
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| seen.get(i) == Some(&false))
+        .map(|(_, c)| *c)
+        .collect()
+}
+
 /// Normalise a module name so `php -m` output and catalogue entries compare.
 ///
 /// `php -m` prints registration names, not the lowercase ext slugs people write
@@ -521,6 +690,11 @@ pub struct Audit {
     pub present: Vec<ExtInfo>,
     /// Catalogued extensions the build lacks.
     pub missing: Vec<ExtInfo>,
+    /// Things a present module cannot do — see [`CAPABILITIES`].
+    ///
+    /// Empty when the modules were read but the capabilities were not probed, which is
+    /// every caller that only has a module list. `audit_build` fills it.
+    pub hollow: Vec<Capability>,
 }
 
 impl Audit {
@@ -533,9 +707,12 @@ impl Audit {
             .collect()
     }
 
-    /// Nothing required is absent.
+    /// Nothing required is absent, and nothing present is hollow.
+    ///
+    /// A module that is there and cannot do its job is not a healthy build. It used to
+    /// count as one, which is how a gd without JPEG passed for months.
     pub fn is_healthy(&self) -> bool {
-        self.missing_at(Tier::Required).is_empty()
+        self.missing_at(Tier::Required).is_empty() && self.hollow.is_empty()
     }
 
     /// One-line summary for `grove php list` / `grove doctor`.
@@ -545,10 +722,28 @@ impl Audit {
         if self.loaded.is_empty() {
             return "could not read `php -m`".to_string();
         }
-        if required == 0 && recommended == 0 {
+        if required == 0 && recommended == 0 && self.hollow.is_empty() {
             return format!("{} modules, nothing missing", self.loaded.len());
         }
         let mut parts = Vec::new();
+        if !self.hollow.is_empty() {
+            /*
+             * First, and worded as a hole rather than a count of absences.
+             *
+             * This line used to read "nothing missing" over a gd that could not write a
+             * JPEG, because nothing *was* missing by the only measure it had. A module
+             * that is present and hollow is the harder failure to find, so it leads.
+             */
+            parts.push(format!(
+                "{} not working ({})",
+                self.hollow.len(),
+                self.hollow
+                    .iter()
+                    .map(|c| c.name)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
         if required > 0 {
             parts.push(format!("{required} required missing"));
         }
@@ -580,17 +775,154 @@ pub fn audit_modules(modules: &[String]) -> Audit {
         loaded,
         present,
         missing,
+        // Not probed here: this takes a module list, and a list cannot be asked
+        // questions. `audit_build` has the binary and fills it in.
+        hollow: Vec::new(),
     }
 }
 
-/// Audit a registered build by asking its binary what it loads.
+/// Audit a registered build by asking its binary what it loads — and what it can do.
 pub fn audit_build(build: &PhpBuild) -> Audit {
-    audit_modules(&build.extensions())
+    let mut audit = audit_modules(&build.extensions());
+
+    // Only worth asking if the module list came back at all; a build that cannot answer
+    // `php -m` will not answer `php -r` either, and two silences are not two problems.
+    if !audit.loaded.is_empty() {
+        audit.hollow = probe_capabilities(build, &audit.present);
+    }
+
+    audit
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hollow module is not a healthy build, and the summary has to say so.
+    ///
+    /// The exact line this replaces: "60 modules, nothing missing", printed over a gd
+    /// that could not write a JPEG, for as long as the audit only counted names.
+    #[test]
+    fn a_present_but_hollow_module_is_not_nothing_missing() {
+        // A build that genuinely has everything, so "nothing missing" is the honest
+        // baseline and the only thing the hollow entry changes is the hollowness.
+        let everything: Vec<String> = CATALOGUE.iter().map(|e| e.name.to_string()).collect();
+        let mut audit = audit_modules(&everything);
+
+        assert!(audit.summary().ends_with("nothing missing"), "{}", audit.summary());
+        assert!(audit.is_healthy());
+
+        audit.hollow = vec![*CAPABILITIES
+            .iter()
+            .find(|c| c.ext == "gd" && c.name == "JPEG images")
+            .expect("the jpeg capability")];
+
+        let summary = audit.summary();
+
+        assert!(
+            !summary.contains("nothing missing"),
+            "a build that cannot write a JPEG must not read as complete: {summary}"
+        );
+        assert!(summary.contains("JPEG images"), "{summary}");
+        assert!(
+            !audit.is_healthy(),
+            "a module that is present and cannot do its job is not a healthy build"
+        );
+    }
+
+    /// Every probe has to be valid PHP that answers for itself.
+    ///
+    /// A probe with a typo evaluates to a fatal, the catch turns that into `false`, and
+    /// the audit reports a hole that is not there — which is the same lie as the one
+    /// this module was written to stop, pointing the other way.
+    #[test]
+    fn every_capability_probe_is_a_single_defensible_expression() {
+        for c in CAPABILITIES {
+            assert!(
+                CATALOGUE.iter().any(|e| e.name == c.ext),
+                "{} probes `{}`, which is not in the catalogue — it would never be asked",
+                c.name,
+                c.ext,
+            );
+            assert!(!c.probe.contains(';'), "{}: a probe is one expression", c.name);
+
+            /*
+             * A probe has to actually ask PHP something.
+             *
+             * `probe: "true"` is valid PHP, passes every structural check here, and
+             * turns the capability into a thing that can never be reported missing --
+             * which is precisely the silence this module exists to break. So a probe
+             * must name a function, a class or a constant.
+             */
+            assert!(
+                c.probe.contains('(') || c.probe.contains("::") || c.probe.contains('_'),
+                "{}: `{}` asks PHP nothing — it would always answer yes",
+                c.name,
+                c.probe,
+            );
+            assert!(!c.probe.contains("echo"), "{}: a probe returns, it does not print", c.name);
+            assert!(!c.cost.is_empty(), "{}: say what its absence costs", c.name);
+        }
+    }
+
+    /// Nothing is probed for a module the build does not have.
+    ///
+    /// Otherwise a PHP without gd is reported twice for one absence — once as a missing
+    /// module, three more times as capabilities it was never going to have — and the
+    /// useful line is buried under the restatement.
+    /// Nothing is asked about a module the build does not have.
+    ///
+    /// Tested on the choosing rather than through a binary: the version of this that
+    /// went through `probe_capabilities` passed with the filter deleted, because a
+    /// build that cannot run returns nothing either way.
+    #[test]
+    fn only_present_modules_are_worth_asking_about() {
+        let gd_only: Vec<ExtInfo> = CATALOGUE
+            .iter()
+            .copied()
+            .filter(|e| e.name == "gd")
+            .collect();
+
+        let chosen = capabilities_for(&gd_only);
+
+        assert!(!chosen.is_empty(), "gd has capabilities worth probing");
+        assert!(
+            chosen.iter().all(|c| c.ext == "gd"),
+            "a build with only gd must not be asked about curl, pdo or intl: {:?}",
+            chosen.iter().map(|c| c.ext).collect::<Vec<_>>(),
+        );
+
+        assert!(
+            capabilities_for(&[]).is_empty(),
+            "a build with nothing present has nothing to answer for"
+        );
+    }
+
+    #[test]
+    fn capabilities_are_only_probed_for_modules_that_are_present() {
+        let build = PhpBuild {
+            version: "8.5".into(),
+            // Deliberately not a binary: this must not get as far as running one.
+            fpm_binary: std::path::PathBuf::from("/nonexistent/php-fpm"),
+            cli_binary: None,
+            variant: None,
+            user_registered: false,
+        };
+
+        let nothing_present: Vec<ExtInfo> = Vec::new();
+        assert!(
+            probe_capabilities(&build, &nothing_present).is_empty(),
+            "with no modules present there is nothing to ask about"
+        );
+
+        // And with a module present but no runnable binary, it still claims nothing —
+        // a process that could not start is not evidence of a missing capability.
+        let gd: Vec<ExtInfo> = CATALOGUE.iter().copied().filter(|e| e.name == "gd").collect();
+        assert!(
+            probe_capabilities(&build, &gd).is_empty(),
+            "a binary that cannot be run must not be reported as a build full of holes"
+        );
+    }
 
     #[test]
     fn normalise_handles_php_m_spellings() {
