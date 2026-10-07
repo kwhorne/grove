@@ -146,6 +146,30 @@ pub enum InstallError {
     NoMatch { req: String, plat: String },
     #[error("http error: {0}")]
     Http(String),
+    /// The listing for the variant could not be read at all.
+    ///
+    /// Distinct from `NoMatch`, which means the listing *was* read and holds
+    /// nothing for this version. The two used to be one error, and falling back
+    /// on either is how a rate-limited API quietly installed a different PHP.
+    #[error(
+        "could not read the `{variant}` build listing: {reason}\n\n\
+         Not falling back to an upstream build: that would install a PHP with a \
+         different extension set — no mysqli, or no intl, or no PDO SQLite driver \
+         — under the version you asked for, and the only sign would be a line you \
+         had already scrolled past.\n\n\
+         GitHub's unauthenticated API budget is 60 requests an hour per IP and \
+         Grove reads this listing without a token, so this is usually that, and \
+         usually over within the hour. `curl -s https://api.github.com/rate_limit` \
+         says when it resets.\n\n\
+         To install an upstream set deliberately: `grove php install {req} \
+         --variant common` (or `bulk`), and `grove php ext` shows what each is \
+         missing."
+    )]
+    ListingUnreadable {
+        variant: String,
+        req: String,
+        reason: String,
+    },
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -419,21 +443,46 @@ fn resolve_with_fallback(
     // and "what digest", and GitHub's unauthenticated budget is 60 requests an
     // hour for the whole IP. Asking twice per archive spent four of them on a
     // single `grove php install`.
-    let listing = http_get_string(&variant.listing_url());
-    let first = listing
-        .as_ref()
-        .map_err(|e| InstallError::Http(e.to_string()))
-        .and_then(|l| resolve_from_listing(l, version_req, suffix));
-    if let Ok(resolved) = first {
-        return Ok((variant, resolved, listing.unwrap_or_default()));
+    /*
+     * Two different failures, and only one of them may fall back.
+     *
+     * This used to treat them as one: any error reaching or parsing the listing
+     * dropped to the upstream variant. So an exhausted API budget -- sixty
+     * requests an hour, shared by everything on the IP -- was indistinguishable
+     * from "Grove does not build that version", and the installer answered it by
+     * fetching a different PHP. The result was a build missing mysqli and intl,
+     * installed under the version that was asked for, announced by one "no grove
+     * build for 8.5 yet" line that was not even true: the build existed, the
+     * listing just could not be read.
+     *
+     * So: a listing that cannot be *fetched* is now fatal and says why. A listing
+     * that was read and holds nothing for this version is the case the fallback
+     * was written for, and still falls back.
+     */
+    let listing = http_get_string(&variant.listing_url()).map_err(|e| {
+        InstallError::ListingUnreadable {
+            variant: variant.slug().to_string(),
+            req: version_req.to_string(),
+            reason: e.to_string(),
+        }
+    })?;
+
+    if let Ok(resolved) = resolve_from_listing(&listing, version_req, suffix) {
+        return Ok((variant, resolved, listing));
     }
+
     let Some(alt) = variant.fallback() else {
-        return Err(first.err().unwrap_or(InstallError::NoMatch {
+        return Err(InstallError::NoMatch {
             req: version_req.to_string(),
             plat: suffix.to_string(),
-        }));
+        });
     };
-    let alt_listing = http_get_string(&alt.listing_url())?;
+    let alt_listing =
+        http_get_string(&alt.listing_url()).map_err(|e| InstallError::ListingUnreadable {
+            variant: alt.slug().to_string(),
+            req: version_req.to_string(),
+            reason: e.to_string(),
+        })?;
     let resolved = resolve_from_listing(&alt_listing, version_req, suffix)?;
     progress(&format!(
         "no {} build for {version_req} yet — using upstream `{}` instead (`grove php ext` shows what it's missing)",
@@ -551,6 +600,139 @@ fn http_get_string(url: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An unreadable listing is fatal, and says so rather than installing something else.
+    ///
+    /// The regression this guards: a rate-limited GitHub API used to be handled by
+    /// quietly fetching the upstream variant, so `grove php install 8.5` returned a PHP
+    /// without mysqli or intl under the version that was asked for. The only clue was a
+    /// line claiming "no grove build for 8.5 yet", which was false — the build was there,
+    /// the listing was not readable.
+    #[test]
+    fn an_unreadable_listing_is_fatal_and_explains_itself() {
+        let err = InstallError::ListingUnreadable {
+            variant: "grove".into(),
+            req: "8.5".into(),
+            reason: "403 rate limit exceeded".into(),
+        };
+
+        let msg = err.to_string();
+
+        // What failed, and what it refused to do about it.
+        assert!(msg.contains("could not read the `grove` build listing"), "{msg}");
+        assert!(msg.contains("403 rate limit exceeded"), "{msg}");
+        assert!(msg.contains("Not falling back"), "{msg}");
+
+        // The three extensions whose absence is the actual damage, so the message
+        // explains the cost rather than only the symptom.
+        assert!(msg.contains("mysqli"), "{msg}");
+        assert!(msg.contains("intl"), "{msg}");
+
+        // And a way out: the likely cause, how to check it, and the deliberate opt-in.
+        assert!(msg.contains("60 requests an hour"), "{msg}");
+        assert!(msg.contains("rate_limit"), "{msg}");
+        assert!(msg.contains("--variant common"), "{msg}");
+    }
+
+    /// A one-shot HTTP server: `/grove/` refuses, `/common/` answers with a listing.
+    ///
+    /// Enough to tell the two failures apart, which is the whole point. Reaching for
+    /// `GROVE_PHP_MIRROR` rather than a mocking crate because the seam already exists —
+    /// it is how a team points Grove at its own bucket — so the test drives the same
+    /// path a user would.
+    fn mirror_that_refuses_grove() -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let base = format!("http://{}", listener.local_addr().expect("addr"));
+
+        let handle = std::thread::spawn(move || {
+            // Two requests at most: the grove listing, then the fallback's.
+            for _ in 0..2 {
+                let Ok((mut sock, _)) = listener.accept() else { return };
+                let mut buf = [0u8; 1024];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+
+                let body = r#"{"assets":[{"name":"php-8.5.11-fpm-macos-aarch64.tar.gz"}]}"#;
+
+                let resp = if req.contains("/grove/") {
+                    // What a spent API budget looks like from here.
+                    "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n".to_string()
+                } else {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    )
+                };
+
+                let _ = sock.write_all(resp.as_bytes());
+            }
+        });
+
+        (base, handle)
+    }
+
+    /// The regression, driven rather than asserted on a hand-built error.
+    ///
+    /// The first version of this test checked only the message text and passed with the
+    /// bug put back — it never called the function that chooses. This one does: with the
+    /// grove listing refusing, resolution must fail rather than return `Common`.
+    #[test]
+    fn a_refused_listing_does_not_become_a_different_variant() {
+        let (base, _server) = mirror_that_refuses_grove();
+
+        // Serialised: `GROVE_PHP_MIRROR` is process-wide.
+        let _guard = env_lock();
+        unsafe { std::env::set_var("GROVE_PHP_MIRROR", &base) };
+
+        let got = resolve_with_fallback(
+            Variant::Grove,
+            "8.5",
+            "-fpm-macos-aarch64.tar.gz",
+            &|_: &str| {},
+        );
+
+        unsafe { std::env::remove_var("GROVE_PHP_MIRROR") };
+
+        match got {
+            Err(InstallError::ListingUnreadable { variant, .. }) => {
+                assert_eq!(variant, "grove", "the error must name the listing that failed");
+            }
+            Ok((v, ..)) => panic!(
+                "a refused grove listing silently resolved to `{}` — this is the bug",
+                v.slug()
+            ),
+            Err(e) => panic!("expected ListingUnreadable, got {e:?}"),
+        }
+    }
+
+    /// `GROVE_PHP_MIRROR` is process-wide, so the tests that set it take a turn each.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The fallback the code was written for is still there.
+    ///
+    /// Asserted so that tightening the error above does not quietly turn into "never
+    /// fall back": a version Grove genuinely does not build should still resolve to an
+    /// upstream set, with the line that says so.
+    #[test]
+    fn a_listing_without_the_version_is_not_an_unreadable_listing() {
+        let listing = r#"{"assets":[{"name":"php-8.4.22-fpm-macos-aarch64.tar.gz"}]}"#;
+
+        // Present: resolves.
+        assert!(resolve_from_listing(listing, "8.4", "-fpm-macos-aarch64.tar.gz").is_ok());
+
+        // Absent: a NoMatch, which is what the fallback keys on — not a transport error.
+        let missing = resolve_from_listing(listing, "8.9", "-fpm-macos-aarch64.tar.gz");
+        assert!(
+            matches!(missing, Err(InstallError::NoMatch { .. })),
+            "a readable listing without the version must be NoMatch, got {missing:?}"
+        );
+    }
 
     #[test]
     fn semver_parse_and_order() {
