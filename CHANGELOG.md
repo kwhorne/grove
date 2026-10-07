@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.1] — 2026-10-07
+
+Four fixes to how Grove installs and checks PHP, all found the hard way. GD
+in Grove's PHP could not read or write a JPEG, and nothing said so.
+`grove php install` could quietly install a different variant when GitHub's
+rate limit hid the listing. A reinstalled php-fpm could be killed by macOS
+and turn every site into a 502. Also ElyraSQL 1.12.3 and Tauri 2.12.
+
+### Upgrade notes
+
+- **Reinstall PHP 8.5 to get GD with JPEG.** `grove php install 8.5`
+  downloads the rebuilt 8.5.11 and replaces the build you have. It now has
+  `imagejpeg`, `imagewebp` and `imagettftext`. Checked on the published
+  macOS build. **8.4 and 8.3 have not been rebuilt yet**: the published
+  8.4.25 still has no JPEG, WebP or FreeType in GD. `grove php ext` now
+  says so for any build you have installed.
+- **ElyraSQL moves to 1.12.3 on its own**, as it did to 1.12.0. The
+  database file is not touched. See Changed for what a project can notice.
+- **Nothing else needs doing.** The app updates itself as before.
+
+### Fixed
+
+- **GD in Grove's PHP builds handles JPEG, WebP and FreeType.**
+  static-php-cli builds only an extension's required libraries. For GD that
+  is zlib and libpng, so GD loaded, `php -m` listed it, `phpinfo()` said
+  "GD Support => enabled", and `imagejpeg()` did not exist. It showed up as
+  failing tests in a Laravel project on a machine where nothing had changed.
+  The build now asks for libjpeg, libwebp and freetype too.
+- **`grove php ext` asks each module whether it works, not only whether it
+  is loaded.** Seven probes, each one PHP expression run inside the build
+  being audited:
+  - gd: JPEG, WebP and FreeType;
+  - curl: TLS;
+  - pdo: the SQLite and MySQL drivers;
+  - intl: ICU data.
+
+  A module that is present but cannot do its job counts as unhealthy, and
+  the summary leads with it, because it is the one nobody finds.
+- **`grove php install` no longer installs another variant when it cannot
+  read the build listing.** Grove reads the listing from GitHub without a
+  token, so its 60-requests-an-hour limit applies. When that budget ran
+  out, `grove php install 8.5` quietly installed upstream `common` 8.5.8,
+  without mysqli and intl, under a request for 8.5. It said only "no grove
+  build for 8.5 yet", and that was not true.
+  - A listing that cannot be fetched is now an error. It names the
+    variant, the cause, the likely rate limit, and how to ask for an
+    upstream build on purpose.
+  - A listing that was read and has nothing for the version still falls
+    back, as before.
+- **A reinstalled php-fpm is renamed into place, so macOS does not kill
+  it.** The installer used to write over the existing file. macOS ties a
+  binary's code signature to the file it was checked on, so the overwritten
+  php-fpm no longer matched it, and the kernel killed it. Symptoms: `grove
+  php install` reported success, `php-fpm -v` exited 137 with no output,
+  every site answered 502, and `codesign -v` said the signature was valid.
+  The new binary now replaces the old one with a rename, as the CLI half of
+  the installer already did.
+
 ### Changed
 
 - **Tauri 2.12.** Tauri 2.12.1, with the dialog plugin 2.8, the updater
@@ -1751,7 +1809,8 @@ with the entire core free and open source.
   can't `dlopen`, and static-php-cli can't compile it in), so those report as
   unavailable in `grove debug status` / the GUI panel.
 
-[Unreleased]: https://github.com/kwhorne/grove/compare/v1.11.0...HEAD
+[Unreleased]: https://github.com/kwhorne/grove/compare/v1.11.1...HEAD
+[1.11.1]: https://github.com/kwhorne/grove/releases/tag/v1.11.1
 [1.11.0]: https://github.com/kwhorne/grove/releases/tag/v1.11.0
 [1.10.1]: https://github.com/kwhorne/grove/releases/tag/v1.10.1
 [1.10.0]: https://github.com/kwhorne/grove/releases/tag/v1.10.0
