@@ -459,13 +459,12 @@ fn resolve_with_fallback(
      * that was read and holds nothing for this version is the case the fallback
      * was written for, and still falls back.
      */
-    let listing = http_get_string(&variant.listing_url()).map_err(|e| {
-        InstallError::ListingUnreadable {
+    let listing =
+        http_get_string(&variant.listing_url()).map_err(|e| InstallError::ListingUnreadable {
             variant: variant.slug().to_string(),
             req: version_req.to_string(),
             reason: e.to_string(),
-        }
-    })?;
+        })?;
 
     if let Ok(resolved) = resolve_from_listing(&listing, version_req, suffix) {
         return Ok((variant, resolved, listing));
@@ -641,7 +640,10 @@ mod tests {
         let msg = err.to_string();
 
         // What failed, and what it refused to do about it.
-        assert!(msg.contains("could not read the `grove` build listing"), "{msg}");
+        assert!(
+            msg.contains("could not read the `grove` build listing"),
+            "{msg}"
+        );
         assert!(msg.contains("403 rate limit exceeded"), "{msg}");
         assert!(msg.contains("Not falling back"), "{msg}");
 
@@ -726,8 +728,7 @@ mod tests {
             .expect("append");
         let tarred = tar.into_inner().expect("tar");
 
-        let mut gz =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         use std::io::Write;
         gz.write_all(&tarred).expect("gz");
         gz.finish().expect("gz finish")
@@ -749,7 +750,9 @@ mod tests {
         let handle = std::thread::spawn(move || {
             // Two requests at most: the grove listing, then the fallback's.
             for _ in 0..2 {
-                let Ok((mut sock, _)) = listener.accept() else { return };
+                let Ok((mut sock, _)) = listener.accept() else {
+                    return;
+                };
                 let mut buf = [0u8; 1024];
                 let n = sock.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
@@ -797,7 +800,10 @@ mod tests {
 
         match got {
             Err(InstallError::ListingUnreadable { variant, .. }) => {
-                assert_eq!(variant, "grove", "the error must name the listing that failed");
+                assert_eq!(
+                    variant, "grove",
+                    "the error must name the listing that failed"
+                );
             }
             Ok((v, ..)) => panic!(
                 "a refused grove listing silently resolved to `{}` — this is the bug",

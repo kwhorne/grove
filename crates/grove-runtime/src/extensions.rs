@@ -458,8 +458,7 @@ const BUILD_LIBS: &[&str] = &[
     // The three image formats a web application actually receives. A photograph from a
     // phone is a JPEG; a screenshot pasted into an issue is a PNG; everything that cares
     // about bytes over the wire is a WebP.
-    "libjpeg",
-    "libwebp",
+    "libjpeg", "libwebp",
     // Text drawn into an image — thumbnails with labels, generated avatars, captchas.
     "freetype",
 ];
@@ -809,7 +808,11 @@ mod tests {
         let everything: Vec<String> = CATALOGUE.iter().map(|e| e.name.to_string()).collect();
         let mut audit = audit_modules(&everything);
 
-        assert!(audit.summary().ends_with("nothing missing"), "{}", audit.summary());
+        assert!(
+            audit.summary().ends_with("nothing missing"),
+            "{}",
+            audit.summary()
+        );
         assert!(audit.is_healthy());
 
         audit.hollow = vec![*CAPABILITIES
@@ -844,7 +847,11 @@ mod tests {
                 c.name,
                 c.ext,
             );
-            assert!(!c.probe.contains(';'), "{}: a probe is one expression", c.name);
+            assert!(
+                !c.probe.contains(';'),
+                "{}: a probe is one expression",
+                c.name
+            );
 
             /*
              * A probe has to actually ask PHP something.
@@ -860,7 +867,11 @@ mod tests {
                 c.name,
                 c.probe,
             );
-            assert!(!c.probe.contains("echo"), "{}: a probe returns, it does not print", c.name);
+            assert!(
+                !c.probe.contains("echo"),
+                "{}: a probe returns, it does not print",
+                c.name
+            );
             assert!(!c.cost.is_empty(), "{}: say what its absence costs", c.name);
         }
     }
@@ -917,7 +928,11 @@ mod tests {
 
         // And with a module present but no runnable binary, it still claims nothing —
         // a process that could not start is not evidence of a missing capability.
-        let gd: Vec<ExtInfo> = CATALOGUE.iter().copied().filter(|e| e.name == "gd").collect();
+        let gd: Vec<ExtInfo> = CATALOGUE
+            .iter()
+            .copied()
+            .filter(|e| e.name == "gd")
+            .collect();
         assert!(
             probe_capabilities(&build, &gd).is_empty(),
             "a binary that cannot be run must not be reported as a build full of holes"
@@ -1311,7 +1326,10 @@ mod tests {
             .expect("libs line");
         let listed: Vec<&str> = libs["libs: ".len()..].split(',').collect();
         assert_eq!(listed, BUILD_LIBS);
-        assert!(listed.contains(&"libjpeg"), "gd without libjpeg cannot write a JPEG");
+        assert!(
+            listed.contains(&"libjpeg"),
+            "gd without libjpeg cannot write a JPEG"
+        );
         // Nested keys must be indented, or spc reads a flat mapping.
         assert!(yml.contains("\n  prefer-pre-built: true\n"), "{yml}");
         assert!(yml.contains("\n  doctor: true\n"), "{yml}");
