@@ -17,12 +17,15 @@ and turn every site into a 502. Also ElyraSQL 1.12.3 and Tauri 2.12.
 
 ### Upgrade notes
 
-- **Reinstall PHP 8.5 to get GD with JPEG.** `grove php install 8.5`
-  downloads the rebuilt 8.5.11 and replaces the build you have. It now has
-  `imagejpeg`, `imagewebp` and `imagettftext`. Checked on the published
-  macOS build. **8.4 and 8.3 have not been rebuilt yet**: the published
-  8.4.25 still has no JPEG, WebP or FreeType in GD. `grove php ext` now
-  says so for any build you have installed.
+- **Reinstall PHP to get GD with JPEG.** Run `grove php install 8.5` (or
+  `8.4`, or `8.3`). It downloads the rebuilt build and replaces the one you
+  have. Every rebuilt build has `imagejpeg`, `imagewebp` and `imagettftext`:
+  - 8.5.11, rebuilt 2026-10-06;
+  - 8.4.26 and 8.3.35, rebuilt 2026-10-07, after 1.11.1 was released.
+
+  Checked on the published macOS CLI builds of all three and the Linux
+  x86_64 build of 8.4.26. `grove php ext` reports a GD without them for any
+  build you still have from before.
 - **ElyraSQL moves to 1.12.3 on its own**, as it did to 1.12.0. The
   database file is not touched. See Changed for what a project can notice.
 - **Nothing else needs doing.** The app updates itself as before.
