@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Tauri 2.12.** Tauri 2.12.1, with the dialog plugin 2.8, the updater
+  plugin 2.13 and the process plugin 2.4, on both the Rust and the npm side.
+  Dependabot had bumped only the Rust side. That passed CI, but `tauri
+  build` refuses mismatched major.minor versions, so the next release would
+  have failed. CI now checks the four pairs on every PR. The release build
+  passes locally with Tauri CLI 2.12.1.
 - **ElyraSQL is pinned to 1.12.3** (was 1.12.0), which brings it closer to
   MySQL in ways a project can see. DDL (`CREATE`, `ALTER`, `DROP`, ...) now
   commits an open transaction first, as MySQL does, so a `ROLLBACK` after it
